@@ -85,7 +85,8 @@ export async function checkImportDuplicate(opts: {
     language: opts.language,
     fileType: opts.fileType,
     isObsolete: { $ne: true },
-  }).lean();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mongoose FilterQuery omits optional indexed fields under Document
+  } as any).lean();
 
   if (bySlot) {
     // Already in the registry for this SOP/version/language/type — not a new import.

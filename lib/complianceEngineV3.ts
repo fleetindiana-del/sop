@@ -714,9 +714,9 @@ export async function analyzeClauseWithPrecision(
       priority: Math.min(5, Math.max(1, sanitized.priority || 3)),
       analyzedAt: new Date(),
       aiModelUsed: modelLabel,
-      analysisMethod: 'ai-semantic',
+      analysisMethod: 'ai-semantic' as const,
       evidenceFound: sanitized.sopTextSnippet || sanitized.sopCurrentState || '',
-    });
+    }) as ComplianceFindingV3;
   } catch (error) {
     if (error instanceof ComplianceAnalysisCancelledError) throw error;
     console.error(`AI analysis failed for clause ${clause.clauseNumber}:`, error);
@@ -735,21 +735,21 @@ export async function analyzeClauseWithPrecision(
       sopSectionNumber: 'N/A',
       sopSectionTitle: 'Analysis Failed',
       sopTextSnippet: 'Unable to extract - AI analysis failed. Manual review required.',
-      complianceLevel: 'unable-to-determine',
+      complianceLevel: 'unable-to-determine' as const,
       matchConfidence: 0,
-      issueType: 'not-applicable',
-      issueSeverity: 'informational',
+      issueType: 'not-applicable' as const,
+      issueSeverity: 'informational' as const,
       specificGap: `AI analysis failed: ${(error as Error).message}`,
       guidelineRequirement: '',
       sopCurrentState: 'Unable to determine',
       suggestedAction: 'Manual review required',
       suggestedText: 'Manual review required - AI analysis was unable to generate suggested text.',
-      estimatedEffort: 'medium',
+      estimatedEffort: 'medium' as const,
       priority: 3,
       analyzedAt: new Date(),
       aiModelUsed: modelLabel,
-      analysisMethod: 'ai-semantic',
-    });
+      analysisMethod: 'ai-semantic' as const,
+    }) as ComplianceFindingV3;
   }
 }
 

@@ -45,6 +45,7 @@ yarn-error.log*
 /public/uploads/*
 !/public/uploads/.gitkeep
 
-# local files-folder bulk import drop zone
+# local files-folder bulk import drop zone (never commit SOP binaries)
+/files/
 /files/**
 !/files/.gitkeep

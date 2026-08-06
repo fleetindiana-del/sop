@@ -15,9 +15,12 @@ import {
   FileDown,
   Copy,
   Check,
+  Paperclip,
+  Plus,
+  FileText,
 } from 'lucide-react';
 import FindingCard from '@/app/compliance/components/FindingCard';
-import { printElementAsSelectablePdf } from '@/lib/printElementAsPdf';
+import { exportComplianceReportToPdf } from '@/lib/complianceReportPdf';
 
 type FindingShape = React.ComponentProps<typeof FindingCard>['finding'];
 
@@ -28,6 +31,10 @@ interface RunPoint {
   note: string;
   revisedExcerpt?: string;
   ignored: boolean;
+  /** Solved in an earlier run — kept as-is so progress never regresses. */
+  carriedForward?: boolean;
+  /** Raised as a new issue by an earlier re-check and tracked as a point from then on. */
+  origin?: 'report' | 'new-issue';
 }
 
 interface RunIssue {
@@ -52,10 +59,18 @@ interface RecheckRun {
   summary?: string;
   results: RunPoint[];
   newIssues: RunIssue[];
-  annexuresIncluded?: { label: string; fileName: string; chars: number }[];
+  annexuresIncluded?: {
+    label: string;
+    fileName: string;
+    chars: number;
+    source?: 'uploaded' | 'linked';
+    fileUrl?: string;
+  }[];
   annexuresSkipped?: { label: string; fileName: string; reason: string }[];
   annexureChars?: number;
   annexuresRead?: boolean;
+  /** How many included annexures were uploaded with the run (rest come from the SOP record). */
+  uploadedAnnexureCount?: number;
   /** False for older history rows created before annexure tracking existed. */
   annexureStatusTracked?: boolean;
 }
@@ -76,6 +91,13 @@ const severityStyle: Record<string, string> = {
   medium: 'bg-amber-50 text-amber-700 border-amber-200',
   low: 'bg-slate-50 text-slate-700 border-slate-200',
 };
+
+type PointFilter = 'all' | 'solved' | 'open';
+
+function matchesPointFilter(point: RunPoint, filter: PointFilter): boolean {
+  if (filter === 'all') return true;
+  return filter === 'solved' ? point.status === 'addressed' : point.status === 'open';
+}
 
 function scoreColor(score: number): string {
   if (score >= 8) return 'text-emerald-700 bg-emerald-50 border-emerald-200';
@@ -112,6 +134,9 @@ function normalizeRun(raw: Record<string, unknown>): RecheckRun {
       typeof raw.annexuresRead === 'boolean'
         ? raw.annexuresRead
         : included.length > 0 || annexureChars > 0,
+    uploadedAnnexureCount:
+      Number(raw.uploadedAnnexureCount ?? 0) ||
+      included.filter((a) => a.source === 'uploaded').length,
     annexureStatusTracked,
   };
 }
@@ -155,6 +180,7 @@ function RunView({
   compact = false,
   forceExpandCards = false,
   exportMeta,
+  statusFilter = 'all',
 }: {
   run: RecheckRun;
   hideBanner?: boolean;
@@ -163,6 +189,8 @@ function RunView({
   /** Expand cards + include modal title so PDF capture mirrors the full UI. */
   forceExpandCards?: boolean;
   exportMeta?: { sopIdentifier: string; sopName: string };
+  /** Header filter — limits the prior points shown to solved / not solved. */
+  statusFilter?: PointFilter;
 }) {
   const [run, setRun] = useState<RecheckRun>(initial);
   useEffect(() => setRun(initial), [initial]);
@@ -203,6 +231,10 @@ function RunView({
   const activeIssues = run.newIssues.filter((n) => !n.ignored);
   const showBanner = !hideBanner || forceExpandCards;
   const showChrome = !compact || forceExpandCards;
+  // Keep the original index so ignore toggles still patch the right row.
+  const visiblePoints = run.results
+    .map((r, i) => ({ point: r, index: i }))
+    .filter(({ point }) => matchesPointFilter(point, statusFilter));
 
   return (
     <div className="space-y-4 select-text bg-white p-1">
@@ -288,15 +320,34 @@ function RunView({
                 <p className="font-black uppercase tracking-wide text-[10px] text-emerald-700">
                   Annexures read ({run.annexuresIncluded?.length ?? 0} file
                   {(run.annexuresIncluded?.length ?? 0) === 1 ? '' : 's'}
+                  {run.uploadedAnnexureCount ? ` · ${run.uploadedAnnexureCount} uploaded` : ''}
                   {run.annexureChars ? ` · ${run.annexureChars.toLocaleString()} chars` : ''})
                 </p>
-                <p className="mt-0.5 text-[11px] text-emerald-800 truncate" title={(run.annexuresIncluded ?? [])
-                  .map((a) => `${a.label}${a.fileName ? ` (${a.fileName})` : ''}`)
-                  .join(' · ')}>
-                  {(run.annexuresIncluded ?? [])
-                    .map((a) => `${a.label}${a.fileName ? ` (${a.fileName})` : ''}`)
-                    .join(' · ') || 'Linked annexure text was included in this re-check.'}
-                </p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {(run.annexuresIncluded ?? []).map((a, i) => {
+                    const uploaded = a.source === 'uploaded';
+                    const chip = (
+                      <span
+                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${
+                          uploaded
+                            ? 'border-purple-200 bg-purple-50 text-purple-800'
+                            : 'border-emerald-200 bg-white text-emerald-800'
+                        }`}
+                        title={`${a.fileName || a.label} — ${uploaded ? 'uploaded with this re-check' : 'linked to the SOP record'}`}
+                      >
+                        {uploaded ? <UploadCloud className="h-3 w-3" /> : <Paperclip className="h-3 w-3" />}
+                        {a.label}
+                      </span>
+                    );
+                    return a.fileUrl ? (
+                      <a key={i} href={a.fileUrl} target="_blank" rel="noopener noreferrer">
+                        {chip}
+                      </a>
+                    ) : (
+                      <span key={i}>{chip}</span>
+                    );
+                  })}
+                </div>
               </>
             ) : (
               <>
@@ -305,10 +356,10 @@ function RunView({
                 </p>
                 <p className="mt-0.5 text-[11px] text-amber-800">
                   {(run.annexuresSkipped?.length ?? 0) > 0
-                    ? `Linked files were present but not usable: ${(run.annexuresSkipped ?? [])
+                    ? `Annexure files were present but not usable: ${(run.annexuresSkipped ?? [])
                         .map((s) => `${s.label} — ${s.reason}`)
                         .join('; ')}`
-                    : 'No linked annexure files on this SOP. Link Annexure I / forms first, then re-check again.'}
+                    : 'No annexures were read. Upload the revised Annexure I / forms with the re-check, or link them to the SOP first.'}
                 </p>
               </>
             )}
@@ -332,7 +383,12 @@ function RunView({
               </span>
             </div>
           )}
-          {run.results.map((r, i) => (
+          {visiblePoints.length === 0 && (
+            <p className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-xs text-gray-500">
+              No {statusFilter === 'solved' ? 'solved' : 'unsolved'} points in this run.
+            </p>
+          )}
+          {visiblePoints.map(({ point: r, index: i }) => (
             <div key={`${i}-${forceExpandCards ? 'export' : 'live'}`} className={r.ignored ? 'opacity-45' : ''}>
               <div className="flex items-center gap-2 mb-1">
                 <span
@@ -344,6 +400,22 @@ function RunView({
                 >
                   {r.status === 'addressed' ? 'Solved' : 'Not solved'}
                 </span>
+                {r.carriedForward && (
+                  <span
+                    className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 border border-emerald-200"
+                    title="Already solved in an earlier re-check — carried forward, not re-audited"
+                  >
+                    Carried forward
+                  </span>
+                )}
+                {r.origin === 'new-issue' && (
+                  <span
+                    className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 border border-rose-200"
+                    title="Raised as a new issue by an earlier re-check — now tracked here instead of being reported again"
+                  >
+                    From earlier re-check
+                  </span>
+                )}
                 {r.ignored && (
                   <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">
                     Ignored
@@ -440,18 +512,23 @@ export default function RecheckSopModal({
 }: RecheckSopModalProps) {
   const [view, setView] = useState<'run' | 'history'>(initialView);
   const [file, setFile] = useState<File | null>(null);
+  const [annexures, setAnnexures] = useState<File[]>([]);
   const [status, setStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [activeRun, setActiveRun] = useState<RecheckRun | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const annexureInputRef = useRef<HTMLInputElement>(null);
 
   const [historyRuns, setHistoryRuns] = useState<RecheckRun[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
+  const [pointFilter, setPointFilter] = useState<PointFilter>('all');
   const [exportingPdf, setExportingPdf] = useState(false);
   const [copyingText, setCopyingText] = useState(false);
   const exportRootRef = useRef<HTMLDivElement | null>(null);
+  const scrollBodyRef = useRef<HTMLDivElement | null>(null);
 
   const exportableRun: RecheckRun | null =
     view === 'run' && status === 'done' && activeRun
@@ -469,14 +546,16 @@ export default function RecheckSopModal({
     ];
     if (run.annexuresRead && run.annexuresIncluded?.length) {
       lines.push(
-        `Annexures read: ${run.annexuresIncluded.map((a) => a.label).join(', ')}`,
+        `Annexures read: ${run.annexuresIncluded
+          .map((a) => `${a.label}${a.source === 'uploaded' ? ' (uploaded with re-check)' : ''}`)
+          .join(', ')}`,
         '',
       );
     }
     run.results.forEach((r, i) => {
       const f = r.finding;
       lines.push(
-        `── Point ${i + 1}: ${r.status === 'addressed' ? 'SOLVED' : 'NOT SOLVED'}${r.ignored ? ' (ignored)' : ''} ──`,
+        `── Point ${i + 1}: ${r.status === 'addressed' ? 'SOLVED' : 'NOT SOLVED'}${r.carriedForward ? ' (carried forward)' : ''}${r.ignored ? ' (ignored)' : ''} ──`,
         [f.guidelineName, f.clauseNumber, f.clauseTitle].filter(Boolean).join(' · '),
         f.sopSectionAffected ? `Section: ${f.sopSectionAffected}` : '',
         f.guidelineRequirement ? `Guideline requirement:\n${f.guidelineRequirement}` : '',
@@ -518,10 +597,23 @@ export default function RecheckSopModal({
     }
   };
 
+  /** Auto file name from the SOP identifier + name, e.g. QCGE05-00_Operation...-recheck-2026-07-30.pdf */
+  const buildPdfFileName = (run: RecheckRun): string => {
+    const stamp = new Date(run.createdAt ?? Date.now()).toISOString().slice(0, 10);
+    const base = [sopIdentifier, sopName]
+      .filter(Boolean)
+      .join('-')
+      .replace(/[^\w.-]+/g, '_')
+      .replace(/_{2,}/g, '_')
+      .replace(/^[_.-]+|[_.-]+$/g, '')
+      .slice(0, 90);
+    return `${base || 'sop'}-recheck-${stamp}.pdf`;
+  };
+
   const handleExportPdf = async () => {
     if (!exportableRun || exportingPdf) return;
     setExportingPdf(true);
-    // Expand banners/cards to match the UI, then print (Save as PDF = selectable text).
+    // Let the forceExpandCards re-render flush so the capture matches the UI.
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -533,10 +625,10 @@ export default function RecheckSopModal({
       if (!exportRootRef.current) {
         throw new Error('Nothing to export — open a completed re-check first.');
       }
-      const safeTitle = `recheck-${sopIdentifier || 'sop'}`.replace(/[^\w.-]+/g, '_');
-      await printElementAsSelectablePdf({
+      await exportComplianceReportToPdf({
         element: exportRootRef.current,
-        documentTitle: safeTitle,
+        fileName: buildPdfFileName(exportableRun),
+        unclip: [scrollBodyRef.current],
       });
     } catch (err) {
       console.error('[recheck] PDF export failed:', err);
@@ -546,12 +638,20 @@ export default function RecheckSopModal({
     }
   };
 
+  const solvedCount = exportableRun
+    ? exportableRun.results.filter((r) => r.status === 'addressed').length
+    : 0;
+  const notSolvedCount = exportableRun ? exportableRun.results.length - solvedCount : 0;
+
   const reset = useCallback(() => {
     setFile(null);
+    setAnnexures([]);
+    setPointFilter('all');
     setStatus('idle');
     setErrorMsg('');
     setActiveRun(null);
     if (inputRef.current) inputRef.current.value = '';
+    if (annexureInputRef.current) annexureInputRef.current.value = '';
   }, []);
 
   useEffect(() => {
@@ -559,6 +659,7 @@ export default function RecheckSopModal({
     setView(initialView);
     setExpandedRun(null);
     setHistoryRuns([]);
+    setHistoryError('');
     reset();
   }, [isOpen, reportId, initialView, reset]);
 
@@ -571,12 +672,18 @@ export default function RecheckSopModal({
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
+    setHistoryError('');
     try {
       const res = await fetch(`/api/compliance/recheck/history?reportId=${reportId}`);
-      const data = await res.json();
-      if (data.success) setHistoryRuns((data.runs ?? []).map(normalizeRun));
-    } catch {
-      /* ignore */
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        // Never fall through to the empty state — a failed load is not "no runs".
+        throw new Error(data.error || `Could not load history (HTTP ${res.status}).`);
+      }
+      setHistoryRuns((data.runs ?? []).map(normalizeRun));
+    } catch (e) {
+      setHistoryRuns([]);
+      setHistoryError(e instanceof Error ? e.message : 'Could not load re-check history.');
     } finally {
       setHistoryLoading(false);
     }
@@ -595,6 +702,7 @@ export default function RecheckSopModal({
       const fd = new FormData();
       fd.append('reportId', reportId);
       fd.append('file', file);
+      annexures.forEach((a) => fd.append('annexures', a));
       const res = await fetch('/api/compliance/recheck', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -620,6 +728,22 @@ export default function RecheckSopModal({
     setErrorMsg('');
   };
 
+  /** Annexures (forms, logs, record templates) audited together with the revised SOP. */
+  const addAnnexures = (list: FileList | File[] | null) => {
+    if (!list) return;
+    const incoming = Array.from(list).filter((f) => /\.(pdf|docx)$/i.test(f.name));
+    if (incoming.length) {
+      setAnnexures((prev) => {
+        const seen = new Set(prev.map((f) => `${f.name}:${f.size}`));
+        return [...prev, ...incoming.filter((f) => !seen.has(`${f.name}:${f.size}`))];
+      });
+    }
+    if (annexureInputRef.current) annexureInputRef.current.value = '';
+  };
+
+  const removeAnnexure = (index: number) =>
+    setAnnexures((prev) => prev.filter((_, i) => i !== index));
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-2 bg-black/60 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-[98vw] h-[96vh] max-w-none flex flex-col overflow-hidden">
@@ -635,9 +759,35 @@ export default function RecheckSopModal({
                 {sopName ? ` — ${sopName}` : ''}
               </p>
             </div>
-            {(() => {
-              return exportableRun ? <VerdictPill run={exportableRun} /> : null;
-            })()}
+            {exportableRun && <VerdictPill run={exportableRun} />}
+            {exportableRun && exportableRun.results.length > 0 && (
+              <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-0.5 shrink-0">
+                {([
+                  { key: 'all', label: 'All', count: exportableRun.results.length, active: 'bg-gray-800 text-white' },
+                  { key: 'solved', label: 'Solved', count: solvedCount, active: 'bg-emerald-600 text-white' },
+                  { key: 'open', label: 'Not solved', count: notSolvedCount, active: 'bg-amber-600 text-white' },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => setPointFilter(opt.key)}
+                    className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold whitespace-nowrap transition-colors ${
+                      pointFilter === opt.key ? opt.active : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                    title={`Show ${opt.label.toLowerCase()} points`}
+                  >
+                    {opt.label}
+                    <span
+                      className={`rounded px-1 text-[10px] font-black ${
+                        pointFilter === opt.key ? 'bg-white/25' : 'bg-white border border-gray-200'
+                      }`}
+                    >
+                      {opt.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             {exportableRun && (
@@ -661,7 +811,7 @@ export default function RecheckSopModal({
                   onClick={() => void handleExportPdf()}
                   disabled={exportingPdf}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
-                  title="Print / Save as PDF — keep the UI layout with selectable text"
+                  title="Download this re-check as a PDF named after the SOP"
                 >
                   {exportingPdf ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -719,43 +869,129 @@ export default function RecheckSopModal({
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 select-text">
+        <div ref={scrollBodyRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-3 select-text">
           {view === 'run' ? (
             <>
-              {!file && (
-                <label
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setDragOver(true);
-                  }}
-                  onDragLeave={() => setDragOver(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setDragOver(false);
-                    pickFile(e.dataTransfer.files?.[0] ?? null);
-                  }}
-                  className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-6 cursor-pointer transition-all ${
-                    dragOver
-                      ? 'border-purple-400 bg-purple-50'
-                      : 'border-gray-300 hover:border-purple-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <input
-                    ref={inputRef}
-                    type="file"
-                    accept=".pdf,.docx"
-                    className="hidden"
-                    onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
-                  />
-                  <UploadCloud className="h-6 w-6 text-gray-400" />
-                  <p className="text-sm font-semibold text-gray-700">Upload the revised SOP</p>
-                  <p className="text-xs text-gray-400">Drag &amp; drop or click — PDF or DOCX (DOCX recommended)</p>
-                </label>
+              {status !== 'running' && (
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {!file ? (
+                    <label
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setDragOver(true);
+                      }}
+                      onDragLeave={() => setDragOver(false)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setDragOver(false);
+                        pickFile(e.dataTransfer.files?.[0] ?? null);
+                      }}
+                      className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-6 cursor-pointer transition-all ${
+                        dragOver
+                          ? 'border-purple-400 bg-purple-50'
+                          : 'border-gray-300 hover:border-purple-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        ref={inputRef}
+                        type="file"
+                        accept=".pdf,.docx"
+                        className="hidden"
+                        onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+                      />
+                      <UploadCloud className="h-6 w-6 text-gray-400" />
+                      <p className="text-sm font-semibold text-gray-700">Upload the revised SOP</p>
+                      <p className="text-xs text-gray-400">
+                        Drag &amp; drop or click — PDF or DOCX (DOCX recommended)
+                      </p>
+                    </label>
+                  ) : (
+                    <div className="flex items-center gap-2 rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
+                      <FileText className="h-5 w-5 text-purple-600 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] font-black uppercase tracking-wide text-purple-700">
+                          Revised SOP
+                        </p>
+                        <p className="truncate text-xs font-semibold text-gray-800" title={file.name}>
+                          {file.name}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => pickFile(null)}
+                        className="shrink-0 rounded border border-purple-200 bg-white px-2 py-0.5 text-[10px] font-bold text-purple-700 hover:bg-purple-100"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  )}
+
+                  <div
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      addAnnexures(e.dataTransfer.files);
+                    }}
+                    className="rounded-xl border-2 border-dashed border-gray-300 px-4 py-3"
+                  >
+                    <input
+                      ref={annexureInputRef}
+                      type="file"
+                      accept=".pdf,.docx"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => addAnnexures(e.target.files)}
+                    />
+                    <div className="flex items-center gap-2">
+                      <Paperclip className="h-4 w-4 text-gray-400 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold text-gray-700">
+                          Annexures (optional)
+                        </p>
+                        <p className="text-[11px] text-gray-400">
+                          Forms, logs and record templates — audited as evidence with the SOP.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => annexureInputRef.current?.click()}
+                        className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-bold text-gray-700 hover:bg-gray-50"
+                      >
+                        <Plus className="h-3 w-3" />
+                        Add files
+                      </button>
+                    </div>
+                    {annexures.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {annexures.map((a, i) => (
+                          <span
+                            key={`${a.name}-${i}`}
+                            className="inline-flex items-center gap-1 rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-semibold text-gray-700"
+                            title={a.name}
+                          >
+                            <Paperclip className="h-3 w-3 text-gray-400" />
+                            <span className="max-w-[180px] truncate">{a.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeAnnexure(i)}
+                              className="text-gray-400 hover:text-rose-600"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
 
               {file && status === 'idle' && (
                 <p className="text-xs text-gray-500">
-                  File ready — click <span className="font-semibold text-purple-700">Run AI Re-check</span> in the header.
+                  {annexures.length
+                    ? `SOP + ${annexures.length} annexure file(s) ready — click `
+                    : 'File ready — click '}
+                  <span className="font-semibold text-purple-700">Run AI Re-check</span> in the header.
                 </p>
               )}
 
@@ -782,6 +1018,7 @@ export default function RecheckSopModal({
                     hideBanner
                     forceExpandCards={exportingPdf}
                     exportMeta={{ sopIdentifier, sopName }}
+                    statusFilter={pointFilter}
                   />
                 </div>
               )}
@@ -791,6 +1028,22 @@ export default function RecheckSopModal({
               {historyLoading ? (
                 <div className="flex items-center justify-center gap-2 py-10 text-sm text-gray-500">
                   <Loader2 className="h-5 w-5 animate-spin" /> Loading history…
+                </div>
+              ) : historyError ? (
+                <div className="mx-auto max-w-md text-center py-12 space-y-3">
+                  <div className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    {historyError}
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => void loadHistory()}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold text-purple-700 border border-purple-200 bg-purple-50 hover:bg-purple-100"
+                    >
+                      Retry
+                    </button>
+                  </div>
                 </div>
               ) : historyRuns.length === 0 ? (
                 <div className="text-center py-12 text-sm text-gray-500">
@@ -803,7 +1056,10 @@ export default function RecheckSopModal({
                       <div className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50">
                         <button
                           type="button"
-                          onClick={() => setExpandedRun((cur) => (cur === r.id ? null : r.id))}
+                          onClick={() => {
+                            setPointFilter('all');
+                            setExpandedRun((cur) => (cur === r.id ? null : r.id));
+                          }}
                           className="flex items-center gap-3 text-left min-w-0 flex-1"
                         >
                           <span className={`shrink-0 text-center rounded-lg border px-2.5 py-1 ${scoreColor(r.score)}`}>
@@ -857,6 +1113,7 @@ export default function RecheckSopModal({
                             compact
                             forceExpandCards={exportingPdf}
                             exportMeta={{ sopIdentifier, sopName }}
+                            statusFilter={pointFilter}
                           />
                         </div>
                       )}

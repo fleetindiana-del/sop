@@ -71,7 +71,8 @@ export async function POST(_req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Training not yet completed' }, { status: 400 });
     }
     const stepsRecord = progress.steps as Record<string, { passed?: boolean; completed?: boolean }> | undefined;
-    const quizKeys = (progress.availableSteps || []).filter((k) => k === 'quiz' || k === 'quizGu');
+    const availableSteps = (progress.availableSteps ?? []) as string[];
+    const quizKeys = availableSteps.filter((k) => k === 'quiz' || k === 'quizGu');
     if (quizKeys.length > 0) {
       const quizPassed = quizKeys.some((k) => stepsRecord?.[k]?.passed === true || stepsRecord?.[k]?.completed === true);
       if (!quizPassed) {

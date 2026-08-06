@@ -38,9 +38,10 @@ export function filterToDashboardDepartments(
   names: Iterable<string>,
   allowed: ReadonlySet<string> | readonly string[],
 ): string[] {
-  const allow = allowed instanceof Set
-    ? allowed
-    : new Set(allowed.map((d) => d.toLowerCase()));
+  const allow: ReadonlySet<string> =
+    allowed instanceof Set
+      ? allowed
+      : new Set([...allowed].map((d) => d.toLowerCase()));
   const out: string[] = [];
   for (const raw of names) {
     const name = String(raw || '').trim();

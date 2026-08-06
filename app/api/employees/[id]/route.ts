@@ -8,6 +8,8 @@ import {
   formatDateOfJoiningInput,
 } from '@/lib/employeeInduction';
 import { invalidateEmployeeAssignmentsCache } from '@/lib/employeeAssignments';
+import { parseTrainerDepartments } from '@/lib/employeeTrainer';
+import { invalidateManageSopViewCache } from '@/lib/manageSopViewCache';
 import Employee from '@/models/Employee';
 
 export const dynamic = 'force-dynamic';
@@ -18,10 +20,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     await connectDB();
     const { id } = await params;
     const body = await req.json();
-    const allowed = ['name', 'designation', 'department', 'employeeId', 'isActive'];
+    const allowed = ['name', 'designation', 'department', 'employeeId', 'isActive', 'isTrainer'];
     const update: Record<string, unknown> = {};
     for (const k of allowed) {
-      if (body[k] !== undefined) update[k] = typeof body[k] === 'string' ? body[k].trim() : body[k];
+      if (body[k] !== undefined) {
+        if (k === 'isTrainer') {
+          update[k] = body[k] === true;
+        } else {
+          update[k] = typeof body[k] === 'string' ? body[k].trim() : body[k];
+        }
+      }
     }
 
     if (body.dateOfJoining !== undefined) {
@@ -42,6 +50,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       update.inductionTrainingRequired = resolveInductionTrainingRequired(nextDoj, manual);
     }
 
+    const nextIsTrainer = body.isTrainer !== undefined
+      ? body.isTrainer === true
+      : !!existing.isTrainer;
+    const nextHomeDept = typeof update.department === 'string'
+      ? update.department
+      : existing.department;
+
+    if (body.trainerDepartments !== undefined || body.isTrainer !== undefined || body.department !== undefined) {
+      if (nextIsTrainer) {
+        const trainerDepts = parseTrainerDepartments(
+          body.trainerDepartments !== undefined
+            ? body.trainerDepartments
+            : existing.trainerDepartments,
+          nextHomeDept,
+        );
+        if (trainerDepts.length === 0) {
+          return NextResponse.json(
+            { error: 'Select at least one department for a trainer' },
+            { status: 400 },
+          );
+        }
+        update.isTrainer = true;
+        update.trainerDepartments = trainerDepts;
+      } else {
+        update.isTrainer = false;
+        update.trainerDepartments = [];
+      }
+    }
+
     // Optional learning-module password set/reset.
     if (typeof body.password === 'string' && body.password.length > 0) {
       if (body.password.length < 4) {
@@ -59,18 +96,27 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       );
     }
 
-    const employee = await Employee.findByIdAndUpdate(id, { $set: update }, { new: true });
-    if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+    // Prefer document.save() so array fields like trainerDepartments are always
+    // persisted (findByIdAndUpdate can drop unknown paths on a stale compiled model).
+    existing.set(update);
+    if (Object.prototype.hasOwnProperty.call(update, 'trainerDepartments')) {
+      existing.markModified('trainerDepartments');
+    }
+    await existing.save();
 
     invalidateEmployeeAssignmentsCache();
+    void invalidateManageSopViewCache();
 
     // Never leak the hash; report whether a password is set instead.
-    const out = employee.toObject();
+    const out = existing.toObject();
     delete out.lmsPasswordHash;
     const hasLmsPassword = !!update.lmsPasswordHash || !!existing.lmsPasswordHash;
     return NextResponse.json({
       employee: {
         ...out,
+        trainerDepartments: Array.isArray(out.trainerDepartments)
+          ? out.trainerDepartments
+          : [],
         dateOfJoining: out.dateOfJoining
           ? formatDateOfJoiningInput(out.dateOfJoining as Date)
           : undefined,

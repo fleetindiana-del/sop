@@ -5,7 +5,7 @@
 
 // ─── Client cache keys ──────────────────────────────────────────────────────
 
-export const LMS_CACHE_KEY = 'lms-portal-cache-v3';
+export const LMS_CACHE_KEY = 'lms-portal-cache-v5';
 /** Skip network when client cache is younger than this. */
 export const LMS_CLIENT_FRESH_MS = 60_000;
 
@@ -214,9 +214,14 @@ export function invalidateLmsClientFields(...fields: string[]) {
 /** Client cache field names used by LMS pages. */
 export const lmsClientFields = {
   employee: 'employee',
-  dashboard: 'dashboard',
-  journey: (sopCode: string) => `journey:${sopCode}`,
-  certificate: (sopCode: string) => `certificate:${sopCode}`,
+  /** Learner dashboard — always scoped to employee so progress never leaks across logins. */
+  dashboard: (employeeId: string) => `dashboard:${String(employeeId || '').trim()}`,
+  /** Journey payload — scoped to employee + SOP. */
+  journey: (employeeId: string, sopCode: string) =>
+    `journey:${String(employeeId || '').trim()}:${String(sopCode || '').toUpperCase()}`,
+  /** Certificate payload — scoped to employee + SOP. */
+  certificate: (employeeId: string, sopCode: string) =>
+    `certificate:${String(employeeId || '').trim()}:${String(sopCode || '').toUpperCase()}`,
   adminTrainingStatus: (dept: string) => `admin:training-status:${dept || 'all'}`,
   adminEmployeeTraining: (dept: string) => `admin:employee-training:v2:${dept || 'all'}`,
   adminMeta: 'admin:meta:v2',
@@ -224,6 +229,15 @@ export const lmsClientFields = {
   adminExamSettings: 'admin:exam-settings',
   adminSopExamSettings: 'admin:sop-exam-settings:v3',
 } as const;
+
+/** Current LMS learner id from session cache (set on login / session restore). */
+export function getCachedLmsEmployeeId(): string {
+  const cached = readLmsClientCache<{ employee?: { id?: string; _id?: string } }>(
+    lmsClientFields.employee,
+  );
+  const emp = cached?.value?.employee;
+  return String(emp?.id || emp?._id || '').trim();
+}
 
 /**
  * Stale-while-revalidate fetch for LMS pages.

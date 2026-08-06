@@ -71,9 +71,13 @@ function parseEmployeeRules(raw: unknown, fallbackBase: Omit<SopExamSettingsPayl
       employeeName: String(r.employeeName || '').trim() || employeeId,
       department: String(r.department || '').trim(),
       designation: String(r.designation || '').trim(),
+      isTrainer: r.isTrainer === true,
       trialQuestionCount: clampInt(r.trialQuestionCount, 0, 50, fallbackBase.trialQuestionCount),
       examQuestionCount: clampInt(r.examQuestionCount, 1, 200, fallbackBase.examQuestionCount),
-      passingScore: clampInt(r.passingScore, 1, 100, fallbackBase.passingScore),
+      // Trainers always require 100% to pass.
+      passingScore: r.isTrainer === true
+        ? 100
+        : clampInt(r.passingScore, 1, 100, fallbackBase.passingScore),
       maxAttempts: clampInt(r.maxAttempts, 0, 999, fallbackBase.maxAttempts),
       timeLimitMinutes: clampInt(r.timeLimitMinutes, 0, 600, fallbackBase.timeLimitMinutes),
       shuffleMode: parseShuffleMode(r.shuffleMode, fallbackBase.shuffleMode),

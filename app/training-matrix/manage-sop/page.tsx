@@ -11,6 +11,7 @@ import React, {
   useContext,
   createContext,
   memo,
+  Suspense,
 } from 'react';
 import { Search, Download, ArrowLeft, Filter, ScrollText, Users, Tag, Wand2, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import Link from 'next/link';
@@ -159,7 +160,8 @@ interface ManageSOPViewResponse {
   designationsByDept: Record<string, string[]>;
   employeeCountsByDeptDesig: Record<string, Record<string, number>>;
   employeesByDept?: Record<string, Array<{ name: string; designation: string }>>;
-  stats: { total: number; assigned: number; unassigned: number };
+  unassignedEmployees?: Array<{ name: string; designation: string; department: string }>;
+  stats: { total: number; assigned: number; unassigned: number; unassignedEmployees?: number };
   sopCountsByDeptMonth?: Record<string, Record<number, number>>;
   sopCountsByMonth?: Record<number, number>;
   sopCountsByDept?: Record<string, number>;
@@ -169,7 +171,7 @@ interface ManageSOPViewResponse {
   year: number | 'all';
 }
 
-const MANAGE_SOP_VIEW_LOCAL_CACHE_KEY = 'manage_sop_view_cache_v8';
+const MANAGE_SOP_VIEW_LOCAL_CACHE_KEY = 'manage_sop_view_cache_v9';
 const TRAINING_MATRIX_OVERVIEW_CACHE_KEY = 'training_matrix_overview_cache_v6';
 const TRAINING_MATRIX_NEEDS_REFRESH_KEY = 'training_matrix_needs_refresh_v1';
 const EMPLOYEE_DISPLAY_COLUMNS = 3;
@@ -282,7 +284,7 @@ function highlightText(text: string, query: string): React.ReactNode {
   );
 }
 
-export default function ManageSOPDashboard() {
+function ManageSOPDashboard() {
   useAuthGuard();
   const searchParams = useSearchParams();
   const backHref = searchParams.get('returnTo') === 'induction'
@@ -299,15 +301,18 @@ export default function ManageSOPDashboard() {
   const [sortKey, setSortKey] = useState<SortKey>('sr');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   // Card filter — drives which SOPs the table shows when the user clicks a stat card.
-  //   'all'        → no extra filter (default)
-  //   'assigned'   → only SOPs in the snapshot (NOT in unassignedSopCodes)
-  //   'unassigned' → only SOPs in unassignedSopCodes (the same set the main page reds out)
-  const [cardFilter, setCardFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
+  //   'all'                   → no extra filter (default)
+  //   'assigned'              → only SOPs in the snapshot (NOT in unassignedSopCodes)
+  //   'unassigned'            → only SOPs in unassignedSopCodes
+  //   'unassigned-employees'  → highlight Unassigned Employees card + open that list
+  const [cardFilter, setCardFilter] = useState<'all' | 'assigned' | 'unassigned' | 'unassigned-employees'>('all');
   // Table view mode — 'designation' renders the canonical 6-designation grid,
   // 'employee' replaces the inner column with the resolved employee roster per dept.
   // Checkboxes still operate on the underlying designation overrides, so toggling
   // an employee toggles their designation (and every other employee of that designation).
   const [viewMode, setViewMode] = useState<'designation' | 'employee' | 'calendar'>('designation');
+  const [unassignedEmpModalOpen, setUnassignedEmpModalOpen] = useState(false);
+  const [autoAssigningEmployees, setAutoAssigningEmployees] = useState(false);
   // Collapse KPI + search/actions so Calendar fits on one screen.
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
   // Editing state — per-SOP slices so React.memo on rows works.
@@ -1073,6 +1078,89 @@ export default function ManageSOPDashboard() {
     }
   };
 
+  // ─── Auto-Assign Employees ────────────────────────────────────────────────────
+  // For every employee with no SOP assignments, tick their designation onto every
+  // SOP already scheduled in their department (existing months preserved), then
+  // persist through the same apply path as a manual Update.
+  const autoAssignEmployees = async () => {
+    if (!viewData || autoAssigningEmployees || autoAssigning || applying) return;
+    setApplyMsg(null);
+
+    const unassigned = viewData.unassignedEmployees || [];
+    if (unassigned.length === 0) {
+      setApplyMsg({ kind: 'ok', text: 'No unassigned employees to assign.' });
+      return;
+    }
+
+    const ok = typeof window === 'undefined'
+      ? true
+      : window.confirm(
+          `Auto-assign ${unassigned.length} unassigned employee(s) to SOPs already scheduled in their department?\n\n` +
+          `Each employee's designation is ticked on those SOPs and saved into the training matrix. ` +
+          `Existing SOP schedules are not changed.`,
+        );
+    if (!ok) return;
+
+    const newMonthCells: PerSop = { ...monthCells };
+    const newOverrides: PerSop = { ...overrides };
+    let planned = 0;
+    let skipped = 0;
+
+    for (const emp of unassigned) {
+      const dept = emp.department;
+      const desig = String(emp.designation || '').trim();
+      if (!dept || !desig) {
+        skipped += 1;
+        continue;
+      }
+
+      let touched = false;
+      for (const sop of viewData.sops) {
+        const deptStat = sop.deptStats.find((ds) => ds.department === dept);
+        const manualMonths =
+          viewData.manualAllocations?.[sopCacheKey(sop.sopCode)]?.[dept] || [];
+        const months: number[] = [];
+        if (deptStat?.scheduledMonth) months.push(deptStat.scheduledMonth);
+        for (const m of manualMonths) {
+          if (!months.includes(m)) months.push(m);
+        }
+        if (months.length === 0) continue;
+
+        const monthInner = { ...(newMonthCells[sop.sopCode] || {}) };
+        for (const m of months) monthInner[cellInnerKey(dept, m)] = true;
+        newMonthCells[sop.sopCode] = monthInner;
+
+        const desigInner = { ...(newOverrides[sop.sopCode] || {}) };
+        desigInner[desigKey(dept, desig)] = true;
+        newOverrides[sop.sopCode] = desigInner;
+        touched = true;
+      }
+
+      if (touched) planned += 1;
+      else skipped += 1;
+    }
+
+    if (planned === 0) {
+      setApplyMsg({
+        kind: 'ok',
+        text: skipped > 0
+          ? `No assignable employees — ${skipped} have no scheduled SOPs in their department.`
+          : 'No unassigned employees to assign.',
+      });
+      return;
+    }
+
+    setAutoAssigningEmployees(true);
+    try {
+      setMonthCells(newMonthCells);
+      setOverrides(newOverrides);
+      await applyChanges(newMonthCells, newOverrides);
+      setUnassignedEmpModalOpen(false);
+    } finally {
+      setAutoAssigningEmployees(false);
+    }
+  };
+
   // Has the user toggled any designation in (sop, dept) — used for "highlighted" state.
   // Checks the full global union so cross-dept assignments are also reflected.
   const isDeptActive = (sopCode: string, dept: string): boolean => {
@@ -1229,6 +1317,7 @@ export default function ManageSOPDashboard() {
 
       if (cardFilter === 'unassigned' && !unassignedSet.has(code.toUpperCase())) return false;
       if (cardFilter === 'assigned' && unassignedSet.has(code.toUpperCase())) return false;
+      // 'unassigned-employees' keeps the full SOP list; the employee list opens in a modal.
 
       if (q) {
         const textMatch =
@@ -1850,10 +1939,13 @@ export default function ManageSOPDashboard() {
           {!headerCollapsed && (
             <>
               {/* Stats Cards — clicking filters the SOP table to that bucket. */}
-              <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
                 <button
                   type="button"
-                  onClick={() => setCardFilter('all')}
+                  onClick={() => {
+                    setCardFilter('all');
+                    setUnassignedEmpModalOpen(false);
+                  }}
                   className={`text-left bg-purple-50 border rounded-lg p-3 transition hover:bg-purple-100 ${
                     cardFilter === 'all' ? 'border-purple-500 ring-2 ring-purple-300' : 'border-purple-200'
                   }`}
@@ -1863,7 +1955,10 @@ export default function ManageSOPDashboard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setCardFilter('assigned')}
+                  onClick={() => {
+                    setCardFilter('assigned');
+                    setUnassignedEmpModalOpen(false);
+                  }}
                   className={`text-left bg-blue-50 border rounded-lg p-3 transition hover:bg-blue-100 ${
                     cardFilter === 'assigned' ? 'border-blue-500 ring-2 ring-blue-300' : 'border-blue-200'
                   }`}
@@ -1873,7 +1968,10 @@ export default function ManageSOPDashboard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setCardFilter('unassigned')}
+                  onClick={() => {
+                    setCardFilter('unassigned');
+                    setUnassignedEmpModalOpen(false);
+                  }}
                   className={`text-left bg-red-50 border rounded-lg p-3 transition hover:bg-red-100 ${
                     cardFilter === 'unassigned' ? 'border-red-500 ring-2 ring-red-300' : 'border-red-200'
                   }`}
@@ -1881,12 +1979,28 @@ export default function ManageSOPDashboard() {
                   <div className="text-sm text-red-600 font-medium">Unassigned SOPs</div>
                   <div className="text-2xl font-bold text-red-900">{countsAPI.unassigned()}</div>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCardFilter('unassigned-employees');
+                    setViewMode('employee');
+                    setUnassignedEmpModalOpen(true);
+                  }}
+                  className={`text-left bg-orange-50 border rounded-lg p-3 transition hover:bg-orange-100 ${
+                    cardFilter === 'unassigned-employees' ? 'border-orange-500 ring-2 ring-orange-300' : 'border-orange-200'
+                  }`}
+                >
+                  <div className="text-sm text-orange-600 font-medium">Unassigned Employees</div>
+                  <div className="text-2xl font-bold text-orange-900">
+                    {viewData?.stats.unassignedEmployees ?? viewData?.unassignedEmployees?.length ?? 0}
+                  </div>
+                </button>
               </div>
 
               {/* Search + matrix actions (hidden on calendar — calendar has its own tools) */}
               {viewMode !== 'calendar' && (
-                <div className="flex gap-3 items-center mb-3">
-                  <div className="flex-1 relative">
+                <div className="flex gap-3 items-center mb-3 flex-wrap">
+                  <div className="flex-1 relative min-w-[200px]">
                     <Search className="absolute left-3 top-2.5 text-gray-400 w-5 h-5" />
                     <input
                       type="text"
@@ -1901,16 +2015,27 @@ export default function ManageSOPDashboard() {
                   </button>
                   <button
                     onClick={autoAssign}
-                    disabled={autoAssigning || applying}
+                    disabled={autoAssigning || autoAssigningEmployees || applying}
                     className="px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 text-sm font-medium"
                     title="Automatically schedule every unassigned SOP across the year, balanced per month and grouped by department"
                   >
                     <Wand2 className="w-4 h-4" />
                     {autoAssigning ? 'Assigning…' : 'Auto-Assign'}
                   </button>
+                  {(cardFilter === 'unassigned-employees' || unassignedEmpModalOpen) && (
+                    <button
+                      onClick={autoAssignEmployees}
+                      disabled={autoAssigningEmployees || autoAssigning || applying || !(viewData?.unassignedEmployees?.length)}
+                      className="px-3 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 text-sm font-medium"
+                      title="Assign unassigned employees onto SOPs already scheduled in their department"
+                    >
+                      <Users className="w-4 h-4" />
+                      {autoAssigningEmployees ? 'Assigning…' : 'Auto Assign Employees'}
+                    </button>
+                  )}
                   <button
                     onClick={() => applyChanges()}
-                    disabled={applying || autoAssigning}
+                    disabled={applying || autoAssigning || autoAssigningEmployees}
                     className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 text-sm font-medium"
                     title="Persist checked designation × month selections into the training matrix"
                   >
@@ -2322,6 +2447,103 @@ export default function ManageSOPDashboard() {
         </div>
       )}
 
+      {/* Unassigned Employees modal — list + Auto Assign Employees */}
+      {unassignedEmpModalOpen && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setUnassignedEmpModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-lg shadow-2xl flex flex-col w-full max-w-2xl"
+            style={{ maxHeight: '80vh' }}
+          >
+            <div className="flex items-start justify-between px-5 py-3 border-b border-orange-100 bg-orange-50 rounded-t-lg">
+              <div className="min-w-0">
+                <div className="text-base font-bold text-gray-900 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-orange-600" />
+                  Unassigned Employees
+                </div>
+                <div className="text-xs text-gray-600 mt-0.5">
+                  {(viewData?.unassignedEmployees || []).length} employee
+                  {(viewData?.unassignedEmployees || []).length === 1 ? '' : 's'} with no SOP assignments
+                </div>
+              </div>
+              <button
+                onClick={() => setUnassignedEmpModalOpen(false)}
+                className="text-gray-400 hover:text-gray-700 text-2xl leading-none p-1"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto">
+              {(viewData?.unassignedEmployees || []).length === 0 ? (
+                <div className="px-5 py-10 text-center text-sm text-gray-500">
+                  All active employees have at least one SOP assignment.
+                </div>
+              ) : (
+                <table className="w-full text-left text-sm">
+                  <thead className="sticky top-0 bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                    <tr>
+                      <th className="px-5 py-2.5 w-10">#</th>
+                      <th className="px-3 py-2.5">Name</th>
+                      <th className="px-3 py-2.5">Designation</th>
+                      <th className="px-3 py-2.5">Department</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {(viewData?.unassignedEmployees || []).map((emp, idx) => (
+                      <tr key={`${emp.department}|${emp.name}|${idx}`} className="hover:bg-orange-50/40">
+                        <td className="px-5 py-2 text-gray-400">{idx + 1}</td>
+                        <td className="px-3 py-2 font-medium text-gray-900">{emp.name}</td>
+                        <td className="px-3 py-2 text-gray-700">{emp.designation}</td>
+                        <td className="px-3 py-2">
+                          <span
+                            className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded text-white"
+                            style={{ backgroundColor: deptColor(emp.department) }}
+                          >
+                            {deptAbbrLabel(emp.department)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 rounded-b-lg flex items-center justify-between gap-3">
+              <span className="text-xs text-gray-500">
+                Auto Assign ticks each employee&apos;s designation on SOPs already scheduled in their department.
+              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setUnassignedEmpModalOpen(false)}
+                  className="px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded hover:bg-white"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={autoAssignEmployees}
+                  disabled={
+                    autoAssigningEmployees ||
+                    autoAssigning ||
+                    applying ||
+                    !(viewData?.unassignedEmployees?.length)
+                  }
+                  className="px-3 py-1.5 bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 text-sm font-medium"
+                >
+                  <Wand2 className="w-3.5 h-3.5" />
+                  {autoAssigningEmployees ? 'Assigning…' : 'Auto Assign Employees'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Employee modal — quick allocation helper for a specific SOP + department */}
       {addEmpModal && (
         <div
@@ -2649,6 +2871,20 @@ export default function ManageSOPDashboard() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ManageSOPDashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-gray-50">
+          <div className="text-sm font-semibold text-gray-500">Loading…</div>
+        </div>
+      }
+    >
+      <ManageSOPDashboard />
+    </Suspense>
   );
 }
 

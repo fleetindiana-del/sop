@@ -14,7 +14,10 @@ import {
   invalidateTrainingMatrixCache,
 } from "@/lib/trainingMatrixCache";
 import { invalidateInductionTrainingMatrixCache } from "@/lib/inductionTrainingMatrixCache";
-import { invalidateEmployeeAssignmentsCache } from "@/lib/employeeAssignments";
+import {
+  getEmployeeAssignmentsMap,
+  invalidateEmployeeAssignmentsCache,
+} from "@/lib/employeeAssignments";
 import {
   getManageSopViewCacheEntry,
   getManageSopViewMemoryEntry,
@@ -35,6 +38,7 @@ import {
 import {
   resolveTrainingMatrixDepartment,
 } from "@/lib/trainingMatrixDepartments";
+import { resolveTrainerDepartments } from "@/lib/employeeTrainer";
 
 const MONTH_NAMES = [
   "",
@@ -52,6 +56,11 @@ const MONTH_NAMES = [
   "December",
 ];
 const MANAGE_SOP_API_LOG = "[manage-sop][api]";
+
+function hasUnassignedEmployeesPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  return Array.isArray((payload as { unassignedEmployees?: unknown }).unassignedEmployees);
+}
 
 function nowMs(): number {
   if (
@@ -194,8 +203,15 @@ export interface ManageSOPViewResponse {
   employeeCountsByDeptDesig: Record<string, Record<string, number>>;
   // Resolved employee roster per department — name + designation, sorted by name.
   // Used by the page's Employees view to render names in place of designation abbreviations.
-  employeesByDept: Record<string, Array<{ name: string; designation: string }>>;
-  stats: { total: number; assigned: number; unassigned: number };
+  employeesByDept: Record<string, Array<{ name: string; designation: string; isTrainer?: boolean }>>;
+  // Active employees with no SOP training assignments (same source as employee master).
+  unassignedEmployees: Array<{ name: string; designation: string; department: string }>;
+  stats: {
+    total: number;
+    assigned: number;
+    unassigned: number;
+    unassignedEmployees: number;
+  };
   // sopCountsByDeptMonth[dept][month1to12] = number of SOPs scheduled in that (dept, month)
   // Pre-computed server-side so the client can render the per-row month cells without
   // recomputing on every checkbox click.
@@ -276,7 +292,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     // Fast path: fresh memory hit, no DB round-trip.
     const mem = getManageSopViewMemoryEntry(cacheYear, search);
-    if (mem && Date.now() - mem.computedAt <= MANAGE_SOP_FRESH_TTL_MS) {
+    if (
+      mem &&
+      Date.now() - mem.computedAt <= MANAGE_SOP_FRESH_TTL_MS &&
+      hasUnassignedEmployeesPayload(mem.payload)
+    ) {
       console.info(
         `${MANAGE_SOP_API_LOG} GET cache=HIT(mem,fresh) year=${cacheYear} search="${search}" totalMs=${elapsedMs(reqStartMs)}`,
       );
@@ -286,7 +306,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Connect so the durable (Mongo) snapshot fallback is reachable.
     await connectDB();
     const entry = mem || (await getManageSopViewCacheEntry(cacheYear, search));
-    if (entry) {
+    if (entry && hasUnassignedEmployeesPayload(entry.payload)) {
       // Serve immediately. If stale, refresh in the background — the user never waits.
       const age = Date.now() - (entry.computedAt || 0);
       if (age > MANAGE_SOP_FRESH_TTL_MS) {
@@ -352,12 +372,13 @@ async function buildManageSopViewResponse(
       scheduleUploads,
       dashboardCached,
       overviewCached,
+      employeeAssignmentsMap,
     ] = await Promise.all([
       MatrixSOPAssignment.find({ isActive: true })
         .select("sopCode sopName department designationApplicability")
         .lean(),
       Employee.find({ isActive: true })
-        .select("department designation name")
+        .select("department designation name isTrainer trainerDepartments")
         .lean(),
       TrainingMatrixUpload.find({ "snapshot.sopMonthMap": { $exists: true } })
         .select("department snapshot.sopMonthMap uploadedAt year")
@@ -365,6 +386,7 @@ async function buildManageSopViewResponse(
         .lean(),
       getDashboardSopsCache(),
       getTrainingMatrixOverviewCached(),
+      getEmployeeAssignmentsMap(),
     ]);
 
     const activeYear = resolveActiveMatrixYear(
@@ -537,7 +559,7 @@ async function buildManageSopViewResponse(
     const empCountMap = new Map<string, Map<string, number>>();
     const empRoster = new Map<
       string,
-      Array<{ name: string; designation: string }>
+      Array<{ name: string; designation: string; isTrainer?: boolean }>
     >();
     for (const dept of departments) {
       designationsByDept.set(dept, new Set<string>());
@@ -564,14 +586,84 @@ async function buildManageSopViewResponse(
           emp.designation as string,
           (deptMap.get(emp.designation as string) ?? 0) + 1,
         );
-      const roster = empRoster.get(empDept);
       const name = String((emp as any).name || "").trim();
-      if (roster && name)
-        roster.push({ name, designation: emp.designation as string });
+      const isTrainer = !!(emp as any).isTrainer;
+      const homeRoster = empRoster.get(empDept);
+      if (homeRoster && name) {
+        homeRoster.push({
+          name,
+          designation: emp.designation as string,
+          ...(isTrainer ? { isTrainer: true } : {}),
+        });
+      }
+
+      // Trainers also appear under every eligible trainer department.
+      if (isTrainer && name) {
+        const trainerDepts = resolveTrainerDepartments({
+          department: empDept,
+          trainerDepartments: (emp as any).trainerDepartments,
+          isTrainer: true,
+        });
+        for (const rawDept of trainerDepts) {
+          const tDept =
+            resolveTrainingMatrixDepartment(rawDept, departments) ||
+            String(rawDept).trim();
+          if (!tDept || tDept.toLowerCase() === empDept.toLowerCase()) continue;
+          ensureDept(tDept);
+          if (!designationsByDept.has(tDept)) {
+            designationsByDept.set(tDept, new Set<string>());
+            empCountMap.set(tDept, new Map<string, number>());
+            empRoster.set(tDept, []);
+          }
+          const tRoster = empRoster.get(tDept);
+          if (!tRoster) continue;
+          if (tRoster.some((r) => r.name.toLowerCase() === name.toLowerCase())) continue;
+          tRoster.push({
+            name,
+            designation: emp.designation as string,
+            isTrainer: true,
+          });
+        }
+      }
     }
     for (const list of empRoster.values()) {
       list.sort((a, b) => a.name.localeCompare(b.name));
     }
+
+    // Employees with zero SOP assignments — powers the Unassigned Employees card.
+    // Trainers (isTrainer=true) are excluded: they manage all SOPs in their department
+    // and are auto-assigned to every scheduled SOP regardless of designation.
+    const unassignedEmployees: Array<{
+      name: string;
+      designation: string;
+      department: string;
+      isTrainer?: boolean;
+    }> = [];
+    for (const emp of employees as Array<{
+      name?: string;
+      designation?: string;
+      department?: string;
+      isTrainer?: boolean;
+    }>) {
+      const name = String(emp.name || "").trim();
+      const designation = String(emp.designation || "").trim();
+      if (!name || !designation || !emp.department) continue;
+      const empDept =
+        resolveTrainingMatrixDepartment(emp.department, departments) ||
+        String(emp.department).trim();
+      if (!empDept) continue;
+      // Trainers manage all dept SOPs — skip them from unassigned list.
+      if (emp.isTrainer) continue;
+      const key = `${empDept}||${name}`.trim().toLowerCase();
+      const assigned = employeeAssignmentsMap.get(key);
+      if (assigned && assigned.length > 0) continue;
+      unassignedEmployees.push({ name, designation, department: empDept });
+    }
+    unassignedEmployees.sort((a, b) => {
+      const deptCmp = a.department.localeCompare(b.department);
+      if (deptCmp !== 0) return deptCmp;
+      return a.name.localeCompare(b.name);
+    });
 
     // Build training data map: sopCode → dept → designation → month → count
     const trainingMap = new Map<
@@ -1043,7 +1135,7 @@ async function buildManageSopViewResponse(
 
     const employeesByDeptObj: Record<
       string,
-      Array<{ name: string; designation: string }>
+      Array<{ name: string; designation: string; isTrainer?: boolean }>
     > = {};
     for (const [dept, list] of empRoster) {
       employeesByDeptObj[dept] = list;
@@ -1187,10 +1279,12 @@ async function buildManageSopViewResponse(
       designationsByDept: designationsByDeptObj,
       employeeCountsByDeptDesig: employeeCountsByDeptDesigObj,
       employeesByDept: employeesByDeptObj,
+      unassignedEmployees,
       stats: {
         total: totalSOPs,
         assigned: assignedCount,
         unassigned: unassignedSOPs,
+        unassignedEmployees: unassignedEmployees.length,
       },
       sopCountsByDeptMonth,
       sopCountsByMonth,
@@ -1343,10 +1437,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (!r.removeAllDesignations) filter.designation = { $in: r.designations };
         return TrainingMatrixRecord.deleteMany(filter);
       })),
-      // All employee lookups in parallel (one per entry)
+      // All employee lookups in parallel (one per entry).
+      // Trainers eligible for this department are ALWAYS included regardless of
+      // designation match — they manage all SOPs in their selected departments.
       Promise.all(normEntries.map((e) =>
-        Employee.find({ isActive: true, department: e.department, designation: { $in: e.designations } })
-          .select("name designation").lean()
+        Employee.find({
+          isActive: true,
+          $or: [
+            { department: e.department, designation: { $in: e.designations } },
+            { isTrainer: true, department: e.department },
+            { isTrainer: true, trainerDepartments: e.department },
+          ],
+        })
+          .select("name designation isTrainer trainerDepartments department").lean()
       )),
       // All main-upload fetches in parallel (one per unique dept)
       Promise.all(uniqueDepts.map((dept) =>

@@ -168,6 +168,8 @@ interface ComplianceReport {
   auditCompleteness?: AuditCompleteness;
   traceabilityMatrix?: TraceabilityMatrixEntry[];
   crossSopDependencies?: CrossSopDependency[];
+  /** Engine version that produced this report (e.g. "v3", "v4-batch", "v5"). */
+  analysisEngineVersion?: string;
   findings: ComplianceFinding[];
   analyzedAt: string;
   /** True when linked annexure text was included in the guideline audit. */
@@ -192,6 +194,13 @@ interface ComplianceReport {
 }
 
 type WorkflowStep = 'fetch-sops' | 'fetch-guidelines' | 'review' | 'analyze' | 'results';
+
+/** Engine version label for a report — legacy reports without the field ran on V3. */
+function engineVersionLabel(version?: string): string {
+  const raw = (version || 'v3').trim();
+  const base = raw.split('-')[0].toUpperCase();
+  return base.startsWith('V') ? base : `V${base}`;
+}
 
 function shortGuidelineLabel(name: string): string {
   return name.replace(/\s*Guidelines?\s*$/i, '').trim() || name;
@@ -2726,7 +2735,7 @@ export default function ComplianceEnginePage() {
                       <div className="flex items-center justify-between text-sm">
                         <span className="font-mono text-purple-600 font-bold text-xs">{item.identifier}</span>
                         <span className="text-gray-600 text-xs truncate mx-2">{item.name}</span>
-                        {'score' in item && item.score !== null && (
+                        {'score' in item && typeof item.score === 'number' && (
                           <span className={`text-xs font-bold ${item.score >= 8 ? 'text-emerald-600' : item.score >= 5 ? 'text-amber-600' : 'text-rose-600'}`}>{item.score}/10</span>
                         )}
                       </div>
@@ -2894,7 +2903,7 @@ export default function ComplianceEnginePage() {
                   </span>
                 </div>
                 <div className={`overflow-auto flex-1 ${selectedReport ? '' : 'max-h-[calc(100vh-260px)]'}`}>
-                  <table className="w-full min-w-[1000px] text-left border-collapse">
+                  <table className="w-full min-w-[1070px] text-left border-collapse">
                     <thead className="sticky top-0 z-[1] bg-gray-50 border-b border-gray-200">
                       <tr>
                         <ReportSortHeader label="ID" sortKey="sopIdentifier" className="w-[110px]" />
@@ -2904,6 +2913,12 @@ export default function ComplianceEnginePage() {
                           Annexures
                         </th>
                         <ReportSortHeader label="Score" sortKey="overallScore" className="w-[90px]" />
+                        <th
+                          className="w-[70px] px-2 py-2 text-[10px] font-black uppercase tracking-wide text-gray-500"
+                          title="Compliance engine version used for this analysis"
+                        >
+                          Version
+                        </th>
                         <th
                           className="w-[95px] px-2 py-2 text-[10px] font-black uppercase tracking-wide text-gray-500"
                           title="Score from the latest Upload SOP & Re-run"
@@ -2927,7 +2942,7 @@ export default function ComplianceEnginePage() {
                     <tbody className="divide-y divide-gray-100 bg-white">
                       {sortedReports.length === 0 ? (
                         <tr>
-                          <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-500">
+                          <td colSpan={12} className="px-4 py-10 text-center text-sm text-gray-500">
                             No reports match the selected filters.
                           </td>
                         </tr>
@@ -3000,6 +3015,14 @@ export default function ComplianceEnginePage() {
                                 </span>
                                 <span className="text-[10px] text-gray-400 font-medium">/10</span>
                               </div>
+                            </td>
+                            <td className="px-3 py-2 align-middle whitespace-nowrap">
+                              <span
+                                className="inline-block px-1.5 py-0.5 rounded border border-violet-200 bg-violet-50 text-[9px] font-black uppercase tracking-wide text-violet-700"
+                                title={`Analyzed with the ${engineVersionLabel(report.analysisEngineVersion)} compliance engine`}
+                              >
+                                {engineVersionLabel(report.analysisEngineVersion)}
+                              </span>
                             </td>
                             <td className="px-3 py-2 align-middle whitespace-nowrap">
                               {lastRecheck ? (

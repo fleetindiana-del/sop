@@ -9,6 +9,8 @@ import {
   resolveInductionTrainingRequired,
   formatDateOfJoiningInput,
 } from '@/lib/employeeInduction';
+import { parseTrainerDepartments } from '@/lib/employeeTrainer';
+import { invalidateManageSopViewCache } from '@/lib/manageSopViewCache';
 import Employee from '@/models/Employee';
 
 export const dynamic = 'force-dynamic';
@@ -85,7 +87,7 @@ export async function POST(req: NextRequest) {
   try {
     await connectDB();
     const body = await req.json();
-    const { name, designation, department, employeeId, password, dateOfJoining, inductionTrainingRequired } = body;
+    const { name, designation, department, employeeId, password, dateOfJoining, inductionTrainingRequired, isTrainer, trainerDepartments } = body;
 
     if (!name?.trim() || !designation?.trim() || !department?.trim()) {
       return NextResponse.json({ error: 'name, designation, and department are required' }, { status: 400 });
@@ -93,6 +95,16 @@ export async function POST(req: NextRequest) {
 
     const doj = parseDateOfJoining(dateOfJoining);
     const inductionRequired = resolveInductionTrainingRequired(doj, inductionTrainingRequired === true);
+    const trainer = isTrainer === true;
+    const trainerDepts = trainer
+      ? parseTrainerDepartments(trainerDepartments, department.trim())
+      : [];
+    if (trainer && trainerDepts.length === 0) {
+      return NextResponse.json(
+        { error: 'Select at least one department for a trainer' },
+        { status: 400 },
+      );
+    }
 
     let lmsPasswordHash: string | undefined;
     if (typeof password === 'string' && password.length > 0) {
@@ -110,6 +122,8 @@ export async function POST(req: NextRequest) {
       employeeId: employeeId?.trim() || undefined,
       dateOfJoining: doj,
       inductionTrainingRequired: inductionRequired,
+      isTrainer: trainer,
+      trainerDepartments: trainerDepts,
       lmsUsername,
       lmsPasswordHash,
     });
@@ -117,9 +131,13 @@ export async function POST(req: NextRequest) {
     const employee = created.toObject();
     delete employee.lmsPasswordHash;
     invalidateEmployeeAssignmentsCache();
+    void invalidateManageSopViewCache();
     return NextResponse.json({
       employee: {
         ...employee,
+        trainerDepartments: Array.isArray(employee.trainerDepartments)
+          ? employee.trainerDepartments
+          : [],
         dateOfJoining: doj ? formatDateOfJoiningInput(doj) : undefined,
         hasLmsPassword: !!lmsPasswordHash,
       },

@@ -11,6 +11,21 @@ export interface IRecheckPointResult {
   /** Best-matching excerpt from the revised SOP for this requirement, regardless of status. */
   revisedExcerpt: string;
   ignored: boolean;
+  /** Addressed by an earlier run — carried forward verbatim, not re-audited this run. */
+  carriedForward?: boolean;
+  /** Where this point came from: the original report, or a new issue raised by an earlier re-check. */
+  origin?: "report" | "new-issue";
+}
+
+/** One annexure whose text was merged into the recheck prompt. */
+export interface IRecheckAnnexure {
+  label: string;
+  fileName: string;
+  chars: number;
+  /** "uploaded" = supplied with this re-check, "linked" = pulled from the SOP record. */
+  source?: "uploaded" | "linked";
+  /** Openable link, only for annexures uploaded with this run. */
+  fileUrl?: string;
 }
 
 export interface IRecheckNewIssue {
@@ -39,8 +54,10 @@ export interface IRecheckRun extends Document {
   results: IRecheckPointResult[];
   newIssues: IRecheckNewIssue[];
   /** Annexure files whose text was merged into the recheck LLM prompt. */
-  annexuresIncluded?: { label: string; fileName: string; chars: number }[];
+  annexuresIncluded?: IRecheckAnnexure[];
   annexuresSkipped?: { label: string; fileName: string; reason: string }[];
+  /** How many of the included annexures were uploaded with this run (rest are linked to the SOP). */
+  uploadedAnnexureCount?: number;
   annexureChars?: number;
   /** Explicit flag: linked annexure text was included in this recheck. */
   annexuresRead?: boolean;
@@ -56,6 +73,8 @@ const PointResultSchema = new Schema<IRecheckPointResult>(
     note: { type: String, default: "" },
     revisedExcerpt: { type: String, default: "" },
     ignored: { type: Boolean, default: false },
+    carriedForward: { type: Boolean, default: false },
+    origin: { type: String, enum: ["report", "new-issue"], default: "report" },
   },
   { _id: false },
 );
@@ -94,10 +113,13 @@ const RecheckRunSchema = new Schema<IRecheckRun>(
           label: { type: String, default: "" },
           fileName: { type: String, default: "" },
           chars: { type: Number, default: 0 },
+          source: { type: String, enum: ["uploaded", "linked"], default: "linked" },
+          fileUrl: { type: String, default: "" },
         },
       ],
       default: [],
     },
+    uploadedAnnexureCount: { type: Number, default: 0 },
     annexuresSkipped: {
       type: [
         {

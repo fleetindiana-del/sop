@@ -71,7 +71,9 @@ function highlightChangedTexts(container: HTMLElement, replacementTexts: string[
     }
   });
 
-  if (scrollTarget) scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (scrollTarget) {
+    (scrollTarget as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
 
 export default function FinalSopModal({

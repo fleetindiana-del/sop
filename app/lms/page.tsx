@@ -128,6 +128,58 @@ function stripVersion(code: string): string {
   return String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
 }
 
+/** Normalize SOP codes so QAGE4 and QAGE04 resolve to the same progress lookup. */
+function progressLookupKey(code: string): string {
+  return stripVersion(code).replace(/^([A-Z]+)0+(\d+)/, '$1$2');
+}
+
+function buildProgressMap(records: ProgressRecord[]): Map<string, ProgressRecord> {
+  const map = new Map<string, ProgressRecord>();
+  for (const p of records) {
+    const exact = String(p.sopCode || '').trim();
+    if (!exact) continue;
+    const norm = progressLookupKey(exact);
+    const prefer = (existing: ProgressRecord | undefined, next: ProgressRecord) => {
+      if (!existing) return next;
+      // Keep the more advanced / more recently accessed record for a SOP family.
+      if ((next.overallPercentage ?? 0) !== (existing.overallPercentage ?? 0)) {
+        return (next.overallPercentage ?? 0) > (existing.overallPercentage ?? 0) ? next : existing;
+      }
+      return new Date(next.lastAccessedAt ?? 0).getTime() >= new Date(existing.lastAccessedAt ?? 0).getTime()
+        ? next
+        : existing;
+    };
+    map.set(exact, prefer(map.get(exact), p));
+    map.set(norm, prefer(map.get(norm), p));
+    const stripped = stripVersion(exact);
+    if (stripped !== exact && stripped !== norm) {
+      map.set(stripped, prefer(map.get(stripped), p));
+    }
+  }
+  return map;
+}
+
+function getProgress(
+  map: Map<string, ProgressRecord>,
+  sopCode: string,
+): ProgressRecord | undefined {
+  const exact = String(sopCode || '').trim();
+  if (!exact) return undefined;
+  return (
+    map.get(exact) ||
+    map.get(progressLookupKey(exact)) ||
+    map.get(stripVersion(exact))
+  );
+}
+
+/** True only when the learner has real started progress on this SOP. */
+function isActivelyInProgress(progress?: ProgressRecord): boolean {
+  if (!progress) return false;
+  if (progress.status !== 'in_progress') return false;
+  if ((progress.overallPercentage ?? 0) <= 0) return false;
+  return true;
+}
+
 function cleanDisplayText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -413,8 +465,8 @@ function TrainingTable({
     const list = [...rows];
     const dir = sort.dir === 'asc' ? 1 : -1;
     list.sort((a, b) => {
-      const pa = progressMap.get(a.sopCode);
-      const pb = progressMap.get(b.sopCode);
+      const pa = getProgress(progressMap, a.sopCode);
+      const pb = getProgress(progressMap, b.sopCode);
       const sa = pa?.status ?? 'not_started';
       const sb = pb?.status ?? 'not_started';
       const schedA = scheduleStatus(a);
@@ -469,7 +521,7 @@ function TrainingTable({
           </thead>
           <tbody className="divide-y divide-gray-100">
             {sortedRows.map((assignment) => {
-              const progress = progressMap.get(assignment.sopCode);
+              const progress = getProgress(progressMap, assignment.sopCode);
               const pct = progress?.overallPercentage ?? 0;
               const status = progress?.status ?? 'not_started';
               const schedule = scheduleStatus(assignment);
@@ -612,11 +664,16 @@ function ContinueLearning({
   onPrefetch?: (sopCode: string) => void;
 }) {
   const inProgress = assignments
-    .filter((a) => progressMap.get(a.sopCode)?.status === 'in_progress')
+    .filter((a) => isActivelyInProgress(getProgress(progressMap, a.sopCode)))
     .sort((a, b) => {
-      const pa = progressMap.get(a.sopCode);
-      const pb = progressMap.get(b.sopCode);
+      const pa = getProgress(progressMap, a.sopCode);
+      const pb = getProgress(progressMap, b.sopCode);
       return new Date(pb?.lastAccessedAt ?? 0).getTime() - new Date(pa?.lastAccessedAt ?? 0).getTime();
+    })
+    // One card per SOP family (e.g. QAGE4 vs QAGE04) — progress is per learner+SOP, not shared.
+    .filter((a, idx, arr) => {
+      const key = progressLookupKey(a.sopCode);
+      return arr.findIndex((x) => progressLookupKey(x.sopCode) === key) === idx;
     })
     .slice(0, 3);
 
@@ -630,10 +687,10 @@ function ContinueLearning({
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {inProgress.map((a) => {
-          const p = progressMap.get(a.sopCode)!;
+          const p = getProgress(progressMap, a.sopCode)!;
           return (
             <button
-              key={a.sopCode}
+              key={`${a.sopCode}::${progressLookupKey(a.sopCode)}`}
               onClick={() => onOpen(a.sopCode)}
               onMouseEnter={() => onPrefetch?.(a.sopCode)}
               onFocus={() => onPrefetch?.(a.sopCode)}
@@ -675,9 +732,9 @@ function StatsRow({
   onStatClick: (filter: FilterTab) => void;
 }) {
   const total      = assignments.length;
-  const completed  = assignments.filter((a) => isFullyComplete(progressMap.get(a.sopCode))).length;
-  const inProgress = assignments.filter((a) => progressMap.get(a.sopCode)?.status === 'in_progress').length;
-  const overdue    = assignments.filter((a) => isOverdue(a) && !isFullyComplete(progressMap.get(a.sopCode))).length;
+  const completed  = assignments.filter((a) => isFullyComplete(getProgress(progressMap, a.sopCode))).length;
+  const inProgress = assignments.filter((a) => isActivelyInProgress(getProgress(progressMap, a.sopCode))).length;
+  const overdue    = assignments.filter((a) => isOverdue(a) && !isFullyComplete(getProgress(progressMap, a.sopCode))).length;
 
   const stats: { label: string; value: number; filter: FilterTab; Icon: typeof FileText; color: string; bg: string; ring: string }[] = [
     { label: 'Total Assigned', value: total,      filter: 'all',         Icon: FileText,      color: 'text-gray-600',   bg: 'bg-gray-50',    ring: 'ring-gray-400' },
@@ -737,6 +794,8 @@ function LoginCard({ onLogin }: { onLogin: (emp: Employee) => void }) {
       });
       const json = await res.json();
       if (!res.ok) { setError(json.error || 'Login failed'); return; }
+      // Drop any previous learner's cached progress/assignments before writing this session.
+      clearLmsClientCache();
       writeLmsClientCache(lmsClientFields.employee, { employee: json.employee });
       onLogin(json.employee);
     } finally {
@@ -821,12 +880,11 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
   }, []);
 
   const load = useCallback(async (force = false) => {
-    const cached = !force ? readLmsClientCache<DashboardCache>(lmsClientFields.dashboard) : null;
+    const dashField = lmsClientFields.dashboard(employee.id);
+    const cached = !force ? readLmsClientCache<DashboardCache>(dashField) : null;
     if (cached?.value) {
       setAssignments(validAssignments(cached.value.assignments || []));
-      const map = new Map<string, ProgressRecord>();
-      for (const p of cached.value.progress || []) map.set(p.sopCode, p);
-      setProgressMap(map);
+      setProgressMap(buildProgressMap(cached.value.progress || []));
       setCertificates(cached.value.certificates || []);
       setAssetsMap(cached.value.assets || {});
       setLoading(false);
@@ -851,16 +909,14 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
       const certificates = certData.certificates || [];
       const assets = (assetData.assets || {}) as Record<string, SopAssetFlags>;
       setAssignments(assignments);
-      const map = new Map<string, ProgressRecord>();
-      for (const p of progress) map.set(p.sopCode, p);
-      setProgressMap(map);
+      setProgressMap(buildProgressMap(progress));
       setCertificates(certificates);
       setAssetsMap(assets);
-      writeLmsClientCache(lmsClientFields.dashboard, { assignments, progress, certificates, assets });
+      writeLmsClientCache(dashField, { assignments, progress, certificates, assets });
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [router, employee.id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -890,7 +946,7 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
   const prefetched = useRef<Set<string>>(new Set());
   const prefetchJourney = useCallback((sopCode: string) => {
     if (!sopCode || prefetched.current.has(sopCode)) return;
-    const field = lmsClientFields.journey(sopCode);
+    const field = lmsClientFields.journey(employee.id, sopCode);
     const cached = readLmsClientCache(field);
     if (cached && Date.now() - cached.cachedAt <= LMS_CLIENT_FRESH_MS) return;
     prefetched.current.add(sopCode);
@@ -900,7 +956,7 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
         if (json && !json.error) writeLmsClientCache(field, json);
       })
       .catch(() => { prefetched.current.delete(sopCode); });
-  }, []);
+  }, [employee.id]);
 
   const certMap = useMemo(() => {
     const m = new Map<string, CertRecord>();
@@ -913,18 +969,18 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
 
   const filtered = useMemo(() => {
     let list = assignments;
-    if (filter === 'in_progress')  list = list.filter((a) => progressMap.get(a.sopCode)?.status === 'in_progress');
-    if (filter === 'completed')    list = list.filter((a) => isFullyComplete(progressMap.get(a.sopCode)));
+    if (filter === 'in_progress')  list = list.filter((a) => isActivelyInProgress(getProgress(progressMap, a.sopCode)));
+    if (filter === 'completed')    list = list.filter((a) => isFullyComplete(getProgress(progressMap, a.sopCode)));
     if (filter === 'due')          list = list.filter((a) => {
-      const st = progressMap.get(a.sopCode)?.status;
+      const st = getProgress(progressMap, a.sopCode)?.status;
       return scheduleStatus(a) === 'due' && st !== 'completed' && st !== 'in_progress';
     });
     if (filter === 'upcoming')     list = list.filter((a) => {
-      const st = progressMap.get(a.sopCode)?.status;
+      const st = getProgress(progressMap, a.sopCode)?.status;
       return scheduleStatus(a) === 'upcoming' && st !== 'completed';
     });
     if (filter === 'overdue')      list = list.filter((a) => {
-      return scheduleStatus(a) === 'overdue' && !isFullyComplete(progressMap.get(a.sopCode));
+      return scheduleStatus(a) === 'overdue' && !isFullyComplete(getProgress(progressMap, a.sopCode));
     });
     if (search.trim()) {
       const term = search.trim().toLowerCase();
@@ -943,27 +999,24 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
   }, [assignments, progressMap, filter, search]);
 
   const earnedCertificates = useMemo(
-    () => certificates.filter((c) => {
-      const p = progressMap.get(c.sopCode) || progressMap.get(stripVersion(c.sopCode));
-      return isFullyComplete(p);
-    }),
+    () => certificates.filter((c) => isFullyComplete(getProgress(progressMap, c.sopCode))),
     [certificates, progressMap],
   );
 
   const tabCounts = useMemo(() => ({
     all:         assignments.length,
-    in_progress: assignments.filter((a) => progressMap.get(a.sopCode)?.status === 'in_progress').length,
-    completed:   assignments.filter((a) => isFullyComplete(progressMap.get(a.sopCode))).length,
+    in_progress: assignments.filter((a) => isActivelyInProgress(getProgress(progressMap, a.sopCode))).length,
+    completed:   assignments.filter((a) => isFullyComplete(getProgress(progressMap, a.sopCode))).length,
     due:         assignments.filter((a) => {
-      const st = progressMap.get(a.sopCode)?.status;
+      const st = getProgress(progressMap, a.sopCode)?.status;
       return scheduleStatus(a) === 'due' && st !== 'completed' && st !== 'in_progress';
     }).length,
     upcoming:    assignments.filter((a) => {
-      const st = progressMap.get(a.sopCode)?.status;
+      const st = getProgress(progressMap, a.sopCode)?.status;
       return scheduleStatus(a) === 'upcoming' && st !== 'completed';
     }).length,
     overdue:     assignments.filter((a) => {
-      return scheduleStatus(a) === 'overdue' && !isFullyComplete(progressMap.get(a.sopCode));
+      return scheduleStatus(a) === 'overdue' && !isFullyComplete(getProgress(progressMap, a.sopCode));
     }).length,
   }), [assignments, progressMap]);
 

@@ -9,7 +9,7 @@ import { extractTextFromBuffer } from "@/lib/extractContent";
 import { processGuidelinePDF } from "@/lib/ocrProcessor";
 import { generateComplianceJson } from "@/lib/llm";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
-import RecheckRun from "@/models/RecheckRun";
+import RecheckRun, { type IRecheckAnnexure } from "@/models/RecheckRun";
 import { computeRecheckScore } from "@/lib/recheckScore";
 import {
   buildAnnexureSupplementDetailed,
@@ -18,11 +18,13 @@ import {
   type AnnexureIncludeInfo,
 } from "@/lib/compliance-sop-content";
 import { sopIdentifierMatchFilter } from "@/lib/sopIdentifierNormalize";
+import { findSuggestedTextInRevised, type SuggestionMatch } from "@/lib/recheckResolution";
 
 export const maxDuration = 300;
 
 // Cap the revised SOP (+ annexures) text sent to the model to stay within context limits.
-const MAX_SOP_CHARS = 48_000;
+// Kept generous so late sections (where fixes are usually appended) reach the model intact.
+const MAX_SOP_CHARS = 90_000;
 
 interface PriorPoint {
   clauseNumber: string;
@@ -39,6 +41,81 @@ interface PointCheck {
   evidence: string;
   note: string;
   revisedExcerpt: string;
+}
+
+/** A verdict banked by an earlier re-check (or by the report itself) that must not regress. */
+interface CarriedVerdict {
+  evidence: string;
+  note: string;
+  revisedExcerpt: string;
+  ignored: boolean;
+}
+
+type RunAnnexure = IRecheckAnnexure;
+
+/** Match an uploaded annexure to the linked copy it replaces (extension/spacing insensitive). */
+function annexureNameKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+/** Marker stored on synthetic findings built from an earlier run's new issue. */
+const ISSUE_KEY_FIELD = "__recheckIssueKey";
+
+const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
+
+/** Stable identity of a finding across runs — guideline + clause, as used when saving progress. */
+function findingKey(f: {
+  guidelineName?: unknown;
+  clauseNumber?: unknown;
+  [ISSUE_KEY_FIELD]?: unknown;
+}): string {
+  const issueKey = norm(f[ISSUE_KEY_FIELD]);
+  if (issueKey) return issueKey;
+  return `${norm(f.guidelineName)}|${norm(f.clauseNumber)}`;
+}
+
+/**
+ * Identity of a new issue. Clause-based when the model named one, otherwise the issue
+ * text itself — so the same finding raised twice never becomes two points.
+ */
+function newIssueKey(n: {
+  guidelineName?: unknown;
+  clauseNumber?: unknown;
+  issue?: unknown;
+}): string {
+  const clause = norm(n.clauseNumber);
+  if (clause) return `issue:${norm(n.guidelineName)}|${clause}`;
+  return `issue:${norm(n.issue).replace(/\s+/g, " ").slice(0, 160)}`;
+}
+
+/** Render an earlier run's new issue as a finding so it re-verifies like any other point. */
+function issueToFinding(n: {
+  clauseNumber?: string;
+  clauseTitle?: string;
+  guidelineName?: string;
+  issue?: string;
+  severity?: string;
+  suggestion?: string;
+}): Record<string, unknown> {
+  const severityMap: Record<string, string> = {
+    high: "critical",
+    medium: "major",
+    low: "minor",
+  };
+  return {
+    guidelineName: n.guidelineName ?? "",
+    clauseNumber: n.clauseNumber ?? "",
+    clauseTitle: n.clauseTitle ?? "",
+    complianceLevel: "non-compliant",
+    matchConfidence: 0,
+    issueSeverity: severityMap[n.severity ?? "medium"] ?? "major",
+    mismatchExplanation: n.issue ?? "",
+    suggestedAction: n.suggestion ?? "",
+    [ISSUE_KEY_FIELD]: newIssueKey(n),
+  };
 }
 
 interface NewIssue {
@@ -64,7 +141,10 @@ function buildSystemPrompt(): string {
     "1. For EACH prior gap, decide whether the revised SOP / annexures now ADDRESSES it. status='resolved' if the revised text clearly satisfies the requirement, otherwise status='open'. Quote the supporting sentence from the revised SOP or annexure in 'evidence' when resolved; when open, briefly say what is still missing in 'note'.",
     "1b. For EACH prior gap, ALSO return 'revisedExcerpt': the exact sentence(s) from the REVISED SOP or LINKED ANNEXURE that are most relevant to this requirement — the section that now covers it (whether fully, partially, or not at all). This must always be populated with the closest matching revised text, even when status is 'open'.",
     "1c. Gaps about data not being tracked, missing forms, logs, or record templates MUST be marked resolved when a linked annexure provides that tracking/form evidence.",
+    "1d. JUDGE THE WHOLE DOCUMENT, NOT ONE SECTION. A prior gap names the section, clause, or annexure where it was FIRST observed — that is only where the auditor looked, NOT where the fix must live. Search the ENTIRE revised SOP (every section and clause, all annexures, forms, logs, and record templates) for text that satisfies the requirement. If the requirement is covered ANYWHERE in the document, status='resolved' — even when the wording sits in a different section, a different clause number, or an annexure than the one named in the prior gap.",
+    "1e. If the revised SOP contains the 'Suggested action' text (verbatim or reworded, under any clause number), that gap is RESOLVED — quote it in 'evidence'.",
     "2. Scan the revised SOP for NEW issues, but be CONSERVATIVE: only raise a new issue when it is a clear, material violation of a SPECIFIC regulatory guideline requirement (name the guideline/clause). Do NOT invent, pad, or force new points. Do NOT raise stylistic, speculative, or minor issues. If nothing material is found, return an empty newIssues array.",
+    "2b. NEVER repeat a point that is already in the prior-gaps list, and never repeat a point listed under ALREADY REPORTED — those are tracked separately. A requirement that the revised SOP or an annexure now covers must not be raised again in any form.",
     "Be strict and evidence-based. Do not mark a point resolved unless the revised text genuinely covers it.",
     "Respond with ONLY valid JSON in exactly this shape:",
     '{"pointChecks":[{"index":0,"status":"resolved"|"open","evidence":"string","note":"string","revisedExcerpt":"string"}],"newIssues":[{"clauseNumber":"string","clauseTitle":"string","guidelineName":"string","issue":"string","severity":"low"|"medium"|"high","suggestion":"string"}]}',
@@ -72,13 +152,17 @@ function buildSystemPrompt(): string {
   ].join("\n");
 }
 
-function buildUserPrompt(priorPoints: PriorPoint[], revisedText: string): string {
+function buildUserPrompt(
+  priorPoints: PriorPoint[],
+  revisedText: string,
+  alreadyReported: string[],
+): string {
   const priorList = priorPoints
     .map((p, i) =>
       [
         `#${i} [${p.guidelineName} ${p.clauseNumber} ${p.clauseTitle}]`,
         `Requirement: ${p.requirement || "(n/a)"}`,
-        `Prior gap: ${p.gap || "(n/a)"}`,
+        `Prior gap (observed here originally — the fix may now live anywhere in the SOP): ${p.gap || "(n/a)"}`,
         `Suggested action: ${p.suggestedAction || "(n/a)"}`,
       ].join("\n"),
     )
@@ -88,7 +172,10 @@ function buildUserPrompt(priorPoints: PriorPoint[], revisedText: string): string
     "PRIOR COMPLIANCE GAPS (index → gap):",
     priorList || "(none)",
     "",
-    "REVISED SOP TEXT (may include linked annexures):",
+    "ALREADY REPORTED IN EARLIER RE-CHECKS (do NOT raise any of these again as a new issue):",
+    alreadyReported.length ? alreadyReported.map((t) => `- ${t}`).join("\n") : "(none)",
+    "",
+    "REVISED SOP TEXT — the COMPLETE document (may include uploaded and linked annexures). Check every gap against ALL of it, not just the section named in the gap:",
     windowSopContentForAudit(revisedText, MAX_SOP_CHARS),
   ].join("\n");
 }
@@ -102,6 +189,9 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const reportId = (formData.get("reportId") as string | null)?.trim();
     const file = formData.get("file") as File | null;
+    const annexureFiles = formData
+      .getAll("annexures")
+      .filter((v): v is File => v instanceof File && v.size > 0);
 
     if (!reportId || !file) {
       return NextResponse.json(
@@ -145,9 +235,68 @@ export async function POST(request: NextRequest) {
     // Text for LLM audit may include annexures; stored SOP content stays the uploaded procedure only.
     const mainRevisedText = revisedText;
     let auditText = revisedText;
-    let annexuresIncluded: AnnexureIncludeInfo[] = [];
-    let annexuresSkipped: { label: string; fileName: string; reason: string }[] = [];
-    let annexureChars = 0;
+    const annexuresIncluded: RunAnnexure[] = [];
+    const annexuresSkipped: { label: string; fileName: string; reason: string }[] = [];
+    const annexureChunks: string[] = [];
+
+    // Annexures uploaded with this re-check are the freshest evidence — they are read first
+    // and supersede any older copy of the same file linked to the SOP record.
+    for (const annexFile of annexureFiles) {
+      const label = annexFile.name.replace(/\.[^.]+$/, "").trim() || "Annexure";
+      const annexType = detectFileType(annexFile.name);
+      if (!annexType) {
+        annexuresSkipped.push({
+          label,
+          fileName: annexFile.name,
+          reason: "unsupported file type — upload PDF or DOCX",
+        });
+        continue;
+      }
+      try {
+        const annexBuffer = Buffer.from(await annexFile.arrayBuffer());
+        const text =
+          annexType === "docx"
+            ? await extractTextFromBuffer(annexBuffer, "docx")
+            : (await processGuidelinePDF(annexBuffer)).text ?? "";
+        if (!text || text.trim().length < 30) {
+          annexuresSkipped.push({ label, fileName: annexFile.name, reason: "no extractable text" });
+          continue;
+        }
+        const body = text.trim().slice(0, 12_000);
+        let annexUrl = "";
+        try {
+          const saved = await saveUploadedBuffer(
+            annexBuffer,
+            `recheck-annexure-${Date.now()}-${annexFile.name}`,
+            report.department || "General",
+            report.sopIdentifier || "SOP",
+            "English",
+          );
+          annexUrl = saved.fileUrl;
+        } catch {
+          /* storage not configured — the text is still audited, just not linkable */
+        }
+        annexureChunks.push(`--- ${label} (uploaded with this re-check) ---\n${body}`);
+        annexuresIncluded.push({
+          label,
+          fileName: annexFile.name,
+          chars: body.length,
+          source: "uploaded",
+          fileUrl: annexUrl,
+        });
+      } catch (err) {
+        annexuresSkipped.push({
+          label,
+          fileName: annexFile.name,
+          reason: err instanceof Error ? err.message : "extract failed",
+        });
+      }
+    }
+
+    const uploadedAnnexureCount = annexuresIncluded.length;
+    const uploadedAnnexureKeys = new Set(
+      annexuresIncluded.flatMap((a) => [annexureNameKey(a.fileName), annexureNameKey(a.label)]),
+    );
 
     // Fold in linked annexures (forms/logs) so record-tracking gaps can resolve on recheck.
     if (report.sopId) {
@@ -160,23 +309,20 @@ export async function POST(request: NextRequest) {
           }).lean()) as ISOP[];
           const annexureResult = await buildAnnexureSupplementDetailed(
             family.length ? family : [primary],
+            {
+              exclude: ({ label, fileName }) =>
+                uploadedAnnexureKeys.has(annexureNameKey(fileName)) ||
+                uploadedAnnexureKeys.has(annexureNameKey(label)),
+            },
           );
-          annexuresIncluded = annexureResult.included;
-          annexuresSkipped = annexureResult.skipped;
-          annexureChars = annexureResult.text.length;
-          if (annexureResult.text) {
-            auditText = [
-              `=== MAIN SOP PROCEDURE ===\n${mainRevisedText}`,
-              `${LINKED_ANNEXURES_MARKER}\n${annexureResult.text}`,
-            ].join("\n\n");
-            console.log(
-              `[recheck] ${report.sopIdentifier}: merged ${annexureChars} chars from ${annexuresIncluded.length} linked annexure(s): ${annexuresIncluded.map((a) => a.label).join(", ")}`,
-            );
-          } else {
-            console.log(
-              `[recheck] ${report.sopIdentifier}: no readable linked annexures (${annexuresSkipped.length} skipped)`,
-            );
-          }
+          annexuresIncluded.push(
+            ...annexureResult.included.map((a: AnnexureIncludeInfo) => ({
+              ...a,
+              source: "linked" as const,
+            })),
+          );
+          annexuresSkipped.push(...annexureResult.skipped);
+          if (annexureResult.text) annexureChunks.push(annexureResult.text);
         }
       } catch (err) {
         console.warn(
@@ -186,25 +332,156 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const annexureText = annexureChunks.join("\n\n").slice(0, 48_000);
+    const annexureChars = annexureText.length;
+    if (annexureText) {
+      auditText = [
+        `=== MAIN SOP PROCEDURE ===\n${mainRevisedText}`,
+        `${LINKED_ANNEXURES_MARKER}\n${annexureText}`,
+      ].join("\n\n");
+      console.log(
+        `[recheck] ${report.sopIdentifier}: merged ${annexureChars} chars from ${annexuresIncluded.length} annexure(s) (${uploadedAnnexureCount} uploaded): ${annexuresIncluded.map((a) => a.label).join(", ")}`,
+      );
+    } else {
+      console.log(
+        `[recheck] ${report.sopIdentifier}: no readable annexures (${annexuresSkipped.length} skipped)`,
+      );
+    }
+
     // Prior actionable gaps to re-verify.
-    const priorFindings = (report.findings ?? []).filter(
+    const reportFindings = (report.findings ?? []).filter(
       (f) => f.complianceLevel === "partial" || f.complianceLevel === "non-compliant",
     );
-    const priorPoints: PriorPoint[] = priorFindings.map((f) => ({
-      clauseNumber: f.clauseNumber ?? "",
-      clauseTitle: f.clauseTitle ?? "",
-      guidelineName: f.guidelineName ?? "",
-      requirement: f.guidelineRequirement ?? "",
-      gap: f.mismatchExplanation ?? "",
-      suggestedAction: f.suggestedText?.trim() || f.suggestedAction || "",
+
+    // Progress already banked must never regress. A point that an earlier re-check (or a
+    // manual review on the report) marked addressed is carried forward as-is instead of
+    // being re-audited — the model is non-deterministic and would otherwise flip already
+    // solved points back to open, dropping the score on every subsequent run.
+    const priorRuns = (await RecheckRun.find({ reportId: report._id })
+      .sort({ createdAt: 1 })
+      .select("results newIssues")
+      .lean()) as {
+      results?: {
+        finding?: Record<string, unknown>;
+        status?: string;
+        evidence?: string;
+        note?: string;
+        revisedExcerpt?: string;
+        ignored?: boolean;
+      }[];
+      newIssues?: {
+        clauseNumber?: string;
+        clauseTitle?: string;
+        guidelineName?: string;
+        issue?: string;
+        severity?: string;
+        suggestion?: string;
+        ignored?: boolean;
+      }[];
+    }[];
+
+    const carriedByKey = new Map<string, CarriedVerdict>();
+    for (const run of priorRuns) {
+      for (const r of run.results ?? []) {
+        if (r.status !== "addressed" || !r.finding) continue;
+        carriedByKey.set(findingKey(r.finding), {
+          evidence: r.evidence ?? "",
+          note: r.note ?? "",
+          revisedExcerpt: r.revisedExcerpt ?? "",
+          ignored: !!r.ignored,
+        });
+      }
+    }
+
+    // An issue raised by an earlier re-check becomes a tracked point from now on, so this
+    // upload verifies it (and it can be carried forward once fixed) instead of the model
+    // reporting the same thing again on every run.
+    const reportClauseKeys = new Set(reportFindings.map((f) => findingKey(f)));
+    const trackedIssueKeys = new Set<string>();
+    const ignoredIssueKeys = new Set<string>();
+    const carriedIssueFindings: Record<string, unknown>[] = [];
+    for (const run of priorRuns) {
+      for (const n of run.newIssues ?? []) {
+        const key = newIssueKey(n);
+        const clauseKey = `${norm(n.guidelineName)}|${norm(n.clauseNumber)}`;
+        // An issue the user chose to ignore stays ignored once it becomes a point.
+        if (n.ignored) ignoredIssueKeys.add(key);
+        else ignoredIssueKeys.delete(key);
+        if (trackedIssueKeys.has(key)) continue;
+        if (norm(n.clauseNumber) && reportClauseKeys.has(clauseKey)) continue;
+        trackedIssueKeys.add(key);
+        carriedIssueFindings.push(issueToFinding(n));
+      }
+    }
+
+    const priorEntries: {
+      finding: Record<string, unknown>;
+      origin: "report" | "new-issue";
+      closedOnReport: boolean;
+    }[] = [
+      ...reportFindings.map((f) => ({
+        finding: JSON.parse(JSON.stringify(f)) as Record<string, unknown>,
+        origin: "report" as const,
+        closedOnReport: f.resolved === true || f.reviewStatus === "implemented",
+      })),
+      ...carriedIssueFindings.map((finding) => ({
+        finding,
+        origin: "new-issue" as const,
+        closedOnReport: false,
+      })),
+    ];
+
+    const priorPoints: PriorPoint[] = priorEntries.map(({ finding: f }) => ({
+      clauseNumber: String(f.clauseNumber ?? ""),
+      clauseTitle: String(f.clauseTitle ?? ""),
+      guidelineName: String(f.guidelineName ?? ""),
+      requirement: String(f.guidelineRequirement ?? ""),
+      gap: String(f.mismatchExplanation ?? ""),
+      suggestedAction: String(f.suggestedText ?? "").trim() || String(f.suggestedAction ?? ""),
     }));
+
+    const carriedByIndex = new Map<number, CarriedVerdict>();
+    const toCheckIndexes: number[] = [];
+    priorEntries.forEach((entry, i) => {
+      const carried = carriedByKey.get(findingKey(entry.finding));
+      if (carried || entry.closedOnReport) {
+        carriedByIndex.set(
+          i,
+          carried ?? { evidence: "", note: "", revisedExcerpt: "", ignored: false },
+        );
+      } else {
+        toCheckIndexes.push(i);
+      }
+    });
+
+    // Everything already tracked but not re-sent to the model — listed so it is never re-raised.
+    const alreadyReported = priorEntries
+      .filter((_, i) => carriedByIndex.has(i))
+      .map(({ finding: f }) =>
+        [f.guidelineName, f.clauseNumber, f.clauseTitle, f.mismatchExplanation]
+          .map((v) => String(v ?? "").trim())
+          .filter(Boolean)
+          .join(" · ")
+          .slice(0, 220),
+      )
+      .filter(Boolean);
+
+    if (carriedByIndex.size > 0) {
+      console.log(
+        `[recheck] ${report.sopIdentifier}: carrying forward ${carriedByIndex.size} already-addressed point(s); re-auditing ${toCheckIndexes.length} (${carriedIssueFindings.length} from earlier new issues)`,
+      );
+    }
 
     // Targeted per-point check + new-issue scan in one structured call.
     let modelResult: RecheckModelResult = { pointChecks: [], newIssues: [] };
     try {
       modelResult = await generateComplianceJson<RecheckModelResult>(
         buildSystemPrompt(),
-        buildUserPrompt(priorPoints, auditText),
+        buildUserPrompt(
+          toCheckIndexes.map((i) => priorPoints[i]),
+          auditText,
+          alreadyReported,
+        ),
         "codex",
       );
     } catch (err) {
@@ -225,35 +502,98 @@ export async function POST(request: NextRequest) {
 
     // Merge model verdicts onto the prior findings; keep the FULL finding snapshot
     // so the client renders each point with the exact same card/data as the report.
+    // The model only saw the points still open, so its indices are positions in
+    // toCheckIndexes — map them back onto the full prior-findings list.
     const checkByIndex = new Map<number, PointCheck>();
     for (const c of pointChecks) {
-      if (typeof c.index === "number") checkByIndex.set(c.index, c);
+      if (typeof c.index !== "number") continue;
+      const originalIndex = toCheckIndexes[c.index];
+      if (originalIndex !== undefined) checkByIndex.set(originalIndex, c);
     }
-    const results = priorFindings.map((f, i) => {
+    // Deterministic safety net: the model anchors on the section a gap was first observed
+    // in and can miss the fix when it was added elsewhere in the SOP. Scan the FULL
+    // untruncated document for the suggested remediation text; if it is there, the point
+    // is addressed regardless of where it sits or what the model said.
+    let textVerifiedCount = 0;
+    const textVerified = new Map<number, SuggestionMatch>();
+    for (const i of toCheckIndexes) {
+      if (checkByIndex.get(i)?.status === "resolved") continue;
+      const match = findSuggestedTextInRevised(priorPoints[i].suggestedAction, auditText);
+      if (!match.matched) continue;
+      textVerified.set(i, match);
+      textVerifiedCount++;
+    }
+    if (textVerifiedCount > 0) {
+      console.log(
+        `[recheck] ${report.sopIdentifier}: ${textVerifiedCount} point(s) marked addressed by full-document text match (suggested clause found elsewhere in the SOP)`,
+      );
+    }
+
+    const results = priorEntries.map(({ finding, origin }, i) => {
+      const carried = carriedByIndex.get(i);
+      if (carried) {
+        return {
+          finding,
+          status: "addressed" as const,
+          evidence: carried.evidence,
+          note: carried.note,
+          revisedExcerpt: carried.revisedExcerpt,
+          ignored: carried.ignored,
+          carriedForward: true,
+          origin,
+        };
+      }
       const c = checkByIndex.get(i);
-      const status: "addressed" | "open" = c?.status === "resolved" ? "addressed" : "open";
+      const verified = textVerified.get(i);
+      const status: "addressed" | "open" =
+        c?.status === "resolved" || verified ? "addressed" : "open";
       return {
-        finding: JSON.parse(JSON.stringify(f)) as Record<string, unknown>,
+        finding,
         status,
-        evidence: c?.evidence ?? "",
-        note: c?.note ?? "",
-        revisedExcerpt: c?.revisedExcerpt ?? "",
-        ignored: false,
+        evidence: verified ? verified.excerpt : c?.evidence ?? "",
+        note: verified
+          ? `Suggested text found in the revised SOP (${Math.round(verified.coverage * 100)}% match) — covered outside the originally flagged section.`
+          : c?.note ?? "",
+        revisedExcerpt: verified ? verified.excerpt : c?.revisedExcerpt ?? "",
+        ignored: origin === "new-issue" && ignoredIssueKeys.has(findingKey(finding)),
+        carriedForward: false,
+        origin,
       };
     });
 
-    const newIssues = rawIssues.map((n) => ({
-      clauseNumber: n.clauseNumber ?? "",
-      clauseTitle: n.clauseTitle ?? n.title ?? "",
-      guidelineName: n.guidelineName ?? "",
-      issue: n.issue ?? "",
-      severity: (["low", "medium", "high"].includes(n.severity) ? n.severity : "medium") as
-        | "low"
-        | "medium"
-        | "high",
-      suggestion: n.suggestion ?? "",
-      ignored: false,
-    }));
+    // Drop anything the model re-reported that is already tracked as a point (from the
+    // report or an earlier run) or that it listed twice — a gap fixed in the SOP or in an
+    // annexure must never come back as a "new" issue.
+    const trackedPointKeys = new Set(priorEntries.map(({ finding }) => findingKey(finding)));
+    const emittedIssueKeys = new Set(trackedIssueKeys);
+    const newIssues = rawIssues
+      .map((n) => ({
+        clauseNumber: n.clauseNumber ?? "",
+        clauseTitle: n.clauseTitle ?? n.title ?? "",
+        guidelineName: n.guidelineName ?? "",
+        issue: n.issue ?? "",
+        severity: (["low", "medium", "high"].includes(n.severity) ? n.severity : "medium") as
+          | "low"
+          | "medium"
+          | "high",
+        suggestion: n.suggestion ?? "",
+        ignored: false,
+      }))
+      .filter((n) => {
+        if (!n.issue.trim()) return false;
+        const key = newIssueKey(n);
+        const clauseKey = `${norm(n.guidelineName)}|${norm(n.clauseNumber)}`;
+        if (emittedIssueKeys.has(key)) return false;
+        if (norm(n.clauseNumber) && trackedPointKeys.has(clauseKey)) return false;
+        emittedIssueKeys.add(key);
+        return true;
+      });
+
+    if (rawIssues.length !== newIssues.length) {
+      console.log(
+        `[recheck] ${report.sopIdentifier}: dropped ${rawIssues.length - newIssues.length} duplicate/already-tracked new issue(s)`,
+      );
+    }
 
     const { score, verdict, resolvedCount, openCount } = computeRecheckScore(results, newIssues);
     const isCompliant = verdict === "compliant";
@@ -296,14 +636,12 @@ export async function POST(request: NextRequest) {
     // Persist progress: addressed prior gaps are marked implemented on the report.
     if (resolvedCount > 0) {
       const addressedKeys = new Set(
-        results
-          .filter((r) => r.status === "addressed")
-          .map((r) => `${(r.finding.guidelineName as string) ?? ""}|${(r.finding.clauseNumber as string) ?? ""}`),
+        results.filter((r) => r.status === "addressed").map((r) => findingKey(r.finding)),
       );
       report.findings = report.findings.map((f) => {
         if (
           (f.complianceLevel === "partial" || f.complianceLevel === "non-compliant") &&
-          addressedKeys.has(`${f.guidelineName ?? ""}|${f.clauseNumber ?? ""}`)
+          addressedKeys.has(findingKey(f))
         ) {
           f.reviewStatus = "implemented";
           f.resolved = true;
@@ -334,6 +672,7 @@ export async function POST(request: NextRequest) {
       annexuresSkipped,
       annexureChars,
       annexuresRead: annexuresIncluded.length > 0,
+      uploadedAnnexureCount,
     });
 
     return NextResponse.json({
@@ -355,6 +694,7 @@ export async function POST(request: NextRequest) {
       annexuresSkipped,
       annexureChars,
       annexuresRead: annexuresIncluded.length > 0,
+      uploadedAnnexureCount,
     });
   } catch (err) {
     return NextResponse.json(

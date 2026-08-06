@@ -42,9 +42,15 @@ export async function GET(req: NextRequest) {
         await connectDB();
 
         const employees = await Employee.find({ isActive: true })
-          .select('_id name department designation')
+          .select('_id name department designation isTrainer')
           .sort({ name: 1 })
-          .lean<{ _id: unknown; name: string; department: string; designation: string }[]>();
+          .lean<{
+            _id: unknown;
+            name: string;
+            department: string;
+            designation: string;
+            isTrainer?: boolean;
+          }[]>();
 
         let filtered = employees;
 
@@ -79,6 +85,7 @@ export async function GET(req: NextRequest) {
               name: e.name,
               department: e.department,
               designation: e.designation,
+              isTrainer: e.isTrainer === true,
             })),
         };
       },

@@ -13,6 +13,15 @@ import {
 
 export const maxDuration = 120;
 
+/** Runtime-only path under temp/guidelines — keep out of Turbopack NFT traces. */
+function guidelineFilePath(folderName: string, fileName: string): string {
+  return path.join(process.cwd(), "temp", "guidelines", folderName, fileName);
+}
+
+function guidelineFolderPath(folderName: string): string {
+  return path.join(process.cwd(), "temp", "guidelines", folderName);
+}
+
 // ── In-memory summary cache (5-minute TTL) ─────────────────────────────────
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let summaryCache: { data: unknown; timestamp: number } | null = null;
@@ -62,11 +71,10 @@ export async function POST(request: NextRequest) {
         // file.name may include a relative path from webkitdirectory (e.g. "FolderName/actual.pdf")
         const safeFileName = path.basename(file.name);
 
-        // Save to disk
-        const tempDir = path.join(process.cwd(), "temp", "guidelines", folderName);
-        fs.mkdirSync(tempDir, { recursive: true });
-        const filePath = path.join(tempDir, safeFileName);
-        fs.writeFileSync(filePath, buffer);
+        const tempDir = guidelineFolderPath(folderName);
+        fs.mkdirSync(/* turbopackIgnore: true */ tempDir, { recursive: true });
+        const filePath = guidelineFilePath(folderName, safeFileName);
+        fs.writeFileSync(/* turbopackIgnore: true */ filePath, buffer);
 
         let ocr;
         try {
@@ -74,7 +82,7 @@ export async function POST(request: NextRequest) {
           ocr = await processGuidelinePDF(buffer);
         } catch (ocrErr) {
           // Clean up orphaned temp file
-          try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+          try { fs.unlinkSync(/* turbopackIgnore: true */ filePath); } catch { /* ignore */ }
           results.push({
             name: safeFileName, clauses: 0, status: "failed", folder: folderName,
             error: `PDF parsing failed: ${ocrErr instanceof Error ? ocrErr.message.slice(0, 120) : "unknown error"}`,
@@ -83,7 +91,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (!ocr.text.trim()) {
-          try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+          try { fs.unlinkSync(/* turbopackIgnore: true */ filePath); } catch { /* ignore */ }
           results.push({ name: safeFileName, clauses: 0, status: "failed", folder: folderName, error: "No text extracted (may be image-only scan — try a digital PDF)" });
           continue;
         }
@@ -163,9 +171,9 @@ export async function GET(request: NextRequest) {
 
       // Resolve file path: use stored path if it exists, otherwise reconstruct from folderName + pdfName
       let resolvedPath = doc.filePath;
-      if (!fs.existsSync(resolvedPath)) {
-        const reconstructed = path.join(process.cwd(), "temp", "guidelines", doc.folderName, doc.pdfName);
-        if (fs.existsSync(reconstructed)) {
+      if (!fs.existsSync(/* turbopackIgnore: true */ resolvedPath)) {
+        const reconstructed = guidelineFilePath(doc.folderName, doc.pdfName);
+        if (fs.existsSync(/* turbopackIgnore: true */ reconstructed)) {
           resolvedPath = reconstructed;
         } else {
           return NextResponse.json(
@@ -175,7 +183,7 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      const fileBuffer = fs.readFileSync(resolvedPath);
+      const fileBuffer = fs.readFileSync(/* turbopackIgnore: true */ resolvedPath);
       return new NextResponse(fileBuffer, {
         headers: {
           "Content-Type": "application/pdf",
@@ -259,8 +267,11 @@ export async function DELETE(request: NextRequest) {
   try {
     const doc = await SOPGuideline.findById(id).lean();
     if (!doc) return NextResponse.json({ error: "Guideline not found" }, { status: 404 });
-    if (doc.filePath && fs.existsSync(doc.filePath)) {
-      try { fs.unlinkSync(doc.filePath); } catch { /* ignore unlink failure */ }
+    if (doc.filePath) {
+      const toDelete = doc.filePath;
+      if (fs.existsSync(/* turbopackIgnore: true */ toDelete)) {
+        try { fs.unlinkSync(/* turbopackIgnore: true */ toDelete); } catch { /* ignore unlink failure */ }
+      }
     }
     await SOPGuideline.findByIdAndDelete(id);
     clearCache();

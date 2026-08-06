@@ -114,13 +114,14 @@ export async function GET(req: NextRequest, { params }: Params) {
     await connectDB();
 
     const employee = await Employee.findById(payload.sub)
-      .select('department designation')
+      .select('department designation isTrainer')
       .lean();
 
     const resolved = await resolveExamSettingsForSop(sopCode, {
       id: payload.sub,
       department: employee?.department ?? '',
       designation: employee?.designation ?? '',
+      isTrainer: employee?.isTrainer === true,
     });
 
     const count = mode === 'trial'

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, Download, Award, Check, Loader2, AlertCircle } from 'lucide-react';
 import {
+  getCachedLmsEmployeeId,
   lmsClientFields,
   LMS_CLIENT_FRESH_MS,
   readLmsClientCache,
@@ -36,7 +37,10 @@ export default function CertificatePage() {
   const [error,   setError]   = useState('');
 
   const load = useCallback(async (force = false) => {
-    const field = lmsClientFields.certificate(sopCode);
+    const employeeId = getCachedLmsEmployeeId();
+    const field = employeeId
+      ? lmsClientFields.certificate(employeeId, sopCode)
+      : `certificate::${String(sopCode || '').toUpperCase()}`;
     const cached = !force ? readLmsClientCache<{ certificate: Certificate | null }>(field) : null;
     if (cached?.value?.certificate) {
       setCert(cached.value.certificate);
@@ -52,7 +56,7 @@ export default function CertificatePage() {
 
       if (getData.certificate) {
         setCert(getData.certificate);
-        writeLmsClientCache(field, getData);
+        if (employeeId) writeLmsClientCache(field, getData);
         return;
       }
 
@@ -63,7 +67,7 @@ export default function CertificatePage() {
         return;
       }
       setCert(postData.certificate);
-      writeLmsClientCache(field, postData);
+      if (employeeId) writeLmsClientCache(field, postData);
     } catch {
       setError('Failed to load certificate.');
     } finally {

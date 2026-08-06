@@ -64,7 +64,11 @@ function fileMatchesImportScope(
 }
 
 export function getFilesImportDir(): string {
-  return path.resolve(process.cwd(), process.env.FILES_IMPORT_DIR || "files");
+  // turbopackIgnore: FILES_IMPORT_DIR is runtime-only; do not NFT-trace the repo root.
+  return path.resolve(
+    /*turbopackIgnore: true*/ process.cwd(),
+    process.env.FILES_IMPORT_DIR || "files",
+  );
 }
 
 export type ScannedFile = {
@@ -536,7 +540,7 @@ export async function clearImportStateAfterPermanentDelete(opts: {
 
     const destRelative = m.relativePath || (m.archivedPath ? path.basename(m.archivedPath) : "");
     if (!destRelative) continue;
-    const dest = path.join(rootDir, destRelative);
+    const dest = path.join(/*turbopackIgnore: true*/ rootDir, destRelative);
 
     for (const src of candidates) {
       try {
@@ -569,8 +573,8 @@ export async function clearImportStateAfterPermanentDelete(opts: {
           return upper.includes(base.toUpperCase()) || upper.includes(id.toUpperCase());
         });
         if (!hit) continue;
-        const src = path.join(archiveRoot, entry.name);
-        const dest = path.join(rootDir, entry.name);
+        const src = path.join(/*turbopackIgnore: true*/ archiveRoot, entry.name);
+        const dest = path.join(/*turbopackIgnore: true*/ rootDir, entry.name);
         try {
           await fs.access(dest);
           continue;

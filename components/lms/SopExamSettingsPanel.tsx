@@ -24,6 +24,8 @@ export interface SopEmployeeExamRule {
   employeeName: string;
   department?: string;
   designation?: string;
+  /** When true, Pass % is locked at 100. */
+  isTrainer?: boolean;
   trialQuestionCount: number;
   examQuestionCount: number;
   passingScore: number;
@@ -62,6 +64,7 @@ interface EmployeeMeta {
   name: string;
   department: string;
   designation: string;
+  isTrainer?: boolean;
 }
 
 interface ListPayload {
@@ -289,6 +292,7 @@ function SopEmployeeRulesModal({
     shuffleMode: defaults.shuffleMode as ShuffleMode,
     showAnswersAfterTrial: defaults.showAnswersAfterTrial,
     allowRetakeAfterPass: defaults.allowRetakeAfterPass,
+    isTrainer: false,
   });
   const [addErr, setAddErr] = useState('');
 
@@ -323,6 +327,7 @@ function SopEmployeeRulesModal({
       shuffleMode: defaults.shuffleMode,
       showAnswersAfterTrial: defaults.showAnswersAfterTrial,
       allowRetakeAfterPass: defaults.allowRetakeAfterPass,
+      isTrainer: false,
     });
     setSelectedIds(new Set());
     setAddErr('');
@@ -345,9 +350,25 @@ function SopEmployeeRulesModal({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+
+      // If any selected employee is a trainer from Employee Master, default
+      // the draft to Trainer mode (Pass % = 100).
+      const selected = employees.filter((e) => next.has(e.id));
+      const anyTrainer = selected.some((e) => e.isTrainer);
+      if (anyTrainer) {
+        setDraft((d) => ({ ...d, isTrainer: true, passingScore: 100 }));
+      }
       return next;
     });
     setAddErr('');
+  };
+
+  const setDraftTrainer = (checked: boolean) => {
+    setDraft((d) => ({
+      ...d,
+      isTrainer: checked,
+      passingScore: checked ? 100 : defaults.passingScore,
+    }));
   };
 
   const addRules = () => {
@@ -362,12 +383,21 @@ function SopEmployeeRulesModal({
       if (existing.has(id)) continue;
       const emp = employees.find((e) => e.id === id);
       if (!emp) continue;
+      const isTrainer = draft.isTrainer || emp.isTrainer === true;
       toAdd.push({
         employeeId: emp.id,
         employeeName: emp.name,
         department: emp.department,
         designation: emp.designation,
-        ...draft,
+        isTrainer,
+        trialQuestionCount: draft.trialQuestionCount,
+        examQuestionCount: draft.examQuestionCount,
+        passingScore: isTrainer ? 100 : draft.passingScore,
+        maxAttempts: draft.maxAttempts,
+        timeLimitMinutes: draft.timeLimitMinutes,
+        shuffleMode: draft.shuffleMode,
+        showAnswersAfterTrial: draft.showAnswersAfterTrial,
+        allowRetakeAfterPass: draft.allowRetakeAfterPass,
       });
     }
     if (toAdd.length === 0) {
@@ -438,6 +468,7 @@ function SopEmployeeRulesModal({
                   <thead className="border-b border-gray-200 bg-gray-50">
                     <tr>
                       <th className="px-3 py-2.5 text-left font-bold text-gray-900">Employee</th>
+                      <th className="px-2 py-2.5 text-center font-bold text-gray-900">Trainer</th>
                       <th className="px-2 py-2.5 text-center font-bold text-gray-900">Demo</th>
                       <th className="px-2 py-2.5 text-center font-bold text-gray-900">Exam</th>
                       <th className="px-2 py-2.5 text-center font-bold text-gray-900">Pass %</th>
@@ -455,6 +486,21 @@ function SopEmployeeRulesModal({
                           <p className="text-sm font-medium text-gray-900">
                             {[r.department, r.designation].filter(Boolean).join(' · ') || '—'}
                           </p>
+                        </td>
+                        <td className="px-2 py-2.5 text-center">
+                          <input
+                            type="checkbox"
+                            checked={!!r.isTrainer}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              updateRule(r.employeeId, {
+                                isTrainer: checked,
+                                ...(checked ? { passingScore: 100 } : {}),
+                              });
+                            }}
+                            className="h-4 w-4 rounded border-gray-400 text-indigo-600 focus:ring-indigo-400"
+                            title="Trainer — requires 100% to pass"
+                          />
                         </td>
                         <td className="px-2 py-2.5 text-center">
                           <input
@@ -488,14 +534,17 @@ function SopEmployeeRulesModal({
                           <input
                             type="text"
                             inputMode="numeric"
-                            value={r.passingScore}
+                            value={r.isTrainer ? 100 : r.passingScore}
+                            disabled={!!r.isTrainer}
                             onChange={(e) => {
+                              if (r.isTrainer) return;
                               const n = Number(e.target.value);
                               if (!isNaN(n) && n >= 1 && n <= 100) {
                                 updateRule(r.employeeId, { passingScore: n });
                               }
                             }}
-                            className={inputCls}
+                            className={`${inputCls} ${r.isTrainer ? 'cursor-not-allowed bg-indigo-50 text-indigo-900' : ''}`}
+                            title={r.isTrainer ? 'Trainers must achieve 100%' : undefined}
                           />
                         </td>
                         <td className="px-2 py-2.5 text-center">
@@ -603,7 +652,14 @@ function SopEmployeeRulesModal({
                             className="rounded border-gray-400 text-indigo-600 focus:ring-indigo-400"
                           />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-bold text-gray-900">{e.name}</span>
+                            <span className="block truncate text-sm font-bold text-gray-900">
+                              {e.name}
+                              {e.isTrainer && (
+                                <span className="ml-1.5 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-800">
+                                  Trainer
+                                </span>
+                              )}
+                            </span>
                             <span className="block truncate text-sm font-medium text-gray-900">
                               {e.department} · {e.designation}
                             </span>
@@ -614,6 +670,21 @@ function SopEmployeeRulesModal({
                     })
                   )}
                 </div>
+
+                <label className="mb-3 flex cursor-pointer items-center gap-2.5 rounded-lg border border-indigo-200 bg-white px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={draft.isTrainer}
+                    onChange={(e) => setDraftTrainer(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-400 text-indigo-600 focus:ring-indigo-400"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-bold text-gray-900">Trainer</span>
+                    <span className="block text-xs font-medium text-gray-600">
+                      Requires 100% Pass on this exam (locked when checked).
+                    </span>
+                  </span>
+                </label>
 
                 <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                   {(
@@ -630,8 +701,10 @@ function SopEmployeeRulesModal({
                       <input
                         type="text"
                         inputMode="numeric"
-                        value={draft[key]}
+                        value={key === 'passingScore' && draft.isTrainer ? 100 : draft[key]}
+                        disabled={key === 'passingScore' && draft.isTrainer}
                         onChange={(e) => {
+                          if (key === 'passingScore' && draft.isTrainer) return;
                           const raw = e.target.value.trim();
                           if (raw === '') {
                             if (min === 0) setDraft((d) => ({ ...d, [key]: 0 }));
@@ -642,7 +715,11 @@ function SopEmployeeRulesModal({
                             setDraft((d) => ({ ...d, [key]: n }));
                           }
                         }}
-                        className="mt-1 w-full rounded border border-gray-300 px-2 py-2 text-sm font-bold text-gray-900"
+                        className={`mt-1 w-full rounded border border-gray-300 px-2 py-2 text-sm font-bold text-gray-900 ${
+                          key === 'passingScore' && draft.isTrainer
+                            ? 'cursor-not-allowed bg-indigo-50 text-indigo-900'
+                            : ''
+                        }`}
                       />
                     </label>
                   ))}
@@ -1023,7 +1100,7 @@ export function SopExamSettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [deptFilter, setDeptFilter] = useState('');
+  const [deptFilters, setDeptFilters] = useState<string[]>([]);
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('sopCode');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -1108,10 +1185,19 @@ export function SopExamSettingsPanel() {
     }
   };
 
+  const toggleDeptFilter = (dept: string) => {
+    setDeptFilters((prev) =>
+      prev.includes(dept) ? prev.filter((d) => d !== dept) : [...prev, dept],
+    );
+  };
+
+  const clearDeptFilters = () => setDeptFilters([]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const deptSet = new Set(deptFilters);
     const rows = sops.filter((s) => {
-      if (deptFilter && s.department !== deptFilter) return false;
+      if (deptSet.size > 0 && !deptSet.has(s.department)) return false;
       if (!q) return true;
       return (
         s.sopCode.toLowerCase().includes(q) ||
@@ -1129,7 +1215,15 @@ export function SopExamSettingsPanel() {
       return sortDir === 'desc' ? -cmp : cmp;
     });
     return rows;
-  }, [sops, search, deptFilter, sortKey, sortDir]);
+  }, [sops, search, deptFilters, sortKey, sortDir]);
+
+  // Drop the side panel selection if that SOP is no longer in the filtered list.
+  useEffect(() => {
+    if (!selectedCode) return;
+    if (!filtered.some((s) => s.sopCode === selectedCode)) {
+      setSelectedCode(null);
+    }
+  }, [filtered, selectedCode]);
 
   const selected = selectedCode
     ? sops.find((s) => s.sopCode === selectedCode) ?? null
@@ -1160,42 +1254,85 @@ export function SopExamSettingsPanel() {
 
       <div className={`grid gap-4 ${selected ? 'lg:grid-cols-[1fr_440px]' : ''}`}>
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-gray-200 bg-gray-50 px-4 py-3 sm:flex-row sm:items-center">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-600" />
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search SOP code, name, department…"
-                className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-xs font-medium text-gray-900 transition focus:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-100"
-              />
+          <div className="flex flex-col gap-2.5 border-b border-gray-200 bg-gray-50 px-4 py-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-600" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search SOP code, name, department…"
+                  className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-xs font-medium text-gray-900 transition focus:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-100"
+                />
+              </div>
+              <p className="shrink-0 text-[11px] font-semibold text-gray-800">
+                {filtered.length} of {sops.length} SOPs
+                {deptFilters.length > 0 && (
+                  <span className="ml-1 font-medium text-purple-700">
+                    · {deptFilters.length} dept{deptFilters.length === 1 ? '' : 's'}
+                  </span>
+                )}
+                {globalDefaults && (
+                  <span className="ml-2 font-medium text-gray-700">
+                    · defaults {globalDefaults.examQuestionCount}Q / {globalDefaults.passingScore}%
+                  </span>
+                )}
+              </p>
             </div>
-            <select
-              value={deptFilter}
-              onChange={(e) => setDeptFilter(e.target.value)}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900 transition focus:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-100"
-            >
-              <option value="">All departments</option>
-              {departments.map((d) => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
-            <p className="shrink-0 text-[11px] font-semibold text-gray-800">
-              {filtered.length} of {sops.length} SOPs
-              {globalDefaults && (
-                <span className="ml-2 font-medium text-gray-700">
-                  · defaults {globalDefaults.examQuestionCount}Q / {globalDefaults.passingScore}%
-                </span>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="mr-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                Departments
+              </span>
+              <button
+                type="button"
+                onClick={clearDeptFilters}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                  deptFilters.length === 0
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                All
+              </button>
+              {departments.map((d) => {
+                const selected = deptFilters.includes(d);
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => toggleDeptFilter(d)}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                      selected
+                        ? 'bg-purple-600 text-white shadow-sm'
+                        : 'border border-gray-200 bg-white text-gray-600 hover:border-purple-200 hover:bg-purple-50'
+                    }`}
+                    title={selected ? `Remove ${d}` : `Add ${d}`}
+                  >
+                    {d}
+                  </button>
+                );
+              })}
+              {deptFilters.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearDeptFilters}
+                  className="ml-1 inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium text-gray-500 hover:bg-gray-50"
+                >
+                  <X className="h-3 w-3" /> Clear
+                </button>
               )}
-            </p>
+            </div>
           </div>
 
           {filtered.length === 0 ? (
             <div className="px-5 py-12 text-center text-xs font-semibold text-gray-700">
               {sops.length === 0
                 ? 'No SOPs with an MCQ bank yet. Generate MCQs first.'
-                : 'No SOPs match your search.'}
+                : deptFilters.length > 0
+                  ? `No SOPs match the selected department${deptFilters.length === 1 ? '' : 's'} (${deptFilters.join(', ')}).`
+                  : 'No SOPs match your search.'}
             </div>
           ) : (
             <div className="overflow-x-auto">

@@ -18,6 +18,8 @@ export interface ISopEmployeeExamRule {
   employeeName: string;
   department?: string;
   designation?: string;
+  /** When true, this employee must achieve 100% to pass the exam. */
+  isTrainer?: boolean;
   trialQuestionCount: number;
   examQuestionCount: number;
   passingScore: number;
@@ -51,6 +53,7 @@ const SopEmployeeExamRuleSchema = new Schema<ISopEmployeeExamRule>(
     employeeName:          { type: String, required: true },
     department:            { type: String, default: '' },
     designation:           { type: String, default: '' },
+    isTrainer:             { type: Boolean, default: false },
     trialQuestionCount:    { type: Number, default: 5,  min: 0, max: 50 },
     examQuestionCount:     { type: Number, default: 20, min: 1, max: 200 },
     passingScore:          { type: Number, default: 80, min: 1, max: 100 },

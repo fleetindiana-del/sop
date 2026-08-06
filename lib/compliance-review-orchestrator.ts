@@ -16,6 +16,18 @@ import ComplianceGapFinding from "@/models/ComplianceGapFinding";
 import ComplianceReport from "@/models/ComplianceReport";
 import type { ISOP } from "@/models/SOP";
 
+/** Lean SOP fields required by the review pipeline (not a full Mongoose document). */
+export type ComplianceReviewSop = Pick<
+  ISOP,
+  | "_id"
+  | "content"
+  | "identifier"
+  | "name"
+  | "department"
+  | "version"
+  | "complianceStructureCache"
+>;
+
 export type GuidelineClauseInput = {
   clauseNumber: string;
   clauseTitle: string;
@@ -29,7 +41,7 @@ export type GuidelineClauseInput = {
 export type ComplianceReviewMode = "initial" | "incremental" | "auto";
 
 export type RunComplianceReviewInput = {
-  sop: ISOP;
+  sop: ComplianceReviewSop;
   guidelineClauses: GuidelineClauseInput[];
   sopLibrary: SopLibraryEntry[];
   provider?: LlmProvider;
@@ -100,9 +112,9 @@ function fromStoredFinding(f: IComplianceFindingDetail): ComplianceFinding {
     requirementCriticality: f.requirementCriticality as ComplianceFinding["requirementCriticality"],
     whyApplies: f.whyApplies,
     whyEvidenceInsufficient: f.whyEvidenceInsufficient,
-    findingCategory: f.findingCategory,
-    riskLevel: f.riskLevel,
-    evidenceStrength: f.evidenceStrength,
+    findingCategory: f.findingCategory as ComplianceFinding["findingCategory"],
+    riskLevel: f.riskLevel as ComplianceFinding["riskLevel"],
+    evidenceStrength: f.evidenceStrength as ComplianceFinding["evidenceStrength"],
     requiresManualReview: f.requiresManualReview,
     mergedClauseRefs: f.mergedClauseRefs,
   };
@@ -206,7 +218,7 @@ export async function runComplianceReview(
   // Mongoose .lean() returns Maps as plain objects — normalize to a real Map.
   const storedHashesRaw =
     !input.forceRefresh && existingReport?.sopContentHash === sopContentHash
-      ? ((existingReport as Record<string, unknown>).guidelineHashes as Record<string, string> | Map<string, string> | undefined)
+      ? ((existingReport as unknown as Record<string, unknown>).guidelineHashes as Record<string, string> | Map<string, string> | undefined)
       : undefined;
   const storedHashes: Map<string, string> | undefined = storedHashesRaw
     ? storedHashesRaw instanceof Map

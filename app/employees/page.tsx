@@ -13,7 +13,7 @@ import {
 import {
   ArrowLeft, Plus, Search, Pencil, Trash2, X, Check,
   UserRound, RefreshCw, AlertTriangle, GraduationCap, KeyRound, Copy,
-  UserX, UserCheck, Loader2, CalendarDays, ShieldCheck,
+  UserX, UserCheck, Loader2, CalendarDays, ShieldCheck, Award,
 } from 'lucide-react';
 import {
   isWithinInductionWindow,
@@ -21,6 +21,7 @@ import {
   formatDateOfJoiningInput,
   INDUCTION_WINDOW_MONTHS,
 } from '@/lib/employeeInduction';
+import { parseTrainerDepartments } from '@/lib/employeeTrainer';
 
 const DEPARTMENTS = ['QA', 'QC', 'Microbiology', 'Production', 'Store', 'Engineering', 'Personnel'] as const;
 type Dept = (typeof DEPARTMENTS)[number];
@@ -33,6 +34,8 @@ interface Employee {
   employeeId?: string;
   dateOfJoining?: string;
   inductionTrainingRequired?: boolean;
+  isTrainer?: boolean;
+  trainerDepartments?: string[];
   isActive: boolean;
   lmsUsername?: string;
   hasLmsPassword?: boolean;
@@ -78,6 +81,16 @@ function EmployeeModal({
   const [inductionTrainingRequired, setInductionTrainingRequired] = useState(
     initial?.inductionTrainingRequired ?? false,
   );
+  const [isTrainer,   setIsTrainer]   = useState(initial?.isTrainer ?? false);
+  const [trainerDepartments, setTrainerDepartments] = useState<string[]>(() => {
+    if (initial?.isTrainer) {
+      return parseTrainerDepartments(
+        initial.trainerDepartments,
+        initial.department || defaultDept || 'QA',
+      );
+    }
+    return [initial?.department || defaultDept || 'QA'];
+  });
   const [password,    setPassword]    = useState('');
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState('');
@@ -93,9 +106,42 @@ function EmployeeModal({
     if (tenureRequiresInduction) setInductionTrainingRequired(true);
   }, [tenureRequiresInduction]);
 
+  // Keep trainer multi-select in sync when home department changes while trainer is on.
+  useEffect(() => {
+    if (!isTrainer) return;
+    setTrainerDepartments((prev) => {
+      if (prev.includes(department)) return prev;
+      return parseTrainerDepartments([...prev, department], department);
+    });
+  }, [department, isTrainer]);
+
+  const toggleTrainerDept = (dept: string) => {
+    setTrainerDepartments((prev) => {
+      if (prev.includes(dept)) {
+        // Don't allow clearing the last department.
+        if (prev.length <= 1) return prev;
+        return prev.filter((d) => d !== dept);
+      }
+      return parseTrainerDepartments([...prev, dept], department);
+    });
+  };
+
+  const handleTrainerToggle = (checked: boolean) => {
+    setIsTrainer(checked);
+    if (checked) {
+      setTrainerDepartments((prev) =>
+        prev.length > 0 ? parseTrainerDepartments(prev, department) : [department],
+      );
+    }
+  };
+
   const handleSave = async () => {
     if (!name.trim() || !designation.trim()) { setError('Name and designation are required.'); return; }
     if (password && password.length < 4) { setError('Password must be at least 4 characters.'); return; }
+    if (isTrainer && trainerDepartments.length === 0) {
+      setError('Select at least one department for a trainer.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -107,6 +153,8 @@ function EmployeeModal({
         employeeId,
         dateOfJoining: dateOfJoining || null,
         inductionTrainingRequired: effectiveInductionRequired,
+        isTrainer,
+        trainerDepartments: isTrainer ? trainerDepartments : [],
         ...(password ? { password } : {}),
       };
       const res = await fetch(isEdit ? `/api/employees/${initial._id}` : '/api/employees', {
@@ -206,6 +254,64 @@ function EmployeeModal({
               </span>
             </label>
           </div>
+
+          <label
+            className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition ${
+              isTrainer
+                ? 'border-purple-200 bg-purple-50/60'
+                : 'border-gray-200 bg-gray-50/60 hover:border-gray-300'
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={isTrainer}
+              onChange={(e) => handleTrainerToggle(e.target.checked)}
+              className="h-4 w-4 shrink-0 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+            />
+            <span className="min-w-0">
+              <span className="flex items-center gap-1.5 text-sm font-medium text-gray-900">
+                <Award className="h-3.5 w-3.5 shrink-0 text-purple-600" />
+                Trainer
+              </span>
+              <span className="mt-0.5 block text-[11px] leading-snug text-gray-500">
+                Mark this employee as a trainer. Trainers can manage SOPs across selected departments.
+              </span>
+            </span>
+          </label>
+
+          {isTrainer && (
+            <div className="rounded-lg border border-purple-200 bg-purple-50/40 p-3">
+              <div className="mb-2 text-xs font-semibold text-gray-700">
+                Trainer departments *
+              </div>
+              <p className="mb-2 text-[11px] leading-snug text-gray-500">
+                Select every department this trainer is eligible to manage. Home department is listed above.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {DEPARTMENTS.map((d) => {
+                  const checked = trainerDepartments.includes(d);
+                  return (
+                    <label
+                      key={d}
+                      className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                        checked
+                          ? 'border-purple-400 bg-purple-100 text-purple-800'
+                          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleTrainerDept(d)}
+                        className="h-3.5 w-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                      />
+                      {d}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3">
             <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-gray-700">
@@ -603,9 +709,15 @@ export default function EmployeesPage() {
 
   const handleSaved = (emp: Employee) => {
     setEmployees((prev) => {
-      const idx = prev.findIndex((e) => e._id === emp._id);
-      if (idx >= 0) return prev.map((e) => (e._id === emp._id ? emp : e));
-      return [emp, ...prev];
+      const normalized: Employee = {
+        ...emp,
+        trainerDepartments: Array.isArray(emp.trainerDepartments)
+          ? emp.trainerDepartments
+          : [],
+      };
+      const idx = prev.findIndex((e) => e._id === normalized._id);
+      if (idx >= 0) return prev.map((e) => (e._id === normalized._id ? { ...e, ...normalized } : e));
+      return [normalized, ...prev];
     });
     setShowAdd(false);
     setEditing(null);

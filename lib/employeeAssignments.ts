@@ -15,6 +15,7 @@ import {
   resolveExcelCodeToDbBase,
 } from '@/lib/sopIdentifierNormalize';
 import { invalidateLmsServerPrefix } from '@/lib/lmsCache';
+import { resolveTrainerDepartments } from '@/lib/employeeTrainer';
 import {
   resolveSopFamilyNames,
   isPlaceholderSopName,
@@ -479,6 +480,76 @@ async function computeEmployeeAssignmentsMap(): Promise<Map<string, EmployeeSopA
       if (a.month !== b.month) return a.month - b.month;
       return a.sopCode.localeCompare(b.sopCode);
     });
+  }
+
+  // Trainers manage ALL SOPs in every department they are eligible for.
+  // All of those SOPs are merged under the trainer's HOME department key so
+  // consumers that look up empKey(homeDept, name) see the combined total.
+  const trainers = await Employee.find({ isActive: true, isTrainer: true })
+    .select('name department trainerDepartments isTrainer')
+    .lean<Array<{
+      name: string;
+      department: string;
+      trainerDepartments?: string[];
+      isTrainer?: boolean;
+    }>>();
+
+  for (const trainer of trainers) {
+    const name = String(trainer.name || '').trim();
+    const homeDept = String(trainer.department || '').trim();
+    if (!name || !homeDept) continue;
+
+    const trainerDepts = resolveTrainerDepartments({
+      ...trainer,
+      isTrainer: true,
+    });
+    if (trainerDepts.length === 0) continue;
+
+    const homeKey = empKey(homeDept, name);
+    const existing = map.get(homeKey) || [];
+    const existingCodes = new Set(existing.map((a) => assignmentKey(a)));
+
+    for (const dept of trainerDepts) {
+      // Prefer exact snapshot key; also try case-insensitive match.
+      let deptSnap = latestByDept.get(dept);
+      if (!deptSnap) {
+        for (const [snapDept, snap] of latestByDept) {
+          if (snapDept.toLowerCase() === dept.toLowerCase()) {
+            deptSnap = snap;
+            break;
+          }
+        }
+      }
+      if (!deptSnap?.snapshot.sopMonthMap) continue;
+
+      for (const [rawKey, monthName] of Object.entries(deptSnap.snapshot.sopMonthMap)) {
+        if (!isMatrixAssignableCode(rawKey)) continue;
+        const base = stripVersion(rawKey);
+        if (existingCodes.has(base)) continue;
+        const primary = primaryScheduleFromMonthVal(monthName);
+        if (!primary) continue;
+        const assignment: EmployeeSopAssignment = {
+          sopCode: rawKey,
+          month: primary.month,
+          monthName: primary.monthName,
+          year: deptSnap.year,
+          trainingType: 'training',
+          sopDepartment: dept,
+        };
+        enrichAssignment(assignment, dept, lookup);
+        existing.push(assignment);
+        existingCodes.add(base);
+      }
+    }
+
+    if (existing.length > 0) {
+      existing.sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        if (a.month !== b.month) return a.month - b.month;
+        return a.sopCode.localeCompare(b.sopCode);
+      });
+      map.set(homeKey, existing);
+    }
   }
 
   await mergeInductionAssignments(map, lookup);

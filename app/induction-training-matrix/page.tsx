@@ -5803,7 +5803,7 @@ export default function InductionTrainingMatrixPage() {
               );
 
               const q = sopDetailSearch.trim().toLowerCase();
-              const filterRows = (rows: Array<{ name: string; designation?: string; department?: string }>) =>
+              const filterRows = <T extends { name: string; designation?: string; department?: string }>(rows: T[]) =>
                 rows.filter((r) => !q || r.name.toLowerCase().includes(q) || (r.designation || '').toLowerCase().includes(q));
 
               const foundRows = filterRows(detailModal.foundEmployees || []).sort(sortFn);

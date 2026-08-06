@@ -31,7 +31,7 @@ export function buildFreeModelChain(
   ...extras: Array<string | undefined>
 ): string[] {
   const candidates = [primary, ...extras, ...GEMINI_FREE_TEXT_MODELS].filter(
-    (m): m is string => Boolean(m) && isGeminiFreeModel(m),
+    (m): m is string => typeof m === "string" && isGeminiFreeModel(m),
   );
   return [...new Set(candidates)];
 }

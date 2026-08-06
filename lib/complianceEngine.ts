@@ -158,7 +158,7 @@ export interface ComplianceScoreBreakdown {
 export interface ComplianceAnalysisResult {
   findings: ComplianceFinding[];
   overallScore: number;
-  complianceStatus: "Fully Compliant" | "Partially Compliant" | "Non-Compliant";
+  complianceStatus: "Fully Compliant" | "Partially Compliant" | "Non-Compliant" | "Analysis Incomplete";
   compliantCount: number;
   partialCount: number;
   nonCompliantCount: number;

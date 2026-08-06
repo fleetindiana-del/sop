@@ -76,6 +76,21 @@ export function countLinkedAnnexureDocuments(records: ISOP[]): number {
   return count;
 }
 
+const TRUNCATION_MARKER = "\n... [middle of document truncated] ...\n";
+
+/**
+ * Keep the head AND the tail of an over-long block. Remediation clauses are usually
+ * appended near the end of a revised SOP, so head-only truncation hid exactly the text
+ * a re-check needs to see.
+ */
+function headTailWindow(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const budget = Math.max(0, maxChars - TRUNCATION_MARKER.length);
+  const tailBudget = Math.floor(budget * 0.4);
+  const headBudget = budget - tailBudget;
+  return `${text.slice(0, headBudget)}${TRUNCATION_MARKER}${text.slice(text.length - tailBudget)}`;
+}
+
 /**
  * Truncate SOP+annexure content for LLM windows without dropping annexure evidence.
  * Reserves ~40% of the budget for the linked-annexures block when present.
@@ -85,7 +100,7 @@ export function windowSopContentForAudit(sopContent: string, maxChars: number): 
 
   const annexIdx = sopContent.indexOf(LINKED_ANNEXURES_MARKER);
   if (annexIdx < 0) {
-    return `${sopContent.slice(0, Math.max(0, maxChars - 16))}\n... [truncated]`;
+    return headTailWindow(sopContent, maxChars);
   }
 
   const main = sopContent.slice(0, annexIdx);
@@ -95,8 +110,7 @@ export function windowSopContentForAudit(sopContent: string, maxChars: number): 
     Math.max(Math.floor(maxChars * 0.4), Math.min(12_000, Math.floor(maxChars * 0.5))),
   );
   const mainBudget = Math.max(1_000, maxChars - restBudget - 32);
-  const mainPart =
-    main.length > mainBudget ? `${main.slice(0, mainBudget)}\n... [truncated]\n` : main;
+  const mainPart = main.length > mainBudget ? `${headTailWindow(main, mainBudget)}\n` : main;
   const remaining = Math.max(0, maxChars - mainPart.length);
   const restPart =
     rest.length > remaining ? `${rest.slice(0, Math.max(0, remaining - 16))}\n... [truncated]` : rest;
@@ -257,9 +271,14 @@ export type AnnexureSupplementResult = {
   skipped: { label: string; fileName: string; reason: string }[];
 };
 
-/** Extract linked annexure files and append them as clearly labelled audit evidence. */
+/**
+ * Extract linked annexure files and append them as clearly labelled audit evidence.
+ * `opts.exclude` skips files that a caller already has a fresher copy of (e.g. an
+ * annexure uploaded with a re-check supersedes the one stored on the SOP record).
+ */
 export async function buildAnnexureSupplementDetailed(
   records: ISOP[],
+  opts?: { exclude?: (info: { label: string; fileName: string }) => boolean },
 ): Promise<AnnexureSupplementResult> {
   const documents = records.flatMap((record) => record.sopDocuments ?? []);
   const chunks: string[] = [];
@@ -279,6 +298,7 @@ export async function buildAnnexureSupplementDetailed(
 
     const label = document.annexureLabel || document.fileName || "Annexure";
     const fileName = document.fileName || path;
+    if (opts?.exclude?.({ label, fileName })) continue;
 
     try {
       const buffer = await loadStoredFileBuffer(path, { trustedRemote: true });

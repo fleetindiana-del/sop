@@ -34,7 +34,7 @@ export interface RegistrySOP {
   files: {
     docx: FileLinks;
     pdf: FileLinks;
-    docxDateError?: FileLinks;
+    docxDateError?: { en?: boolean; gu?: boolean };
   };
   annexures: { label: string; filePath: string; fileName?: string }[];
   /** Roman annexure labels required in the SOP ANNEXURES section (e.g. I, II, III). */

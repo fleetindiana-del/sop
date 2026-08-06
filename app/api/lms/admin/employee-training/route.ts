@@ -13,6 +13,7 @@ import SOP from '@/models/SOP';
 import LearningProgress from '@/models/lms/LearningProgress';
 import TrainingMatrixUpload from '@/models/TrainingMatrixUpload';
 import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
+import { resolveTrainerDepartments } from '@/lib/employeeTrainer';
 import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
 import {
   hasGujaratiScript,
@@ -188,9 +189,17 @@ export async function GET(req: NextRequest) {
         if (department) empFilter.department = { $regex: new RegExp(`^${department}$`, 'i') };
 
         const employees = await Employee.find(empFilter)
-          .select('_id name designation department isActive')
+          .select('_id name designation department isActive isTrainer trainerDepartments')
           .sort({ name: 1 })
-          .lean<{ _id: unknown; name: string; designation: string; department: string; isActive: boolean }[]>();
+          .lean<{
+            _id: unknown;
+            name: string;
+            designation: string;
+            department: string;
+            isActive: boolean;
+            isTrainer?: boolean;
+            trainerDepartments?: string[];
+          }[]>();
 
         const employeeIds = employees.map((e) => e._id);
         const [assignmentsMap, scheduleByDept] = await Promise.all([
@@ -210,11 +219,36 @@ export async function GET(req: NextRequest) {
           progressMap.set(`${id}::${sop}`, (p as { steps?: Record<string, unknown> }).steps || {});
         }
 
+        const assignmentKeyLocal = (code: string) =>
+          String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
+
+        const resolveAssignmentsForEmployee = (emp: {
+          name: string;
+          department: string;
+          isTrainer?: boolean;
+          trainerDepartments?: string[];
+        }) => {
+          // Primary lookup is always home department (trainers merge into this key).
+          const primary = assignmentsMap.get(empKey(emp.department, emp.name)) ?? [];
+          if (!emp.isTrainer) return primary;
+
+          // Defensive merge: also pull any leftovers keyed under other trainer depts.
+          const byCode = new Map<string, (typeof primary)[number]>();
+          for (const a of primary) byCode.set(assignmentKeyLocal(a.sopCode), a);
+          for (const dept of resolveTrainerDepartments({ ...emp, isTrainer: true })) {
+            if (dept.toLowerCase() === String(emp.department || '').trim().toLowerCase()) continue;
+            for (const a of assignmentsMap.get(empKey(dept, emp.name)) ?? []) {
+              const k = assignmentKeyLocal(a.sopCode);
+              if (!byCode.has(k)) byCode.set(k, a);
+            }
+          }
+          return [...byCode.values()];
+        };
+
         // Available steps only depend on the SOP, so resolve each unique code once.
         const uniqueSopCodes = new Set<string>();
         for (const emp of employees) {
-          const assignments = assignmentsMap.get(empKey(emp.department, emp.name)) ?? [];
-          for (const a of assignments) uniqueSopCodes.add(a.sopCode);
+          for (const a of resolveAssignmentsForEmployee(emp)) uniqueSopCodes.add(a.sopCode);
         }
         const contentByCode = await getJourneyContentBatch(uniqueSopCodes);
         const availableByCode = new Map<string, string[]>(
@@ -284,7 +318,7 @@ export async function GET(req: NextRequest) {
 
         const records: EmployeeTrainingRecord[] = employees.map((emp) => {
           const id          = String(emp._id);
-          const assignments = assignmentsMap.get(empKey(emp.department, emp.name)) ?? [];
+          const assignments = resolveAssignmentsForEmployee(emp);
 
           let completedSops = 0;
           let notCompletedSops = 0;
@@ -292,15 +326,33 @@ export async function GET(req: NextRequest) {
           let doneSteps = 0;
 
           // Per-month assigned-SOP counts come from the scheduled month
-          // (sopMonthMap), not the tracking records' month.
-          const sched = scheduleByDept.get(String(emp.department || '').trim().toLowerCase());
-          const monthlyCounts = new Array(12).fill(0) as number[];
-          if (sched) {
-            for (const a of assignments) {
-              if (isInvalidSopAssignmentCode(a.sopCode)) continue;
-              const months = sched.get(stripVersion(a.sopCode));
-              if (months) for (const m of months) monthlyCounts[m - 1]++;
+          // (sopMonthMap). Trainers may span multiple departments — look up
+          // each SOP against its own department schedule first.
+          const homeSched = scheduleByDept.get(String(emp.department || '').trim().toLowerCase());
+          const trainerScheds = emp.isTrainer
+            ? resolveTrainerDepartments({ ...emp, isTrainer: true }).map((d) =>
+                scheduleByDept.get(d.toLowerCase()),
+              )
+            : [];
+
+          const monthsForSop = (sopCode: string, sopDepartment?: string): number[] => {
+            if (sopDepartment) {
+              const byDept = scheduleByDept.get(sopDepartment.trim().toLowerCase());
+              const months = byDept?.get(stripVersion(sopCode));
+              if (months?.length) return months;
             }
+            for (const sched of trainerScheds) {
+              const months = sched?.get(stripVersion(sopCode));
+              if (months?.length) return months;
+            }
+            return homeSched?.get(stripVersion(sopCode)) ?? [];
+          };
+
+          const monthlyCounts = new Array(12).fill(0) as number[];
+          for (const a of assignments) {
+            if (isInvalidSopAssignmentCode(a.sopCode)) continue;
+            const months = monthsForSop(a.sopCode, a.sopDepartment);
+            for (const m of months) monthlyCounts[m - 1]++;
           }
 
           const sops: SopBreakdown[] = assignments.flatMap((a) => {
@@ -336,7 +388,7 @@ export async function GET(req: NextRequest) {
               sopName: english,
               sopNameGujarati: gujarati,
               status,
-              months: sched?.get(stripVersion(a.sopCode)) ?? [],
+              months: monthsForSop(a.sopCode, a.sopDepartment),
               hasExam: availableSet.has('quiz') || availableSet.has('quizGu'),
               components,
             }];

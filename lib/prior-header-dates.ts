@@ -59,7 +59,7 @@ async function ensureDocxContent(record: ISOP): Promise<ISOP> {
     { _id: record._id },
     { $set: { content, linkedFromBunny: false, updatedAt: new Date() } },
   );
-  return { ...record, content, linkedFromBunny: false };
+  return { ...record, content, linkedFromBunny: false } as ISOP;
 }
 
 /**

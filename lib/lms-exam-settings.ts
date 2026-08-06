@@ -44,7 +44,12 @@ function normalizeSopCode(sopCode: string): string {
  */
 export async function resolveExamSettingsForSop(
   sopCode: string,
-  employee?: { id?: string; department?: string; designation?: string } | null,
+  employee?: {
+    id?: string;
+    department?: string;
+    designation?: string;
+    isTrainer?: boolean;
+  } | null,
 ): Promise<ResolvedExamSettings> {
   const code = normalizeSopCode(sopCode);
 
@@ -93,13 +98,16 @@ export async function resolveExamSettingsForSop(
       ? sopDoc.employeeRules.find((r) => r.employeeId === employee.id)
       : undefined;
 
+  const isTrainer = employee?.isTrainer === true || empRule?.isTrainer === true;
+
   if (empRule) {
     const flags = flagsFromShuffleMode(empRule.shuffleMode);
+    const pass = isTrainer ? 100 : empRule.passingScore;
     return {
       trialQuestionCount: empRule.trialQuestionCount,
       examQuestionCount: empRule.examQuestionCount,
-      defaultPassingScore: empRule.passingScore,
-      passingScore: empRule.passingScore,
+      defaultPassingScore: pass,
+      passingScore: pass,
       maxAttempts: empRule.maxAttempts,
       timeLimitMinutes: empRule.timeLimitMinutes,
       shuffleMode: empRule.shuffleMode,
@@ -114,13 +122,15 @@ export async function resolveExamSettingsForSop(
 
   const flags = flagsFromShuffleMode(base.shuffleMode);
   const rules: IPassingScoreRule[] = globalDoc?.passingScoreRules ?? [];
-  const passingScore = resolvePassingScore(
+  let passingScore = resolvePassingScore(
     rules,
     employee?.department ?? '',
     employee?.designation ?? '',
     base.defaultPassingScore,
     employee?.id,
   );
+  // Trainers must achieve 100% on every exam, even without a per-SOP rule.
+  if (isTrainer) passingScore = 100;
 
   return {
     ...base,

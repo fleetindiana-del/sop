@@ -11,6 +11,7 @@ import {
 import type { JourneyStep } from '@/app/api/lms/journey/[sopCode]/route';
 import { buildOfficeOnlineEmbedUrl } from '@/lib/file-urls';
 import {
+  getCachedLmsEmployeeId,
   invalidateLmsClientFields,
   lmsClientFields,
   LMS_CLIENT_FRESH_MS,
@@ -1337,15 +1338,20 @@ export default function JourneyPage() {
   }, []);
 
   const load = useCallback(async (force = false) => {
-    const field = lmsClientFields.journey(sopCode);
+    const employeeId = getCachedLmsEmployeeId();
+    const field = employeeId
+      ? lmsClientFields.journey(employeeId, sopCode)
+      : `journey::${String(sopCode || '').toUpperCase()}`;
     const cached = !force ? readLmsClientCache<JourneyData>(field) : null;
     if (cached?.value) {
       applyJourneyData(cached.value);
       setLoading(false);
       if (Date.now() - cached.cachedAt <= LMS_CLIENT_FRESH_MS) {
         const pct = cached.value.progress?.overallPercentage ?? 0;
-        if (pct >= 100) {
-          const certCached = readLmsClientCache<{ certificate: unknown }>(lmsClientFields.certificate(sopCode));
+        if (pct >= 100 && employeeId) {
+          const certCached = readLmsClientCache<{ certificate: unknown }>(
+            lmsClientFields.certificate(employeeId, sopCode),
+          );
           if (certCached?.value?.certificate) setHasCert(true);
         }
         return;
@@ -1358,14 +1364,16 @@ export default function JourneyPage() {
       if (res.status === 401) { router.push('/lms'); return; }
       const json = await res.json() as JourneyData;
       applyJourneyData(json);
-      writeLmsClientCache(field, json);
+      if (employeeId) writeLmsClientCache(field, json);
       const pct = json.progress?.overallPercentage ?? 0;
       if (pct >= 100) {
         const certRes = await fetch(`/api/lms/certificate/${sopCode}`);
         const certData = await certRes.json();
         if (certData.certificate) {
           setHasCert(true);
-          writeLmsClientCache(lmsClientFields.certificate(sopCode), certData);
+          if (employeeId) {
+            writeLmsClientCache(lmsClientFields.certificate(employeeId, sopCode), certData);
+          }
         }
       }
     } catch {
@@ -1388,11 +1396,14 @@ export default function JourneyPage() {
       if (json.progress) {
         const newPct = json.progress.overallPercentage ?? 0;
         setOverallPct(newPct);
-        invalidateLmsClientFields(
-          lmsClientFields.journey(sopCode),
-          lmsClientFields.dashboard,
-          lmsClientFields.certificate(sopCode),
-        );
+        const employeeId = getCachedLmsEmployeeId();
+        if (employeeId) {
+          invalidateLmsClientFields(
+            lmsClientFields.journey(employeeId, sopCode),
+            lmsClientFields.dashboard(employeeId),
+            lmsClientFields.certificate(employeeId, sopCode),
+          );
+        }
         if (newPct >= 100 && !hasCert) {
           const certRes = await fetch(`/api/lms/certificate/${sopCode}`);
           const certData = await certRes.json();
