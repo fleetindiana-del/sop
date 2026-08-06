@@ -52,10 +52,9 @@ function resolveClauses(g: {
   return stored;
 }
 
-// Engine targets 5–10 min per SOP (small batches + pipelined concurrency). This is only
-// the platform abort ceiling — a safety buffer so a run never aborts mid-way and loses
-// results; normal audits finish well inside it.
-export const maxDuration = 900;
+// Vercel Hobby caps serverless maxDuration at 300s. Longer audits should run on Pro
+// or be split across incremental/recheck routes.
+export const maxDuration = 300;
 
 /**
  * V5 — Structured regulatory compliance audit.
