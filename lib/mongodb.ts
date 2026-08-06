@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import "@/lib/mongoose-compat";
 import { ensureDefaultAdmin } from "@/lib/ensure-admin";
 import { validateEnv } from "@/lib/validateEnv";
 import { MONGO_CONNECT_OPTIONS } from "./mongo-client-options.mjs";
