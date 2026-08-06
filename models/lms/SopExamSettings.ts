@@ -41,6 +41,11 @@ export interface ISopExamSettings extends Document {
   shuffleMode: ShuffleMode;
   showAnswersAfterTrial: boolean;
   allowRetakeAfterPass: boolean;
+  /**
+   * When true, the SOP is released for LMS training/exams.
+   * When false, learners can still see the assignment but cannot start the exam.
+   */
+  lmsApproved: boolean;
   /** Employee-specific overrides for this SOP. */
   employeeRules: ISopEmployeeExamRule[];
   updatedAt: Date;
@@ -81,6 +86,8 @@ const SopExamSettingsSchema = new Schema<ISopExamSettings>(
     },
     showAnswersAfterTrial: { type: Boolean, default: true },
     allowRetakeAfterPass:  { type: Boolean, default: true },
+    // Default true so existing SOPs stay exam-ready until an admin unchecks Approved.
+    lmsApproved:           { type: Boolean, default: true },
     employeeRules:         { type: [SopEmployeeExamRuleSchema], default: [] },
   },
   { timestamps: true },

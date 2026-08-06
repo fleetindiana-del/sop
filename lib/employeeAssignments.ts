@@ -58,6 +58,8 @@ export interface EmployeeSopAssignment {
   status?: string;
   /** ISO date (YYYY-MM-DD) when the exam is scheduled, if assigned on the calendar. */
   examDate?: string;
+  /** ISO date of the current SOP document expiry, if known. */
+  expiryDate?: string;
 }
 
 function empKey(department: string, name: string): string {
@@ -116,7 +118,7 @@ export function inferTrainingType(rawSymbol: string): 'induction' | 'training' {
 
 interface SopLookup {
   families: Map<string, ISOP[]>;
-  registryByBase: Map<string, { name: string; nameGujarati?: string; department: string }>;
+  registryByBase: Map<string, { name: string; nameGujarati?: string; department: string; expiryDate?: string }>;
   matrixByDeptCode: Map<string, { sopName: string; department: string }>;
   matrixByCode: Map<string, { sopName: string; department: string }>;
   recordNameByBase: Map<string, string>;
@@ -192,13 +194,27 @@ function enrichAssignment(
     matrix?.department ||
     employeeDept,
   );
+
+  // Prefer registry expiry, then latest family record with an expiryDate.
+  const registryExpiry = registry?.expiryDate;
+  if (registryExpiry) {
+    assignment.expiryDate = String(registryExpiry).slice(0, 10);
+  } else {
+    const withExpiry = [...family]
+      .filter((r) => r.expiryDate)
+      .sort((a, b) => (b.versionNum ?? 0) - (a.versionNum ?? 0));
+    const exp = withExpiry[0]?.expiryDate;
+    if (exp) {
+      assignment.expiryDate = new Date(exp).toISOString().slice(0, 10);
+    }
+  }
 }
 
 /** Build SOP family index + matrix assignment lookups for name/dept resolution. */
 async function buildSopLookup(): Promise<SopLookup> {
   const [sops, registryRows, matrixRows, matrixRecordNames] = await Promise.all([
     SOP.find({ isObsolete: { $ne: true } })
-      .select('name identifier sopBaseId language department')
+      .select('name identifier sopBaseId language department expiryDate versionNum')
       .lean(),
     getGroupedRegistryRows(),
     MatrixSOPAssignment.find({ isActive: true })
@@ -218,7 +234,7 @@ async function buildSopLookup(): Promise<SopLookup> {
     families.get(base)!.push(s);
   }
 
-  const registryByBase = new Map<string, { name: string; nameGujarati?: string; department: string }>();
+  const registryByBase = new Map<string, { name: string; nameGujarati?: string; department: string; expiryDate?: string }>();
   for (const row of registryRows) {
     if (row.isObsolete) continue;
     const base = stripVersion(row.identifier).toUpperCase();
@@ -227,6 +243,7 @@ async function buildSopLookup(): Promise<SopLookup> {
       name: row.name,
       nameGujarati: row.nameGujarati,
       department: row.department,
+      expiryDate: row.expiryDate ? String(row.expiryDate).slice(0, 10) : undefined,
     });
   }
 

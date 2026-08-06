@@ -5,11 +5,12 @@ import { connectDB } from '@/lib/mongodb';
 import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
 import MCQBank from '@/models/MCQBank';
 import Employee from '@/models/Employee';
+import SOP from '@/models/SOP';
 import {
   resolveExamSettingsForSop,
   toLearnerQuizSettings,
 } from '@/lib/lms-exam-settings';
-import { sopFamilyIdentifierRegex } from '@/lib/sop-utils';
+import { baseIdentifierFromIdentifier, sopFamilyIdentifierRegex } from '@/lib/sop-utils';
 import type { ShuffleMode } from '@/models/lms/SopExamSettings';
 
 export const dynamic = 'force-dynamic';
@@ -54,14 +55,16 @@ function toAbcdQuestions(raw: RawMcq[]) {
  * Pull MCQs for a SOP. Shuffle mode controls selection:
  * - questions / both → random sample (different set per employee)
  * - options / none   → stable ordered slice (same set for everyone)
+ * - all=true         → every non-similar question (trainers); still shuffled when mode says so
  */
 async function fetchQuestions(
   sopCode: string,
   language: string,
   count: number,
   shuffleMode: ShuffleMode,
+  all = false,
 ): Promise<RawMcq[]> {
-  if (count <= 0) return [];
+  if (!all && count <= 0) return [];
 
   const familyRegex = sopFamilyIdentifierRegex(sopCode);
   const randomize = shuffleMode === 'questions' || shuffleMode === 'both';
@@ -78,7 +81,10 @@ async function fetchQuestions(
     { $match: { 'mcqs.isSimilar': { $ne: true } } },
   ];
 
-  if (randomize) {
+  if (all) {
+    // Full bank — stable fetch, shuffle in memory when needed so we never under-sample.
+    pipeline.push({ $sort: { 'mcqs.question': 1, 'mcqs.sopReference': 1 } });
+  } else if (randomize) {
     pipeline.push({ $sample: { size: count } });
   } else {
     // Stable order so every employee gets the same questions.
@@ -97,7 +103,14 @@ async function fetchQuestions(
     },
   });
 
-  return MCQBank.aggregate<RawMcq>(pipeline);
+  const rows = await MCQBank.aggregate<RawMcq>(pipeline);
+  if (all && randomize) {
+    for (let i = rows.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [rows[i], rows[j]] = [rows[j], rows[i]];
+    }
+  }
+  return rows;
 }
 
 // GET /api/lms/quiz/[sopCode]?mode=trial|exam&lang=en|gu
@@ -124,13 +137,51 @@ export async function GET(req: NextRequest, { params }: Params) {
       isTrainer: employee?.isTrainer === true,
     });
 
+    if (mode === 'exam' && resolved.lmsApproved === false) {
+      return NextResponse.json(
+        { error: 'This SOP is not approved for LMS exams yet.', settings: toLearnerQuizSettings(resolved) },
+        { status: 403 },
+      );
+    }
+
+    const family = (baseIdentifierFromIdentifier(sopCode) || sopCode).toUpperCase();
+    const sopDoc = await SOP.findOne({
+      isObsolete: { $ne: true },
+      $or: [
+        { sopBaseId: family },
+        { identifier: new RegExp(`^${family.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-\\d+)?$`, 'i') },
+      ],
+    })
+      .select('expiryDate versionNum')
+      .sort({ versionNum: -1 })
+      .lean<{ expiryDate?: Date }>();
+
+    if (mode === 'exam' && sopDoc?.expiryDate) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const exp = new Date(sopDoc.expiryDate);
+      exp.setHours(0, 0, 0, 0);
+      if (exp < today) {
+        return NextResponse.json(
+          {
+            error: 'This SOP has expired. The exam is locked until the document is renewed.',
+            settings: toLearnerQuizSettings(resolved),
+            sopExpired: true,
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     const count = mode === 'trial'
       ? resolved.trialQuestionCount
       : resolved.examQuestionCount;
 
+    const useAllExamQuestions = mode === 'exam' && resolved.allExamQuestions;
+
     const learnerSettings = toLearnerQuizSettings(resolved);
 
-    if (count <= 0) {
+    if (!useAllExamQuestions && count <= 0) {
       return NextResponse.json({
         questions: [],
         mode,
@@ -138,8 +189,19 @@ export async function GET(req: NextRequest, { params }: Params) {
       });
     }
 
-    const raw = await fetchQuestions(sopCode, language, count, resolved.shuffleMode);
+    const raw = await fetchQuestions(
+      sopCode,
+      language,
+      useAllExamQuestions ? Number.MAX_SAFE_INTEGER : count,
+      resolved.shuffleMode,
+      useAllExamQuestions,
+    );
     const questions = toAbcdQuestions(raw);
+
+    // Reflect the real set size so the learner UI / timer pacing stay accurate.
+    if (useAllExamQuestions) {
+      learnerSettings.examQuestionCount = questions.length;
+    }
 
     return NextResponse.json({
       questions,

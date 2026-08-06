@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { createPortal } from 'react-dom';
 import {
   AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, Check, ClipboardList, Eye, Hash,
-  Loader2, Plus, RotateCcw, Save, Search, Settings2, Shuffle, Timer, Trash2, X,
+  Loader2, Plus, RotateCcw, Save, Search, Settings2, ShieldCheck, Shuffle, Timer, Trash2, X,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -45,6 +45,7 @@ export interface SopExamSettingsValues {
   shuffleMode: ShuffleMode;
   showAnswersAfterTrial: boolean;
   allowRetakeAfterPass: boolean;
+  lmsApproved: boolean;
   employeeRules: SopEmployeeExamRule[];
 }
 
@@ -136,6 +137,7 @@ function normalizeSettings(
     shuffleMode: s?.shuffleMode ?? fallback?.shuffleMode ?? 'questions',
     showAnswersAfterTrial: s?.showAnswersAfterTrial ?? fallback?.showAnswersAfterTrial ?? true,
     allowRetakeAfterPass: s?.allowRetakeAfterPass ?? fallback?.allowRetakeAfterPass ?? true,
+    lmsApproved: s?.lmsApproved ?? fallback?.lmsApproved ?? true,
     employeeRules: Array.isArray(s?.employeeRules)
       ? s!.employeeRules!
       : (fallback?.employeeRules ?? []),
@@ -946,6 +948,19 @@ function EditPanel({
             </div>
           </div>
         </div>
+
+        <SettingsCard icon={ShieldCheck} title="SOP Approval Status" subtitle="Control whether this SOP is released for LMS exams.">
+          <Toggle
+            label="Approved for LMS"
+            description={
+              form.lmsApproved
+                ? 'Learners can start the assessment for this SOP.'
+                : 'Not Approved — learners can see the assignment but cannot take the exam.'
+            }
+            checked={form.lmsApproved}
+            onChange={(v) => set('lmsApproved', v)}
+          />
+        </SettingsCard>
 
         <SettingsCard icon={Hash} title="Question Count" subtitle="How many questions appear in each stage.">
           <NumberInput

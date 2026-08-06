@@ -29,6 +29,12 @@ export interface ResolvedExamSettings {
   hasSopOverride: boolean;
   /** True when a SOP employee-specific rule was applied. */
   hasEmployeeRule: boolean;
+  /** Trainers sit the full bank with unlimited attempts until they score 100%. */
+  isTrainer: boolean;
+  /** When true, exam pulls every non-similar MCQ for the SOP (not a sample). */
+  allExamQuestions: boolean;
+  /** When false, learners must not start the exam (SOP not LMS-approved). */
+  lmsApproved: boolean;
   sopCode: string;
 }
 
@@ -92,6 +98,9 @@ export async function resolveExamSettingsForSop(
     base.allowRetakeAfterPass = sopDoc.allowRetakeAfterPass ?? base.allowRetakeAfterPass;
   }
 
+  // Missing field (legacy docs) = approved so existing training is not locked out.
+  const lmsApproved = sopDoc ? sopDoc.lmsApproved !== false : true;
+
   // SOP employee rule beats everything else for that person on this SOP.
   const empRule: ISopEmployeeExamRule | undefined =
     employee?.id && sopDoc?.employeeRules?.length
@@ -100,10 +109,29 @@ export async function resolveExamSettingsForSop(
 
   const isTrainer = employee?.isTrainer === true || empRule?.isTrainer === true;
 
+  // Trainers: full question bank + unlimited attempts + must score 100%.
+  const applyTrainerRules = <T extends {
+    passingScore: number;
+    maxAttempts: number;
+    examQuestionCount: number;
+  }>(settings: T): T & { isTrainer: boolean; allExamQuestions: boolean } => {
+    if (!isTrainer) {
+      return { ...settings, isTrainer: false, allExamQuestions: false };
+    }
+    return {
+      ...settings,
+      passingScore: 100,
+      defaultPassingScore: 100,
+      maxAttempts: 0,
+      isTrainer: true,
+      allExamQuestions: true,
+    } as T & { isTrainer: boolean; allExamQuestions: boolean };
+  };
+
   if (empRule) {
     const flags = flagsFromShuffleMode(empRule.shuffleMode);
     const pass = isTrainer ? 100 : empRule.passingScore;
-    return {
+    return applyTrainerRules({
       trialQuestionCount: empRule.trialQuestionCount,
       examQuestionCount: empRule.examQuestionCount,
       defaultPassingScore: pass,
@@ -116,8 +144,9 @@ export async function resolveExamSettingsForSop(
       allowRetakeAfterPass: empRule.allowRetakeAfterPass,
       hasSopOverride,
       hasEmployeeRule: true,
+      lmsApproved,
       sopCode: code,
-    };
+    });
   }
 
   const flags = flagsFromShuffleMode(base.shuffleMode);
@@ -132,14 +161,15 @@ export async function resolveExamSettingsForSop(
   // Trainers must achieve 100% on every exam, even without a per-SOP rule.
   if (isTrainer) passingScore = 100;
 
-  return {
+  return applyTrainerRules({
     ...base,
     ...flags,
     passingScore,
     hasSopOverride,
     hasEmployeeRule: false,
+    lmsApproved,
     sopCode: code,
-  };
+  });
 }
 
 /** Learner-facing settings payload returned by quiz APIs. */
@@ -157,5 +187,8 @@ export function toLearnerQuizSettings(resolved: ResolvedExamSettings) {
     trialQuestionCount: resolved.trialQuestionCount,
     hasSopOverride: resolved.hasSopOverride,
     hasEmployeeRule: resolved.hasEmployeeRule,
+    isTrainer: resolved.isTrainer,
+    allExamQuestions: resolved.allExamQuestions,
+    lmsApproved: resolved.lmsApproved,
   };
 }

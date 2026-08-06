@@ -35,6 +35,8 @@ export interface SopExamSettingsPayload {
   shuffleMode: ShuffleMode;
   showAnswersAfterTrial: boolean;
   allowRetakeAfterPass: boolean;
+  /** When false, learners cannot start the exam for this SOP. */
+  lmsApproved: boolean;
   employeeRules: ISopEmployeeExamRule[];
 }
 
@@ -74,11 +76,13 @@ function parseEmployeeRules(raw: unknown, fallbackBase: Omit<SopExamSettingsPayl
       isTrainer: r.isTrainer === true,
       trialQuestionCount: clampInt(r.trialQuestionCount, 0, 50, fallbackBase.trialQuestionCount),
       examQuestionCount: clampInt(r.examQuestionCount, 1, 200, fallbackBase.examQuestionCount),
-      // Trainers always require 100% to pass.
+      // Trainers always require 100% to pass, unlimited attempts, and the full bank at runtime.
       passingScore: r.isTrainer === true
         ? 100
         : clampInt(r.passingScore, 1, 100, fallbackBase.passingScore),
-      maxAttempts: clampInt(r.maxAttempts, 0, 999, fallbackBase.maxAttempts),
+      maxAttempts: r.isTrainer === true
+        ? 0
+        : clampInt(r.maxAttempts, 0, 999, fallbackBase.maxAttempts),
       timeLimitMinutes: clampInt(r.timeLimitMinutes, 0, 600, fallbackBase.timeLimitMinutes),
       shuffleMode: parseShuffleMode(r.shuffleMode, fallbackBase.shuffleMode),
       showAnswersAfterTrial: parseBool(r.showAnswersAfterTrial, fallbackBase.showAnswersAfterTrial),
@@ -101,6 +105,7 @@ function payloadFromDoc(
     shuffleMode: doc?.shuffleMode ?? fallback.shuffleMode,
     showAnswersAfterTrial: doc?.showAnswersAfterTrial ?? fallback.showAnswersAfterTrial,
     allowRetakeAfterPass: doc?.allowRetakeAfterPass ?? fallback.allowRetakeAfterPass,
+    lmsApproved: doc?.lmsApproved !== false,
   };
   return {
     ...base,
@@ -187,6 +192,7 @@ async function buildSopList() {
     ),
     showAnswersAfterTrial: globalDoc?.showAnswersAfterTrial ?? true,
     allowRetakeAfterPass: globalDoc?.allowRetakeAfterPass ?? true,
+    lmsApproved: true,
     employeeRules: [],
   };
 
@@ -313,6 +319,7 @@ export async function PATCH(req: NextRequest) {
       shuffleMode: parseShuffleMode(body.shuffleMode, 'questions'),
       showAnswersAfterTrial: parseBool(body.showAnswersAfterTrial, true),
       allowRetakeAfterPass: parseBool(body.allowRetakeAfterPass, true),
+      lmsApproved: parseBool(body.lmsApproved, true),
     };
 
     const $set: Record<string, unknown> = { sopCode, ...baseUpdate };

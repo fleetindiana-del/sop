@@ -22,8 +22,8 @@ function recalcOverall(steps: Record<string, unknown>, availableSteps: string[])
   const hasQuiz = quizKeys.length > 0;
 
   if (hasQuiz) {
-    // The assessment is the only mandatory step. Passing it in either language
-    // (English or Gujarati) = 100%.
+    // The assessment is the only mandatory step. For dual (EN + GU) SOPs,
+    // passing either language quiz completes training and unlocks the certificate.
     const quizPassed = quizKeys.some((k) => {
       const s = steps[k] as { completed?: boolean } | undefined;
       return s?.completed === true;

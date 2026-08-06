@@ -10,7 +10,9 @@ import {
   lmsServerKeys,
   lmsServerTtl,
 } from '@/lib/lmsCache';
+import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
 import Employee from '@/models/Employee';
+import SopExamSettings from '@/models/lms/SopExamSettings';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,6 +28,10 @@ export interface SopAssetFlags {
   slidesGu: boolean;
   mcqEn: boolean;
   mcqGu: boolean;
+  /** False when admin has not approved this SOP for LMS exams. */
+  lmsApproved: boolean;
+  /** True when the current SOP document expiry date is in the past. */
+  sopExpired: boolean;
 }
 
 // GET /api/lms/assets — per-assigned-SOP resource availability for the learner.
@@ -48,10 +54,38 @@ export async function GET() {
         const key = `${employee.department}||${employee.name}`.trim().toLowerCase();
         const assignments = assignmentsMap.get(key) || [];
         const codes = assignments.map((a) => a.sopCode).filter(Boolean);
+        const familyCodes = [
+          ...new Set(
+            codes.map((c) => (baseIdentifierFromIdentifier(c) || c).toUpperCase()),
+          ),
+        ];
 
-        const contentMap = await getJourneyContentBatch(codes);
+        const [contentMap, sopSettings] = await Promise.all([
+          getJourneyContentBatch(codes),
+          SopExamSettings.find({ sopCode: { $in: familyCodes } })
+            .select('sopCode lmsApproved')
+            .lean(),
+        ]);
+
+        const approvedByCode = new Map(
+          sopSettings.map((s) => [String(s.sopCode).toUpperCase(), s.lmsApproved !== false]),
+        );
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const expiredByCode = new Map<string, boolean>();
+        for (const a of assignments) {
+          const expired = Boolean(
+            a.expiryDate && new Date(`${a.expiryDate}T00:00:00`) < today,
+          );
+          expiredByCode.set(a.sopCode.toUpperCase(), expired);
+          const fam = (baseIdentifierFromIdentifier(a.sopCode) || a.sopCode).toUpperCase();
+          expiredByCode.set(fam, expired || expiredByCode.get(fam) === true);
+        }
+
         const assets: Record<string, SopAssetFlags> = {};
         for (const [code, content] of contentMap) {
+          const fam = (baseIdentifierFromIdentifier(code) || code).toUpperCase();
           assets[code] = {
             videoEn: content.videosEn.length > 0,
             videoGu: content.videosGu.length > 0,
@@ -61,6 +95,10 @@ export async function GET() {
             slidesGu: content.slidesGu.length > 0,
             mcqEn: content.mcqCount > 0,
             mcqGu: content.mcqCountGu > 0,
+            // No SopExamSettings doc ⇒ treated as approved (legacy).
+            lmsApproved: approvedByCode.has(fam) ? approvedByCode.get(fam)! : true,
+            sopExpired: expiredByCode.get(code.toUpperCase()) === true
+              || expiredByCode.get(fam) === true,
           };
         }
         return { assets };

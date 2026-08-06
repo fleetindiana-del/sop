@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Shield,
   Upload,
+  UserCog,
   Video,
   Wrench,
 } from "lucide-react";
@@ -263,6 +264,11 @@ export function DashboardToolbar({
             {/* Admin-only tools */}
             {isAdmin && (
               <>
+                <DropdownItem
+                  icon={<UserCog className="h-3.5 w-3.5 text-violet-600" />}
+                  label="Login & Passwords"
+                  onClick={() => router.push("/admin/users")}
+                />
                 <DropdownItem
                   icon={<Cloud className="h-3.5 w-3.5 text-orange-500" />}
                   label="Bunny Files"

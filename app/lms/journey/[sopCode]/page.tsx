@@ -6,7 +6,7 @@ import {
   ArrowLeft, Check, ChevronLeft, ChevronRight, PlayCircle,
   FileText, BookOpen, ClipboardList, Lock, Loader2, AlertCircle,
   Volume2, Trophy, X, Award, RefreshCw, Clock,
-  Maximize2, ExternalLink, Download, Flag, XCircle,
+  Maximize2, Flag, XCircle,
 } from 'lucide-react';
 import type { JourneyStep } from '@/app/api/lms/journey/[sopCode]/route';
 import { buildOfficeOnlineEmbedUrl } from '@/lib/file-urls';
@@ -46,6 +46,8 @@ interface QuizSettings {
   maxAttempts: number;       // total exam attempts before answers are revealed (0 = unlimited)
   examQuestionCount: number; // full-exam question count, used to pace the timer
   trialQuestionCount?: number;
+  isTrainer?: boolean;
+  allExamQuestions?: boolean;
 }
 
 interface JourneyData {
@@ -304,15 +306,48 @@ function PdfStep({
   // While the immersive reader is open, lock background scroll and allow ESC to exit.
   useEffect(() => {
     if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFullscreen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFullscreen(false);
+      // Soft block common screenshot / save shortcuts (cannot stop OS PrintScreen).
+      if ((e.ctrlKey || e.metaKey) && ['c', 'C', 's', 'S', 'p', 'P'].includes(e.key)) {
+        e.preventDefault();
+      }
+    };
+    const block = (e: Event) => e.preventDefault();
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', onKey);
+    document.addEventListener('copy', block);
+    document.addEventListener('cut', block);
+    document.addEventListener('contextmenu', block);
     return () => {
       document.body.style.overflow = prevOverflow;
       window.removeEventListener('keydown', onKey);
+      document.removeEventListener('copy', block);
+      document.removeEventListener('cut', block);
+      document.removeEventListener('contextmenu', block);
     };
   }, [fullscreen]);
+
+  useEffect(() => {
+    if (!open || fullscreen) return;
+    const block = (e: Event) => e.preventDefault();
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && ['c', 'C', 's', 'S', 'p', 'P'].includes(e.key)) {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('copy', block);
+    document.addEventListener('cut', block);
+    document.addEventListener('contextmenu', block);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('copy', block);
+      document.removeEventListener('cut', block);
+      document.removeEventListener('contextmenu', block);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open, fullscreen]);
 
   if (!step.url) {
     return (
@@ -334,7 +369,12 @@ function PdfStep({
   const markReviewed = () => { setAcknowledged(true); onComplete(); };
 
   return (
-    <div className="flex flex-1 flex-col gap-3">
+    <div
+      className="flex flex-1 flex-col gap-3 select-none"
+      onCopy={(e) => e.preventDefault()}
+      onCut={(e) => e.preventDefault()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       {/* Landing card — prevents auto-download on page load */}
       {!open && (
         <div className="flex flex-1 flex-col items-center justify-center gap-5 rounded-2xl border border-gray-200 bg-linear-to-b from-gray-50 to-white py-16">
@@ -344,7 +384,7 @@ function PdfStep({
           <div className="text-center">
             <p className="text-base font-semibold text-gray-700">SOP Document</p>
             <p className="mt-0.5 text-xs text-gray-400">
-              {isDocx ? 'Word document' : 'PDF'} · Read it in the viewer or fullscreen
+              {isDocx ? 'Word document' : 'PDF'} · View-only — download, copy, and screenshots are restricted
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">
@@ -360,14 +400,6 @@ function PdfStep({
             >
               <Maximize2 className="h-4 w-4" /> Read Fullscreen
             </button>
-            <a
-              href={step.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
-            >
-              <ExternalLink className="h-4 w-4" /> Open in new tab
-            </a>
           </div>
           {step.completed ? (
             <span className="flex items-center gap-1.5 text-xs text-green-600">
@@ -386,7 +418,7 @@ function PdfStep({
 
       {open && (
         <>
-          {/* Inline viewer toolbar */}
+          {/* Inline viewer toolbar — no download / open-in-new-tab */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <button
               onClick={() => setOpen(false)}
@@ -394,39 +426,21 @@ function PdfStep({
             >
               <ChevronLeft className="h-3.5 w-3.5" /> Hide document
             </button>
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setFullscreen(true)}
-                className="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100"
-              >
-                <Maximize2 className="h-3.5 w-3.5" /> Fullscreen
-              </button>
-              <a
-                href={step.url}
-                download
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
-              >
-                <Download className="h-3.5 w-3.5" /> Download
-              </a>
-              <a
-                href={step.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
-              >
-                <ExternalLink className="h-3.5 w-3.5" /> New tab
-              </a>
-            </div>
+            <button
+              onClick={() => setFullscreen(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100"
+            >
+              <Maximize2 className="h-3.5 w-3.5" /> Fullscreen
+            </button>
           </div>
 
-          {/* Inline viewer — clean white frame, edge-to-edge like the dashboard preview */}
-          <div className="flex-1 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm h-[70vh] sm:h-[76vh] lg:h-[80vh]">
+          <div className="relative flex-1 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm h-[70vh] sm:h-[76vh] lg:h-[80vh]">
             <iframe
               src={viewerSrc}
               className="h-full w-full border-0"
               title="SOP Document"
+              sandbox="allow-scripts allow-same-origin allow-popups"
+              referrerPolicy="no-referrer"
             />
           </div>
 
@@ -447,12 +461,14 @@ function PdfStep({
 
       {/* Immersive full-screen reader */}
       {fullscreen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-[#e5e7eb]">
-          {/* Header chrome */}
+        <div className="fixed inset-0 z-50 flex flex-col bg-[#e5e7eb] select-none">
           <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-white px-3 py-2 shadow-sm sm:px-4">
             <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-gray-700">
               <FileText className="h-4 w-4 shrink-0 text-purple-600" />
               <span className="truncate">{step.label || 'SOP Document'}</span>
+              <span className="hidden rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 sm:inline">
+                View only
+              </span>
             </span>
             <div className="flex items-center gap-2">
               {!reviewed && (
@@ -463,15 +479,6 @@ function PdfStep({
                   <Check className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Mark as read</span>
                 </button>
               )}
-              <a
-                href={step.url}
-                download
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
-              >
-                <Download className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Download</span>
-              </a>
               <button
                 onClick={() => setFullscreen(false)}
                 className="inline-flex items-center justify-center rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
@@ -481,12 +488,13 @@ function PdfStep({
               </button>
             </div>
           </div>
-          {/* Document fills the rest of the screen, centered like the dashboard */}
           <div className="min-h-0 flex-1 p-2 sm:p-3">
             <iframe
               src={viewerSrc}
-              className="mx-auto h-full min-h-[480px] w-full max-w-[1200px] rounded-lg border border-gray-200 bg-white shadow-md"
-              title="SOP Document (full screen)"
+              className="h-full w-full rounded-lg border-0 bg-white shadow"
+              title="SOP Document fullscreen"
+              sandbox="allow-scripts allow-same-origin allow-popups"
+              referrerPolicy="no-referrer"
             />
           </div>
         </div>
@@ -855,7 +863,9 @@ function QuizStep({
             {!isDemo && (
               <li className="flex items-start gap-2">
                 <Award className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                You must score at least {introPassing}% to complete this training.
+                {settings?.isTrainer
+                  ? 'As a trainer you must score 100% on the full question bank. Attempts are unlimited until you pass.'
+                  : `You must score at least ${introPassing}% to complete this training.`}
               </li>
             )}
           </ul>

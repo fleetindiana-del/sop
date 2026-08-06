@@ -38,6 +38,8 @@ interface SopAssignment {
   trainingType: 'induction' | 'training';
   status?: string;
   examDate?: string;
+  /** YYYY-MM-DD — document expiry from SOP registry/family. */
+  expiryDate?: string;
 }
 
 interface Employee {
@@ -202,6 +204,15 @@ function isFullyComplete(progress?: ProgressRecord): boolean {
   return progress?.status === 'completed' && (progress.overallPercentage ?? 0) >= 100;
 }
 
+/** Document expiry (calendar day), independent of training-schedule due/overdue. */
+function isSopDocumentExpired(a: Pick<SopAssignment, 'expiryDate'>): boolean {
+  if (!a.expiryDate) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const exp = new Date(`${a.expiryDate}T00:00:00`);
+  return exp < today;
+}
+
 function statusSortRank(
   status: ProgressRecord['status'],
   schedule: ScheduleStatus,
@@ -342,9 +353,13 @@ const RESOURCE_DEFS: ResourceDef[] = [
 
 function ResourceButtons({
   asset,
+  examLocked,
+  lockReason,
   onSelect,
 }: {
   asset: SopAssetFlags;
+  examLocked?: boolean;
+  lockReason?: string;
   onSelect: (def: ResourceDef) => void;
 }) {
   const items = RESOURCE_DEFS.filter((d) => asset[d.enFlag] || asset[d.guFlag]);
@@ -355,20 +370,24 @@ function ResourceButtons({
       {items.map((d) => {
         const Icon = d.Icon;
         const both = asset[d.enFlag] && asset[d.guFlag];
+        const locked = d.kind === 'test' && examLocked;
         return (
           <button
             key={d.kind}
-            onClick={() => onSelect(d)}
-            title={d.label}
+            onClick={() => { if (!locked) onSelect(d); }}
+            disabled={locked}
+            title={locked ? (lockReason || 'Exam locked') : d.label}
             className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-semibold transition ${
-              d.primary
+              locked
+                ? 'cursor-not-allowed border-red-200 bg-red-50 text-red-400'
+                : d.primary
                 ? 'border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100'
                 : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
             }`}
           >
             <Icon className="h-3 w-3" />
             {d.label}
-            {both && (
+            {both && !locked && (
               <span className="rounded bg-indigo-50 px-0.5 text-[8px] font-bold text-indigo-500">EN/ગુજ</span>
             )}
           </button>
@@ -403,7 +422,11 @@ function LanguagePicker({
           <Icon className="h-6 w-6 text-purple-600" />
         </div>
         <h3 className="text-base font-bold text-gray-800">Choose language</h3>
-        <p className="mt-1 text-sm text-gray-500">Select the language for {what}.</p>
+        <p className="mt-1 text-sm text-gray-500">
+          {def.kind === 'test'
+            ? 'Dual SOP — complete either English or Gujarati. Passing one issues your certificate.'
+            : `Select the language for ${what}.`}
+        </p>
         <div className="mt-4 grid grid-cols-2 gap-2">
           <button
             onClick={() => onPick(def.enStep)}
@@ -527,6 +550,17 @@ function TrainingTable({
               const schedule = scheduleStatus(assignment);
               const cert = certMap.get(assignment.sopCode) || certMap.get(stripVersion(assignment.sopCode));
               const showCertificate = isFullyComplete(progress) && Boolean(cert);
+              const asset = assetsMap[assignment.sopCode];
+              const docExpired = isSopDocumentExpired(assignment) || asset?.sopExpired === true;
+              const notApproved = asset?.lmsApproved === false;
+              const examLocked = docExpired || notApproved;
+              const lockReason = docExpired
+                ? 'SOP expired — renew the document before taking the exam'
+                : notApproved
+                ? 'SOP is not approved for LMS exams'
+                : undefined;
+              const highlightExpiredDue =
+                docExpired && !isFullyComplete(progress) && (schedule === 'due' || schedule === 'overdue');
 
               return (
                 <tr
@@ -534,7 +568,9 @@ function TrainingTable({
                   onMouseEnter={() => onPrefetch?.(assignment.sopCode)}
                   onFocus={() => onPrefetch?.(assignment.sopCode)}
                   className={`transition hover:bg-gray-50/80 ${
-                    status !== 'completed' && status !== 'in_progress'
+                    highlightExpiredDue
+                      ? 'bg-red-100/80 ring-1 ring-inset ring-red-200'
+                      : status !== 'completed' && status !== 'in_progress'
                       ? schedule === 'overdue' ? 'bg-red-50/40'
                         : schedule === 'due' ? 'bg-amber-50/30'
                         : schedule === 'upcoming' ? 'bg-sky-50/30'
@@ -550,6 +586,16 @@ function TrainingTable({
                   </td>
                   <td className="max-w-[220px] px-2 py-1.5">
                     <TrainingNameCell assignment={assignment} />
+                    {highlightExpiredDue && (
+                      <p className="mt-0.5 text-[10px] font-semibold text-red-700">
+                        Expired{assignment.expiryDate ? ` ${assignment.expiryDate}` : ''} — exam locked until renewed
+                      </p>
+                    )}
+                    {notApproved && !highlightExpiredDue && (
+                      <p className="mt-0.5 text-[10px] font-semibold text-amber-700">
+                        Not Approved for LMS exams
+                      </p>
+                    )}
                     {progress?.lastAccessedAt && status === 'in_progress' && (
                       <p className="mt-0.5 truncate text-[10px] text-gray-400">
                         Last opened {new Date(progress.lastAccessedAt).toLocaleDateString()}
@@ -617,6 +663,8 @@ function TrainingTable({
                       {assetsMap[assignment.sopCode] && (
                         <ResourceButtons
                           asset={assetsMap[assignment.sopCode]}
+                          examLocked={examLocked}
+                          lockReason={lockReason}
                           onSelect={(def) => selectResource(assignment.sopCode, def)}
                         />
                       )}
