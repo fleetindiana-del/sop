@@ -27,6 +27,8 @@ export interface JourneyStep {
   completed: boolean;
   percentage?: number;
   lastTimestamp?: number;
+  /** Formal exam attempt scores, e.g. [{ attempt: 1, score: 75 }, ...]. */
+  attemptHistory?: Array<{ attempt: number; score: number; at?: string | Date }>;
 }
 
 function buildJourneySteps(
@@ -84,21 +86,35 @@ function buildJourneySteps(
     });
   }
   if (content.mcqCount > 0) {
-    const s = (stepData.quiz || {}) as { completed?: boolean; passed?: boolean; score?: number; attempts?: number };
+    const s = (stepData.quiz || {}) as {
+      completed?: boolean;
+      passed?: boolean;
+      score?: number;
+      attempts?: number;
+      attemptHistory?: Array<{ attempt: number; score: number; at?: string | Date }>;
+    };
     journeySteps.push({
       id: 'quiz', type: 'quiz', label: 'Assessment', questionCount: content.mcqCount,
       completed: s.completed ?? false,
       percentage: s.score,
       attempts: s.attempts ?? 0,
+      attemptHistory: Array.isArray(s.attemptHistory) ? s.attemptHistory : [],
     });
   }
   if (content.mcqCountGu > 0) {
-    const s = (stepData.quizGu || {}) as { completed?: boolean; passed?: boolean; score?: number; attempts?: number };
+    const s = (stepData.quizGu || {}) as {
+      completed?: boolean;
+      passed?: boolean;
+      score?: number;
+      attempts?: number;
+      attemptHistory?: Array<{ attempt: number; score: number; at?: string | Date }>;
+    };
     journeySteps.push({
       id: 'quizGu', type: 'quiz', label: 'Assessment (Gujarati)', questionCount: content.mcqCountGu,
       completed: s.completed ?? false,
       percentage: s.score,
       attempts: s.attempts ?? 0,
+      attemptHistory: Array.isArray(s.attemptHistory) ? s.attemptHistory : [],
     });
   }
 

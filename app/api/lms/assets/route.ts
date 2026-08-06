@@ -13,6 +13,7 @@ import {
 import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
 import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTrainingIgnore';
 import { getMcqApprovedMapForCodes, familyKeyForLmsCode } from '@/lib/lmsMcqApproval';
+import { batchTrainerExamUnlocked } from '@/lib/lmsTrainerGate';
 import Employee from '@/models/Employee';
 
 export const runtime = 'nodejs';
@@ -33,6 +34,11 @@ export interface SopAssetFlags {
   lmsApproved: boolean;
   /** True when the current SOP document expiry date is in the past. */
   sopExpired: boolean;
+  /**
+   * True when the learner may start the exam: either they are a covering trainer,
+   * or a department trainer has completed this SOP.
+   */
+  trainerUnlocked: boolean;
 }
 
 // GET /api/lms/assets — per-assigned-SOP resource availability for the learner.
@@ -48,7 +54,14 @@ export async function GET() {
       async () => {
         await connectDB();
         const employee = await Employee.findById(payload.sub)
-          .lean<{ name: string; department: string; isActive: boolean }>();
+          .lean<{
+            _id: unknown;
+            name: string;
+            department: string;
+            isActive: boolean;
+            isTrainer?: boolean;
+            trainerDepartments?: string[];
+          }>();
         if (!employee || !employee.isActive) return { assets: {} };
 
         const assignmentsMap = await getEmployeeAssignmentsMap();
@@ -61,9 +74,18 @@ export async function GET() {
         );
         const codes = assignments.map((a) => a.sopCode).filter(Boolean);
 
-        const [contentMap, mcqApprovedMap] = await Promise.all([
+        const [contentMap, mcqApprovedMap, trainerUnlockedMap] = await Promise.all([
           getJourneyContentBatch(codes),
           getMcqApprovedMapForCodes(codes),
+          batchTrainerExamUnlocked(
+            {
+              _id: employee._id as never,
+              department: employee.department,
+              isTrainer: employee.isTrainer === true,
+              trainerDepartments: employee.trainerDepartments,
+            },
+            codes,
+          ),
         ]);
 
         const today = new Date();
@@ -91,13 +113,16 @@ export async function GET() {
             slidesGu: content.slidesGu.length > 0,
             mcqEn: content.mcqCount > 0,
             mcqGu: content.mcqCountGu > 0,
-            // Approved = all MCQs ticked in MCQ Bank (same rule as MCQ Bank "Approved").
             lmsApproved:
               mcqApprovedMap.get(code) === true
               || mcqApprovedMap.get(code.toUpperCase()) === true
               || mcqApprovedMap.get(famKey) === true,
             sopExpired: expiredByCode.get(code.toUpperCase()) === true
               || expiredByCode.get(fam) === true,
+            trainerUnlocked:
+              trainerUnlockedMap.get(code) === true
+              || trainerUnlockedMap.get(code.toUpperCase()) === true
+              || trainerUnlockedMap.get(fam) === true,
           };
         }
         return { assets };

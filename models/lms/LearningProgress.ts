@@ -10,11 +10,19 @@ export interface ISimpleStepProgress {
   completed: boolean;
 }
 
+export interface IQuizAttemptRecord {
+  attempt: number;
+  score: number; // 0-100
+  at: Date;
+}
+
 export interface IQuizStepProgress {
   completed: boolean;
   passed: boolean;
-  score: number;      // 0-100
+  score: number;      // 0-100 — latest attempt
   attempts: number;
+  /** Score for each formal attempt, in order. */
+  attemptHistory: IQuizAttemptRecord[];
 }
 
 export interface ILearningProgress extends Document {
@@ -49,6 +57,12 @@ const simpleStepSchema = {
   completed: { type: Boolean, default: false },
 };
 
+const quizAttemptSchema = {
+  attempt: { type: Number, required: true },
+  score:   { type: Number, required: true },
+  at:      { type: Date, default: Date.now },
+};
+
 const LearningProgressSchema = new Schema<ILearningProgress>(
   {
     employeeId:     { type: Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
@@ -72,6 +86,7 @@ const LearningProgressSchema = new Schema<ILearningProgress>(
           passed:    { type: Boolean, default: false },
           score:     { type: Number,  default: 0 },
           attempts:  { type: Number,  default: 0 },
+          attemptHistory: { type: [quizAttemptSchema], default: [] },
         },
         default: () => ({}),
       },

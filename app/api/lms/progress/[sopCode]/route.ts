@@ -5,6 +5,7 @@ import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
 import {
   getOrBuildLmsCache,
   invalidateLmsLearnerCache,
+  invalidateLmsServerPrefix,
   lmsCacheControl,
   lmsServerKeys,
   lmsServerTtl,
@@ -127,6 +128,28 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         merged.passed = true;
       }
 
+      // Append / upsert per-attempt score history for formal exam submits.
+      if (
+        (step === 'quiz' || step === 'quizGu') &&
+        typeof stepData.score === 'number' &&
+        typeof stepData.attempts === 'number' &&
+        stepData.attempts > 0
+      ) {
+        const prev = Array.isArray(current.attemptHistory)
+          ? ([...current.attemptHistory] as Array<{ attempt: number; score: number; at?: Date }>)
+          : [];
+        const entry = {
+          attempt: stepData.attempts as number,
+          score: stepData.score as number,
+          at: new Date(),
+        };
+        const existingIdx = prev.findIndex((h) => h.attempt === entry.attempt);
+        if (existingIdx >= 0) prev[existingIdx] = entry;
+        else prev.push(entry);
+        prev.sort((a, b) => a.attempt - b.attempt);
+        merged.attemptHistory = prev;
+      }
+
       (progress.steps as Record<string, unknown>)[step] = merged;
       progress.markModified('steps');
 
@@ -153,6 +176,22 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     await progress.save();
     invalidateLmsLearnerCache(payload.sub, sopCode);
+
+    // When a trainer completes an SOP, unlock exams for their department learners.
+    if (progress.status === 'completed') {
+      try {
+        const emp = await (await import('@/models/Employee')).default
+          .findById(payload.sub)
+          .select('isTrainer')
+          .lean<{ isTrainer?: boolean }>();
+        if (emp?.isTrainer === true) {
+          invalidateLmsServerPrefix('lms:assets:');
+        }
+      } catch {
+        /* non-critical */
+      }
+    }
+
     return NextResponse.json({ progress: progress.toObject() });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });

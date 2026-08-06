@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft, Check, ChevronLeft, ChevronRight, PlayCircle,
-  FileText, BookOpen, ClipboardList, Lock, Loader2, AlertCircle,
+  FileText, BookOpen, ClipboardList, Loader2, AlertCircle,
   Volume2, Trophy, X, Award, RefreshCw, Clock,
   Maximize2, Flag, XCircle,
 } from 'lucide-react';
@@ -34,6 +34,13 @@ interface MCQQuestion {
   optionD: string;
   correctAnswer: 'A' | 'B' | 'C' | 'D';
   explanation: string;
+  /** MCQ Bank SOP section / clause reference, e.g. "4.2.1 — …". */
+  sopReference?: string;
+}
+
+interface AttemptScore {
+  attempt: number;
+  score: number;
 }
 
 interface DisplayOption { label: 'A' | 'B' | 'C' | 'D'; text: string; }
@@ -254,6 +261,18 @@ function VideoStep({
 
 // ─── Slides step ──────────────────────────────────────────────────────────────
 
+function isPptUrl(url: string): boolean {
+  return /\.pptx?($|\?)/i.test(String(url || ''));
+}
+
+function isPdfUrl(url: string): boolean {
+  return /\.pdf($|\?)/i.test(String(url || ''));
+}
+
+function officeEmbedUrl(url: string): string {
+  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`;
+}
+
 function SlidesStep({
   step,
   onComplete,
@@ -264,6 +283,69 @@ function SlidesStep({
   const urls = step.urls || [];
   const [currentIdx, setCurrentIdx] = useState(0);
   const [acknowledged, setAcknowledged] = useState(step.completed);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [viewerSrc, setViewerSrc] = useState<string | null>(null);
+  const [viewerError, setViewerError] = useState('');
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFullscreen(false);
+      if ((e.ctrlKey || e.metaKey) && ['s', 'S', 'p', 'P', 'c', 'C'].includes(e.key)) {
+        e.preventDefault();
+      }
+    };
+    const block = (e: Event) => e.preventDefault();
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKey, true);
+    document.addEventListener('contextmenu', block);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('contextmenu', block);
+    };
+  }, [fullscreen]);
+
+  useEffect(() => {
+    const raw = urls[currentIdx];
+    if (!raw) {
+      setViewerSrc(null);
+      return;
+    }
+    let cancelled = false;
+    setViewerError('');
+    setViewerSrc(null);
+
+    (async () => {
+      try {
+        if (isPptUrl(raw) && /^https?:\/\//i.test(raw)) {
+          // Office Online needs a public URL; download chrome is masked in the UI.
+          if (!cancelled) setViewerSrc(officeEmbedUrl(raw));
+          return;
+        }
+        const res = await fetch('/api/lms/media/view', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: raw }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.viewUrl) {
+          throw new Error(json.error || 'Could not open slides for viewing.');
+        }
+        if (!cancelled) setViewerSrc(json.viewUrl as string);
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setViewerError(e instanceof Error ? e.message : 'Failed to load slides.');
+          setViewerSrc(isPptUrl(raw) ? officeEmbedUrl(raw) : raw);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [urls, currentIdx]);
 
   if (urls.length === 0) {
     return (
@@ -274,14 +356,59 @@ function SlidesStep({
   }
 
   const isLast = currentIdx === urls.length - 1;
+  const usingOffice = Boolean(viewerSrc && viewerSrc.includes('officeapps.live.com'));
+
+  const frame = viewerSrc ? (
+    <div className="relative h-full w-full overflow-hidden bg-white" style={fullscreen ? { height: '100%' } : { minHeight: '55vh' }}>
+      <iframe
+        src={viewerSrc}
+        className="h-full w-full"
+        style={fullscreen ? { height: '100%' } : { minHeight: '55vh' }}
+        title={`${step.label} - Deck ${currentIdx + 1}`}
+        allowFullScreen
+        sandbox={usingOffice ? undefined : 'allow-scripts allow-same-origin'}
+      />
+      {usingOffice && (
+        <div className="pointer-events-auto absolute inset-x-0 top-0 z-10 h-12 bg-white" aria-hidden />
+      )}
+    </div>
+  ) : (
+    <div className="flex min-h-[55vh] items-center justify-center bg-stone-100">
+      {viewerError ? (
+        <p className="px-4 text-center text-sm text-red-600">{viewerError}</p>
+      ) : (
+        <Loader2 className="h-7 w-7 animate-spin text-purple-500" />
+      )}
+    </div>
+  );
 
   return (
-    <div className="flex flex-1 flex-col gap-3">
+    <div
+      className="flex flex-1 flex-col gap-3 select-none"
+      onContextMenu={(e) => e.preventDefault()}
+      onCopy={(e) => e.preventDefault()}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-gray-500">
+          Presentation · Deck {currentIdx + 1} of {urls.length}
+          {isPdfUrl(urls[currentIdx]) ? ' · PDF' : isPptUrl(urls[currentIdx]) ? ' · PPT' : ''}
+          {' · view only'}
+        </p>
+        <button
+          type="button"
+          onClick={() => setFullscreen(true)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+        >
+          <Maximize2 className="h-3.5 w-3.5" /> Full Screen
+        </button>
+      </div>
+
       {urls.length > 1 && (
         <div className="flex items-center gap-2">
           {urls.map((_, i) => (
             <button
               key={i}
+              type="button"
               onClick={() => setCurrentIdx(i)}
               className={`rounded-full px-3 py-1 text-xs font-medium transition ${
                 i === currentIdx ? 'bg-purple-600 text-white' : 'border border-gray-200 text-gray-500 hover:bg-gray-50'
@@ -292,16 +419,14 @@ function SlidesStep({
           ))}
         </div>
       )}
-      <div className="flex-1 overflow-hidden rounded-xl border border-gray-200 shadow-sm" style={{ minHeight: '55vh' }}>
-        <iframe
-          src={urls[currentIdx]}
-          className="h-full w-full"
-          style={{ minHeight: '55vh' }}
-          title={`${step.label} - Deck ${currentIdx + 1}`}
-        />
+
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        {frame}
       </div>
+
       {!acknowledged && isLast && (
         <button
+          type="button"
           onClick={() => { setAcknowledged(true); onComplete(); }}
           className="flex items-center justify-center gap-2 rounded-lg bg-purple-600 py-2.5 text-sm font-medium text-white hover:bg-purple-700"
         >
@@ -311,6 +436,42 @@ function SlidesStep({
       {(acknowledged || step.completed) && (
         <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">
           <Check className="h-3.5 w-3.5" /> Slides reviewed. You can revisit them anytime.
+        </div>
+      )}
+
+      {fullscreen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-stone-900">
+          <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+            <p className="min-w-0 flex-1 truncate text-sm font-semibold text-white">
+              {step.label} · Deck {currentIdx + 1}/{urls.length} · view only
+            </p>
+            {urls.length > 1 && (
+              <div className="flex items-center gap-1">
+                {urls.map((_, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setCurrentIdx(i)}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                      i === currentIdx ? 'bg-white text-stone-900' : 'bg-white/10 text-white/80 hover:bg-white/20'
+                    }`}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setFullscreen(false)}
+              className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20"
+            >
+              Exit Full Screen
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 p-2 sm:p-3">
+            <div className="h-full overflow-hidden rounded-lg bg-white shadow">{frame}</div>
+          </div>
         </div>
       )}
     </div>
@@ -340,22 +501,10 @@ function PdfStep({
   const wordPath =
     step.url && /\.docx?($|\?)/i.test(step.url) ? step.url : null;
 
-  const watermarkText = useMemo(() => {
-    const cached = readLmsClientCache<{
-      employee?: { id?: string; _id?: string; name?: string; department?: string };
-    }>(lmsClientFields.employee);
-    const emp = cached?.value?.employee;
-    const name = String(emp?.name || 'LMS user').trim();
-    const id = String(emp?.id || emp?._id || getCachedLmsEmployeeId() || '').trim();
-    const code = String(sopIdentifier || '').trim().toUpperCase();
-    return [name, id ? `ID ${id.slice(-6)}` : null, code || null].filter(Boolean).join(' · ');
-  }, [sopIdentifier]);
-
   useEffect(() => {
     if (!open && !fullscreen) return;
     const onKey = (e: KeyboardEvent) => {
       if (fullscreen && e.key === 'Escape') setFullscreen(false);
-      if (e.key === 'PrintScreen') e.preventDefault();
       if ((e.ctrlKey || e.metaKey) && ['c', 'C', 'x', 'X', 's', 'S', 'p', 'P', 'a', 'A'].includes(e.key)) {
         e.preventDefault();
       }
@@ -394,7 +543,6 @@ function PdfStep({
       pathParam={wordPath}
       identifierParam={sopIdentifier || null}
       languageParam={language}
-      watermarkText={watermarkText}
     />
   );
 
@@ -414,7 +562,7 @@ function PdfStep({
           <div className="text-center">
             <p className="text-base font-semibold text-gray-700">SOP Document</p>
             <p className="mt-0.5 text-xs text-gray-400">
-              Word preview · View-only — switches to black if you leave the window or use screenshot keys
+              Word preview · View only — download and copy are disabled
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">
@@ -574,16 +722,21 @@ function timerSecondsFor(settings: QuizSettings | null, questionCount: number): 
 
 function QuizStep({
   sopCode,
+  sopName,
   step,
   onComplete,
   onExit,
 }: {
   sopCode: string;
+  sopName?: string;
   step: JourneyStep;
   onComplete: (score: number, passed: boolean, newAttempts: number) => void;
   onExit: () => void;
 }) {
   const [localAttempts, setLocalAttempts] = useState(step.attempts ?? 0);
+  const [attemptHistory, setAttemptHistory] = useState<AttemptScore[]>(() =>
+    (step.attemptHistory || []).map((h) => ({ attempt: h.attempt, score: h.score })),
+  );
   const [phase, setPhase] = useState<'loading' | 'intro' | 'answering' | 'review'>('loading');
   const [questions, setQuestions] = useState<PreparedQuestion[]>([]);
   const [settings, setSettings] = useState<QuizSettings | null>(null);
@@ -597,11 +750,14 @@ function QuizStep({
   // missed, and must answer all of them correctly (100%) to pass.
   const [isRetest, setIsRetest] = useState(false);
   const [retestQueue, setRetestQueue] = useState<PreparedQuestion[]>([]);
-  // Exam/retest attempts used this session — drives the attempt allocation and
-  // gates when correct answers are finally revealed. (Demo attempts don't count.)
+  // Exam/retest attempts used this session — drives the attempt allocation.
   const [examAttempts, setExamAttempts] = useState(0);
   /** 'trial' = demo assessment; 'exam' = formal scored attempt. */
   const [quizMode, setQuizMode] = useState<'trial' | 'exam'>('exam');
+  /** Must acknowledge wrong-answer review before starting a retest. */
+  const [retestAck, setRetestAck] = useState(false);
+
+  const sopTitle = (sopName || '').trim() || sopCode;
 
   // Tab-switch violation tracking (exam only)
   const violationsRef = useRef(0);
@@ -638,7 +794,23 @@ function QuizStep({
         questions?: MCQQuestion[];
         settings?: QuizSettings;
         error?: string;
+        trainerPending?: boolean;
+        sopExpired?: boolean;
       };
+
+      if (!res.ok) {
+        setSettings(data.settings ?? null);
+        setError(
+          data.error
+          || (data.trainerPending
+            ? 'Exam unlocks after your department trainer completes training for this SOP.'
+            : data.sopExpired
+              ? 'This SOP has expired. The exam is locked until the document is renewed.'
+              : 'Unable to load the exam.'),
+        );
+        setPhase('review');
+        return;
+      }
 
       // Demo disabled or empty → fall through to formal exam.
       if (mode === 'trial') {
@@ -650,9 +822,17 @@ function QuizStep({
             questions?: MCQQuestion[];
             settings?: QuizSettings;
             error?: string;
+            trainerPending?: boolean;
+            sopExpired?: boolean;
           };
-          if (!examData.questions?.length) {
-            setError(examData.error || 'No questions available.');
+          if (!examRes.ok || !examData.questions?.length) {
+            setSettings(examData.settings ?? data.settings ?? null);
+            setError(
+              examData.error
+              || (examData.trainerPending
+                ? 'Exam unlocks after your department trainer completes training for this SOP.'
+                : 'No questions available.'),
+            );
             setPhase('review');
             return;
           }
@@ -745,6 +925,7 @@ function QuizStep({
     const pct = questions.length > 0 ? Math.round((correct / questions.length) * 100) : 0;
     setScore(pct);
     setRetestQueue(wrong);
+    setRetestAck(false);
     setPhase('review');
 
     // Demo does not count toward attempts / progress.
@@ -752,6 +933,12 @@ function QuizStep({
 
     const newAttempts = localAttempts + 1;
     setLocalAttempts(newAttempts);
+    setAttemptHistory((prev) => {
+      const next = prev.filter((h) => h.attempt !== newAttempts);
+      next.push({ attempt: newAttempts, score: pct });
+      next.sort((a, b) => a.attempt - b.attempt);
+      return next;
+    });
     const required = isRetest ? 100 : (settings?.passingScore ?? 80);
     const passed = pct >= required;
     setExamAttempts((n) => n + 1);
@@ -764,16 +951,32 @@ function QuizStep({
   // Re-attempt only the questions missed in the previous attempt. Each retest
   // narrows to whatever is still wrong, and requires every answer to be correct.
   const startRetest = () => {
+    if (!retestAck) return;
     setQuestions(retestQueue);
     setAnswers({});
     setScore(0);
     setError('');
     setIsRetest(true);
     setQuizMode('exam');
+    setRetestAck(false);
     setPhase('answering');
   };
 
   const allowRetake = settings?.allowRetakeAfterPass !== false;
+
+  const attemptHistoryBlock = attemptHistory.length > 0 ? (
+    <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white px-4 py-3 text-left shadow-sm">
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Attempt history</p>
+      <ul className="space-y-1">
+        {attemptHistory.map((h) => (
+          <li key={h.attempt} className="flex items-center justify-between text-sm text-gray-700">
+            <span>Attempt {h.attempt}</span>
+            <span className="font-bold tabular-nums text-gray-900">{h.score}%</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  ) : null;
 
   // ── Already passed (step.completed) — show summary ──────────────────────────
   if (step.completed && phase === 'loading' && localAttempts === (step.attempts ?? 0)) {
@@ -784,11 +987,15 @@ function QuizStep({
         </div>
         <div className="text-center">
           <p className="font-semibold text-gray-800">Assessment completed</p>
+          <p className="mt-1 text-xs font-medium text-gray-500">
+            {sopCode} — {sopTitle}
+          </p>
           <p className="mt-1 text-sm text-gray-500">
             You passed with {step.percentage ?? '—'}%.
             {allowRetake ? ' Retake anytime below.' : ''}
           </p>
         </div>
+        {attemptHistoryBlock}
         {allowRetake && (
           <button
             onClick={() => void fetchQuestions('exam')}
@@ -847,13 +1054,19 @@ function QuizStep({
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-purple-100">
             <ClipboardList className="h-7 w-7 text-purple-600" />
           </div>
-          <h2 className="text-xl font-bold text-gray-800">
+          <p className="text-xs font-semibold uppercase tracking-wide text-purple-600">
+            {sopCode}
+          </p>
+          <h2 className="mt-0.5 text-xl font-bold text-gray-800">
             {isRetest ? 'Start Retest' : isDemo ? 'Demo Assessment' : 'Start Assessment'}
           </h2>
+          <p className="mt-1 text-sm font-medium text-gray-700">{sopTitle}</p>
           <p className="mt-1 text-sm text-gray-500">
             {isDemo
               ? 'Practice first — this demo does not count toward your score.'
-              : 'Review the details below, then begin when you\'re ready.'}
+              : isRetest
+              ? `Retest of missed questions · Attempt ${localAttempts + 1}`
+              : `Attempt ${localAttempts + 1}${settings?.maxAttempts ? ` of ${settings.maxAttempts}` : ''} — review the details, then begin.`}
           </p>
 
           {/* Exam details */}
@@ -870,6 +1083,8 @@ function QuizStep({
               </div>
             ))}
           </div>
+
+          {attemptHistoryBlock && <div className="mt-4">{attemptHistoryBlock}</div>}
 
           {/* Rules */}
           <ul className="mt-5 space-y-2 text-sm text-gray-600">
@@ -907,7 +1122,7 @@ function QuizStep({
               className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-purple-600 py-2.5 text-sm font-semibold text-white shadow hover:bg-purple-700"
             >
               <ClipboardList className="h-4 w-4" />
-              {isRetest ? 'Start Retest' : isDemo ? 'Start Demo' : 'Start Exam'}
+              {isRetest ? 'Start Retest' : isDemo ? 'Start Demo' : `Start Attempt ${localAttempts + 1}`}
             </button>
           </div>
         </div>
@@ -992,6 +1207,9 @@ function QuizStep({
             ? 'border-green-200 bg-linear-to-b from-green-50 to-white'
             : 'border-red-200 bg-linear-to-b from-red-50 to-white'
         }`}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            {sopCode} · Attempt {localAttempts || examAttempts || 1}
+          </p>
           <div className={`flex h-16 w-16 items-center justify-center rounded-full ${passed ? 'bg-green-100' : 'bg-red-100'}`}>
             {passed
               ? <Trophy className="h-8 w-8 text-green-600" />
@@ -1008,26 +1226,52 @@ function QuizStep({
               ? 'Retest not complete — every question must be correct'
               : `Did not pass — minimum is ${passingScore}%`}
           </p>
+          <p className="text-sm font-medium text-gray-600">{sopTitle}</p>
           <span className="inline-flex items-center rounded-full bg-white px-3.5 py-1 text-xs font-semibold text-gray-600 shadow-sm ring-1 ring-inset ring-gray-200">
             {questions.filter((q) => answers[q._id] === q.correctAnswer).length} of {questions.length} correct
           </span>
         </div>
 
-        {/* Answers stay hidden while retries remain */}
-        {!revealAnswers && (
-          <div className="flex w-full max-w-md items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
-            <Lock className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
-            <p className="text-xs text-gray-500">
-              The correct answers stay hidden while you still have attempts left, so your retest
-              is a fair test of what you&apos;ve learned. They&apos;ll be shown only if you use all
-              attempts without passing.
+        {attemptHistoryBlock}
+
+        {/* Wrong answers + correct answers — shown after every failed attempt before retest */}
+        {!passed && missedCount > 0 && !revealAnswers && (
+          <div className="w-full max-w-2xl space-y-3">
+            <p className="text-sm font-semibold text-gray-800">
+              Review incorrect answers ({missedCount})
             </p>
+            {retestQueue.map((q, i) => {
+              const given = answers[q._id];
+              const correctText = q.displayOptions.find((o) => o.label === q.correctAnswer)?.text ?? q.correctAnswer;
+              const givenText = q.displayOptions.find((o) => o.label === given)?.text;
+              return (
+                <div
+                  key={q._id}
+                  className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm"
+                >
+                  <p className="font-medium text-gray-800">{i + 1}. {q.question}</p>
+                  {q.sopReference && (
+                    <p className="mt-1.5 rounded-md bg-white/70 px-2 py-1 text-[11px] leading-snug text-slate-600 ring-1 ring-inset ring-slate-200">
+                      <span className="font-semibold text-slate-700">SOP reference: </span>
+                      {q.sopReference}
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-red-700">
+                    Your answer: {givenText || '—'} · Correct: {correctText}
+                  </p>
+                  {q.explanation && (
+                    <p className="mt-1 text-xs text-gray-500">{q.explanation}</p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
-        {/* Answer review — only once revealed */}
+        {/* Full answer review once passed or attempts exhausted */}
         {revealAnswers && (
           <div className="w-full max-w-2xl space-y-3">
+            <p className="text-sm font-semibold text-gray-800">Full answer review</p>
             {questions.map((q, i) => {
               const given = answers[q._id];
               const isRight = given === q.correctAnswer;
@@ -1039,6 +1283,12 @@ function QuizStep({
                   className={`rounded-xl border p-3 text-sm ${isRight ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}
                 >
                   <p className="font-medium text-gray-800">{i + 1}. {q.question}</p>
+                  {q.sopReference && (
+                    <p className="mt-1.5 rounded-md bg-white/70 px-2 py-1 text-[11px] leading-snug text-slate-600 ring-1 ring-inset ring-slate-200">
+                      <span className="font-semibold text-slate-700">SOP reference: </span>
+                      {q.sopReference}
+                    </p>
+                  )}
                   <p className={`mt-1 text-xs ${isRight ? 'text-green-700' : 'text-red-700'}`}>
                     {isRight
                       ? `Correct: ${correctText}`
@@ -1062,15 +1312,27 @@ function QuizStep({
                 : `No need to redo the whole exam — just the ${missedCount} question${missedCount !== 1 ? 's' : ''} you missed.`}
             </p>
             <p className="text-xs text-amber-700">
-              This retest includes <strong>only your incorrect questions</strong> and requires
-              <strong> 100%</strong> — answer them all correctly to complete the assessment.
+              Review the incorrect answers and SOP references above, then acknowledge to continue.
+              The retest requires <strong>100%</strong> on the remaining questions.
             </p>
+            <label className="flex w-full max-w-md cursor-pointer items-start gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2.5 text-left text-xs text-amber-900">
+              <input
+                type="checkbox"
+                checked={retestAck}
+                onChange={(e) => setRetestAck(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-amber-300 text-purple-600 focus:ring-purple-500"
+              />
+              <span>
+                I have reviewed all incorrect questions, the correct answers, and their SOP section references.
+              </span>
+            </label>
             <button
               onClick={startRetest}
-              className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-purple-700"
+              disabled={!retestAck}
+              className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              Start Retest · {missedCount} question{missedCount !== 1 ? 's' : ''}
+              Start Retest · Attempt {localAttempts + 1} · {missedCount} question{missedCount !== 1 ? 's' : ''}
             </button>
             {attemptsLeft !== null && (
               <p className="text-[11px] font-medium text-amber-600">
@@ -1170,9 +1432,20 @@ function QuizStep({
       {/* Top bar */}
       <div className="sticky top-0 z-10 flex items-center gap-4 border-b border-gray-200 bg-white px-4 py-3 shadow-sm">
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-bold text-gray-800 md:text-base">
-            {quizMode === 'trial' ? 'Demo' : isRetest ? 'Retest' : 'Assessment'}
-          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="truncate text-sm font-bold text-gray-800 md:text-base">
+              {quizMode === 'trial' ? 'Demo' : isRetest ? 'Retest' : 'Assessment'}
+            </h1>
+            {quizMode !== 'trial' && (
+              <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-[11px] font-bold text-purple-700">
+                Attempt {localAttempts + 1}
+                {settings?.maxAttempts ? ` / ${settings.maxAttempts}` : ''}
+              </span>
+            )}
+          </div>
+          <p className="truncate text-xs font-medium text-gray-700">
+            {sopCode} — {sopTitle}
+          </p>
           <p className="text-xs text-gray-400">
             {quizMode === 'trial'
               ? `${questions.length} practice questions · no pass/fail`
@@ -1471,7 +1744,16 @@ export default function JourneyPage() {
     setLocalSteps((prev) =>
       prev.map((s) => {
         if (s.id !== stepId) return s;
-        return { ...s, completed: passed || s.completed, attempts: newAttempts };
+        const history = [...(s.attemptHistory || [])].filter((h) => h.attempt !== newAttempts);
+        history.push({ attempt: newAttempts, score });
+        history.sort((a, b) => a.attempt - b.attempt);
+        return {
+          ...s,
+          completed: passed || s.completed,
+          attempts: newAttempts,
+          percentage: score,
+          attemptHistory: history,
+        };
       }),
     );
 
@@ -1591,6 +1873,18 @@ export default function JourneyPage() {
                   Step {currentStep + 1} of {localSteps.length}
                   {activeStep.completed && ' · Completed'}
                 </p>
+                {activeStep.type === 'quiz' && (activeStep.attemptHistory?.length || activeStep.attempts) ? (
+                  <p className="mt-0.5 text-[11px] font-medium text-gray-600">
+                    {(activeStep.attemptHistory && activeStep.attemptHistory.length > 0
+                      ? activeStep.attemptHistory
+                      : activeStep.percentage != null
+                        ? [{ attempt: activeStep.attempts || 1, score: activeStep.percentage }]
+                        : []
+                    )
+                      .map((h) => `Attempt ${h.attempt} – ${h.score}%`)
+                      .join(' · ')}
+                  </p>
+                ) : null}
               </div>
               {activeStep.completed && (
                 <span className="ml-auto flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-[11px] font-semibold text-green-700">
@@ -1638,6 +1932,7 @@ export default function JourneyPage() {
               <QuizStep
                 key={activeStep.id}
                 sopCode={sopCode}
+                sopName={data?.sop?.name || ''}
                 step={activeStep}
                 onComplete={(score, passed, newAttempts) =>
                   handleQuizComplete(activeStep.id, score, passed, newAttempts)

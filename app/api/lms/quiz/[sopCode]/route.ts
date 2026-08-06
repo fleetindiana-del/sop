@@ -23,6 +23,7 @@ type RawMcq = {
   options: string[];
   correctAnswer: string;
   explanation?: string;
+  sopReference?: string;
 };
 
 function toAbcdQuestions(raw: RawMcq[]) {
@@ -47,6 +48,7 @@ function toAbcdQuestions(raw: RawMcq[]) {
       optionD: opts[3] ?? '',
       correctAnswer: letter,
       explanation: q.explanation ?? '',
+      sopReference: String(q.sopReference || '').trim(),
     };
   });
 }
@@ -100,6 +102,7 @@ async function fetchQuestions(
       options: '$mcqs.options',
       correctAnswer: '$mcqs.correctAnswer',
       explanation: '$mcqs.explanation',
+      sopReference: '$mcqs.sopReference',
     },
   });
 
@@ -127,7 +130,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     await connectDB();
 
     const employee = await Employee.findById(payload.sub)
-      .select('department designation isTrainer')
+      .select('department designation isTrainer trainerDepartments')
       .lean();
 
     const resolved = await resolveExamSettingsForSop(sopCode, {
@@ -160,6 +163,28 @@ export async function GET(req: NextRequest, { params }: Params) {
             error: 'This SOP has expired. The exam is locked until the document is renewed.',
             settings: toLearnerQuizSettings(resolved),
             sopExpired: true,
+          },
+          { status: 403 },
+        );
+      }
+    }
+
+    if (mode === 'exam') {
+      const { getTrainerExamEligibility } = await import('@/lib/lmsTrainerGate');
+      const gate = await getTrainerExamEligibility({
+        employeeId: payload.sub,
+        department: employee?.department,
+        isTrainer: employee?.isTrainer === true,
+        trainerDepartments: employee?.trainerDepartments,
+        sopCode,
+      });
+      if (!gate.allowed) {
+        return NextResponse.json(
+          {
+            error: gate.reason || 'Exam is locked until your department trainer completes this SOP.',
+            settings: toLearnerQuizSettings(resolved),
+            trainerPending: true,
+            trainerGateCode: gate.code,
           },
           { status: 403 },
         );

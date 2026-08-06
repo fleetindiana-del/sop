@@ -579,11 +579,15 @@ function TrainingTable({
               const asset = assetsMap[assignment.sopCode];
               const docExpired = isSopDocumentExpired(assignment) || asset?.sopExpired === true;
               const notApproved = asset?.lmsApproved === false;
-              // Approval is display-only (✔/✖). Exams lock only when the SOP document is expired.
-              const examLocked = docExpired;
+              const trainerLocked = asset?.trainerUnlocked === false;
+              // Exams lock when the SOP document is expired, or when the department
+              // trainer has not yet completed training for this SOP.
+              const examLocked = docExpired || trainerLocked;
               const lockReason = docExpired
                 ? 'SOP expired — renew the document before taking the exam'
-                : undefined;
+                : trainerLocked
+                  ? 'Exam unlocks after your department trainer completes training for this SOP'
+                  : undefined;
               const highlightExpiredDue =
                 docExpired && !isFullyComplete(progress) && (schedule === 'due' || schedule === 'overdue');
 
@@ -614,6 +618,11 @@ function TrainingTable({
                     {highlightExpiredDue && (
                       <p className="mt-0.5 text-[10px] font-semibold text-red-700">
                         Expired{assignment.expiryDate ? ` ${assignment.expiryDate}` : ''} — exam locked until renewed
+                      </p>
+                    )}
+                    {!docExpired && trainerLocked && !isFullyComplete(progress) && (
+                      <p className="mt-0.5 text-[10px] font-semibold text-amber-700">
+                        Waiting for department trainer to complete this SOP
                       </p>
                     )}
                     {progress?.lastAccessedAt && status === 'in_progress' && (
