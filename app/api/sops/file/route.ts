@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
-import { readFileBuffer } from "@/lib/bunny";
+import {
+  loadStoredFileBuffer,
+  resolveAlternateStoredLocation,
+} from "@/lib/loadStoredFileBuffer";
 import { getContentType } from "@/lib/extractContent";
 
 /** Serves raw files for Office Online viewer (must be publicly reachable). */
@@ -12,7 +15,15 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const buffer = await readFileBuffer(filePath);
+    let buffer = await loadStoredFileBuffer(filePath, { trustedRemote: true });
+    if (!buffer) {
+      const alt = await resolveAlternateStoredLocation(filePath, null, undefined);
+      if (alt) buffer = await loadStoredFileBuffer(alt, { trustedRemote: true });
+    }
+    if (!buffer) {
+      return NextResponse.json({ error: "File not found" }, { status: 404 });
+    }
+
     const filename = path.basename(filePath.split("?")[0] ?? filePath);
 
     return new Response(new Uint8Array(buffer), {

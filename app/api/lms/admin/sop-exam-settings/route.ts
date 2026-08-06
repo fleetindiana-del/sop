@@ -35,7 +35,7 @@ export interface SopExamSettingsPayload {
   shuffleMode: ShuffleMode;
   showAnswersAfterTrial: boolean;
   allowRetakeAfterPass: boolean;
-  /** When false, learners cannot start the exam for this SOP. */
+  /** True when every MCQ for this SOP is checked in MCQ Bank. */
   lmsApproved: boolean;
   employeeRules: ISopEmployeeExamRule[];
 }
@@ -105,7 +105,8 @@ function payloadFromDoc(
     shuffleMode: doc?.shuffleMode ?? fallback.shuffleMode,
     showAnswersAfterTrial: doc?.showAnswersAfterTrial ?? fallback.showAnswersAfterTrial,
     allowRetakeAfterPass: doc?.allowRetakeAfterPass ?? fallback.allowRetakeAfterPass,
-    lmsApproved: doc?.lmsApproved !== false,
+    // Overwritten from MCQ Bank in buildSopList; keep fallback for structure only.
+    lmsApproved: fallback.lmsApproved,
   };
   return {
     ...base,
@@ -130,6 +131,8 @@ async function buildSopList() {
       sopName: string;
       department: string;
       bankQuestionCount: number;
+      totalQuestions: number;
+      checkedQuestions: number;
     }>([
       { $match: { isObsolete: { $ne: true } } },
       {
@@ -146,6 +149,16 @@ async function buildSopList() {
               },
             },
           },
+          totalQuestions: { $size: { $ifNull: ['$mcqs', []] } },
+          checkedQuestions: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ['$mcqs', []] },
+                as: 'q',
+                cond: { $eq: ['$$q.isChecked', true] },
+              },
+            },
+          },
         },
       },
       {
@@ -154,6 +167,8 @@ async function buildSopList() {
           sopName: { $first: '$sopName' },
           department: { $first: '$department' },
           bankQuestionCount: { $sum: '$qCount' },
+          totalQuestions: { $sum: '$totalQuestions' },
+          checkedQuestions: { $sum: '$checkedQuestions' },
         },
       },
     ]),
@@ -205,6 +220,8 @@ async function buildSopList() {
     sopName: string;
     department: string;
     bankQuestionCount: number;
+    totalQuestions: number;
+    checkedQuestions: number;
   };
   const families = new Map<string, FamilyRow>();
   for (const b of banks) {
@@ -231,9 +248,13 @@ async function buildSopList() {
         sopName,
         department,
         bankQuestionCount: b.bankQuestionCount || 0,
+        totalQuestions: b.totalQuestions || 0,
+        checkedQuestions: b.checkedQuestions || 0,
       });
     } else {
       prev.bankQuestionCount += b.bankQuestionCount || 0;
+      prev.totalQuestions += b.totalQuestions || 0;
+      prev.checkedQuestions += b.checkedQuestions || 0;
       if (!prev.sopName && sopName) prev.sopName = sopName;
     }
   }
@@ -249,12 +270,22 @@ async function buildSopList() {
     .map((fam) => {
       const override = settingsByCode.get(fam.sopCode);
       const settings = override ? payloadFromDoc(override, globalDefaults) : null;
-      const effective = settings ?? globalDefaults;
+      const mcqApproved =
+        fam.totalQuestions > 0 && fam.checkedQuestions >= fam.totalQuestions;
+      const withApproval = (p: SopExamSettingsPayload): SopExamSettingsPayload => ({
+        ...p,
+        lmsApproved: mcqApproved,
+      });
+      const settingsOut = settings ? withApproval(settings) : null;
+      const effective = withApproval(settingsOut ?? globalDefaults);
       return {
-        ...fam,
+        sopCode: fam.sopCode,
+        sopName: fam.sopName,
+        department: fam.department,
+        bankQuestionCount: fam.bankQuestionCount,
         hasOverride: !!settings,
         employeeRuleCount: settings?.employeeRules?.length ?? 0,
-        settings,
+        settings: settingsOut,
         effective,
       };
     });
@@ -319,12 +350,14 @@ export async function PATCH(req: NextRequest) {
       shuffleMode: parseShuffleMode(body.shuffleMode, 'questions'),
       showAnswersAfterTrial: parseBool(body.showAnswersAfterTrial, true),
       allowRetakeAfterPass: parseBool(body.allowRetakeAfterPass, true),
-      lmsApproved: parseBool(body.lmsApproved, true),
     };
 
     const $set: Record<string, unknown> = { sopCode, ...baseUpdate };
     if ('employeeRules' in body) {
-      $set.employeeRules = parseEmployeeRules(body.employeeRules, baseUpdate);
+      $set.employeeRules = parseEmployeeRules(body.employeeRules, {
+        ...baseUpdate,
+        lmsApproved: false,
+      });
     }
 
     const saved = await SopExamSettings.findOneAndUpdate(
@@ -335,11 +368,20 @@ export async function PATCH(req: NextRequest) {
 
     invalidateLmsServerKeys(lmsServerKeys.adminSopExamSettings());
 
-    const fallback: SopExamSettingsPayload = { ...baseUpdate, employeeRules: [] };
+    const { isSopMcqApprovedForLms } = await import('@/lib/lmsMcqApproval');
+    const mcqApproved = await isSopMcqApprovedForLms(sopCode);
+    const fallback: SopExamSettingsPayload = {
+      ...baseUpdate,
+      lmsApproved: mcqApproved,
+      employeeRules: [],
+    };
     return NextResponse.json({
       ok: true,
       sopCode,
-      settings: payloadFromDoc(saved, fallback),
+      settings: {
+        ...payloadFromDoc(saved, fallback),
+        lmsApproved: mcqApproved,
+      },
     });
   } catch (err: unknown) {
     return NextResponse.json(

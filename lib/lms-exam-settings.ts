@@ -10,6 +10,7 @@ import SopExamSettings, {
   type ShuffleMode,
 } from '@/models/lms/SopExamSettings';
 import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
+import { isSopMcqApprovedForLms } from '@/lib/lmsMcqApproval';
 
 export interface ResolvedExamSettings {
   trialQuestionCount: number;
@@ -33,7 +34,7 @@ export interface ResolvedExamSettings {
   isTrainer: boolean;
   /** When true, exam pulls every non-similar MCQ for the SOP (not a sample). */
   allExamQuestions: boolean;
-  /** When false, learners must not start the exam (SOP not LMS-approved). */
+  /** True when every MCQ for this SOP is checked in MCQ Bank (display only; does not lock exams). */
   lmsApproved: boolean;
   sopCode: string;
 }
@@ -98,8 +99,8 @@ export async function resolveExamSettingsForSop(
     base.allowRetakeAfterPass = sopDoc.allowRetakeAfterPass ?? base.allowRetakeAfterPass;
   }
 
-  // Missing field (legacy docs) = approved so existing training is not locked out.
-  const lmsApproved = sopDoc ? sopDoc.lmsApproved !== false : true;
+  // LMS exam release is driven by MCQ Bank: all questions must be checked.
+  const lmsApproved = await isSopMcqApprovedForLms(code);
 
   // SOP employee rule beats everything else for that person on this SOP.
   const empRule: ISopEmployeeExamRule | undefined =

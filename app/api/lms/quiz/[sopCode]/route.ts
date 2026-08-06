@@ -137,13 +137,6 @@ export async function GET(req: NextRequest, { params }: Params) {
       isTrainer: employee?.isTrainer === true,
     });
 
-    if (mode === 'exam' && resolved.lmsApproved === false) {
-      return NextResponse.json(
-        { error: 'This SOP is not approved for LMS exams yet.', settings: toLearnerQuizSettings(resolved) },
-        { status: 403 },
-      );
-    }
-
     const family = (baseIdentifierFromIdentifier(sopCode) || sopCode).toUpperCase();
     const sopDoc = await SOP.findOne({
       isObsolete: { $ne: true },

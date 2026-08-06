@@ -137,7 +137,7 @@ function normalizeSettings(
     shuffleMode: s?.shuffleMode ?? fallback?.shuffleMode ?? 'questions',
     showAnswersAfterTrial: s?.showAnswersAfterTrial ?? fallback?.showAnswersAfterTrial ?? true,
     allowRetakeAfterPass: s?.allowRetakeAfterPass ?? fallback?.allowRetakeAfterPass ?? true,
-    lmsApproved: s?.lmsApproved ?? fallback?.lmsApproved ?? true,
+    lmsApproved: s?.lmsApproved ?? fallback?.lmsApproved ?? false,
     employeeRules: Array.isArray(s?.employeeRules)
       ? s!.employeeRules!
       : (fallback?.employeeRules ?? []),
@@ -949,17 +949,21 @@ function EditPanel({
           </div>
         </div>
 
-        <SettingsCard icon={ShieldCheck} title="SOP Approval Status" subtitle="Control whether this SOP is released for LMS exams.">
-          <Toggle
-            label="Approved for LMS"
-            description={
-              form.lmsApproved
-                ? 'Learners can start the assessment for this SOP.'
-                : 'Not Approved — learners can see the assignment but cannot take the exam.'
-            }
-            checked={form.lmsApproved}
-            onChange={(v) => set('lmsApproved', v)}
-          />
+        <SettingsCard icon={ShieldCheck} title="SOP Approval Status" subtitle="Shows MCQ Bank approval status in LMS (does not lock the exam).">
+          <div className={`rounded-xl border px-3.5 py-3 ${
+            form.lmsApproved
+              ? 'border-emerald-200 bg-emerald-50'
+              : 'border-amber-200 bg-amber-50'
+          }`}>
+            <p className={`text-sm font-semibold ${form.lmsApproved ? 'text-emerald-800' : 'text-amber-900'}`}>
+              {form.lmsApproved ? 'Approved (MCQ Bank)' : 'Not Approved (MCQ Bank)'}
+            </p>
+            <p className={`mt-1 text-xs leading-relaxed ${form.lmsApproved ? 'text-emerald-700' : 'text-amber-800'}`}>
+              {form.lmsApproved
+                ? 'All questions for this SOP are checked in the MCQ Bank — LMS shows ✔.'
+                : 'Some questions are still unchecked in MCQ Bank — LMS shows ✖. Learners can still take the exam.'}
+            </p>
+          </div>
         </SettingsCard>
 
         <SettingsCard icon={Hash} title="Question Count" subtitle="How many questions appear in each stage.">

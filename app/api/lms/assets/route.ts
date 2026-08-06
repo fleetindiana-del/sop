@@ -11,8 +11,9 @@ import {
   lmsServerTtl,
 } from '@/lib/lmsCache';
 import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
+import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTrainingIgnore';
+import { getMcqApprovedMapForCodes, familyKeyForLmsCode } from '@/lib/lmsMcqApproval';
 import Employee from '@/models/Employee';
-import SopExamSettings from '@/models/lms/SopExamSettings';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,7 +29,7 @@ export interface SopAssetFlags {
   slidesGu: boolean;
   mcqEn: boolean;
   mcqGu: boolean;
-  /** False when admin has not approved this SOP for LMS exams. */
+  /** True when every MCQ for this SOP is checked in MCQ Bank (LMS ✔/✖ only). */
   lmsApproved: boolean;
   /** True when the current SOP document expiry date is in the past. */
   sopExpired: boolean;
@@ -52,24 +53,18 @@ export async function GET() {
 
         const assignmentsMap = await getEmployeeAssignmentsMap();
         const key = `${employee.department}||${employee.name}`.trim().toLowerCase();
-        const assignments = assignmentsMap.get(key) || [];
-        const codes = assignments.map((a) => a.sopCode).filter(Boolean);
-        const familyCodes = [
-          ...new Set(
-            codes.map((c) => (baseIdentifierFromIdentifier(c) || c).toUpperCase()),
-          ),
-        ];
-
-        const [contentMap, sopSettings] = await Promise.all([
-          getJourneyContentBatch(codes),
-          SopExamSettings.find({ sopCode: { $in: familyCodes } })
-            .select('sopCode lmsApproved')
-            .lean(),
-        ]);
-
-        const approvedByCode = new Map(
-          sopSettings.map((s) => [String(s.sopCode).toUpperCase(), s.lmsApproved !== false]),
+        const ignoreRules = await listTrainingIgnores(employee.department);
+        const assignments = filterIgnoredAssignments(
+          assignmentsMap.get(key) || [],
+          ignoreRules,
+          employee.department,
         );
+        const codes = assignments.map((a) => a.sopCode).filter(Boolean);
+
+        const [contentMap, mcqApprovedMap] = await Promise.all([
+          getJourneyContentBatch(codes),
+          getMcqApprovedMapForCodes(codes),
+        ]);
 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -86,6 +81,7 @@ export async function GET() {
         const assets: Record<string, SopAssetFlags> = {};
         for (const [code, content] of contentMap) {
           const fam = (baseIdentifierFromIdentifier(code) || code).toUpperCase();
+          const famKey = familyKeyForLmsCode(code);
           assets[code] = {
             videoEn: content.videosEn.length > 0,
             videoGu: content.videosGu.length > 0,
@@ -95,8 +91,11 @@ export async function GET() {
             slidesGu: content.slidesGu.length > 0,
             mcqEn: content.mcqCount > 0,
             mcqGu: content.mcqCountGu > 0,
-            // No SopExamSettings doc ⇒ treated as approved (legacy).
-            lmsApproved: approvedByCode.has(fam) ? approvedByCode.get(fam)! : true,
+            // Approved = all MCQs ticked in MCQ Bank (same rule as MCQ Bank "Approved").
+            lmsApproved:
+              mcqApprovedMap.get(code) === true
+              || mcqApprovedMap.get(code.toUpperCase()) === true
+              || mcqApprovedMap.get(famKey) === true,
             sopExpired: expiredByCode.get(code.toUpperCase()) === true
               || expiredByCode.get(fam) === true,
           };

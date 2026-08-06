@@ -84,6 +84,11 @@ type Props = {
   backLabel?: string;
   layout?: 'full' | 'embedded';
   viewerPreference?: DocxViewerPreference;
+  /**
+   * LMS / view-only: skip Google/Office iframes (download chrome), hide Download,
+   * and render with the same in-browser docx-preview engine as the dashboard.
+   */
+  restricted?: boolean;
 };
 
 export default function DocxPreviewClient({
@@ -93,6 +98,7 @@ export default function DocxPreviewClient({
   backHref = '/dashboard',
   backLabel = 'Back to Dashboard',
   layout = 'full',
+  restricted = false,
 }: Props) {
   const [mode, setMode] = useState<PreviewMode>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -135,6 +141,13 @@ export default function DocxPreviewClient({
 
     (async () => {
       try {
+        // Restricted LMS mode: never open Google/Office (Download / Add to Drive).
+        // Use the same in-browser docx-preview path the dashboard uses as Quick Preview.
+        if (restricted) {
+          await renderViaServerPath(cancelled);
+          return;
+        }
+
         // ── Resolve viewer URLs (server-side cached after first call) ────────────────
         const viewerParams = new URLSearchParams();
         if (identifierParam) viewerParams.set('identifier', identifierParam);
@@ -200,7 +213,7 @@ export default function DocxPreviewClient({
       if (isCancelled) return;
 
       if (!tokenData.success || !tokenData.token) {
-        if (await tryPdfFallback()) return;
+        if (!restricted && await tryPdfFallback()) return;
         if (isCancelled) return;
         setError('Could not open the document. The file may not be available on this server.');
         setMode('error');
@@ -210,7 +223,7 @@ export default function DocxPreviewClient({
       const blobRes = await fetchWithTimeout(`/api/files/serve-docx?t=${encodeURIComponent(tokenData.token)}`);
       if (isCancelled) return;
       if (!blobRes.ok) {
-        if (await tryPdfFallback()) return;
+        if (!restricted && await tryPdfFallback()) return;
         if (isCancelled) return;
         setError('The document file could not be loaded.');
         setMode('error');
@@ -219,6 +232,11 @@ export default function DocxPreviewClient({
 
       const ct2 = (blobRes.headers.get('content-type') || '').toLowerCase();
       if (ct2.includes('application/pdf')) {
+        if (restricted) {
+          setError('A Word (.docx) file is required for view-only LMS preview.');
+          setMode('error');
+          return;
+        }
         const dlParams = new URLSearchParams();
         if (identifierParam) dlParams.set('identifier', identifierParam);
         if (languageParam) dlParams.set('language', languageParam || 'English');
@@ -258,7 +276,13 @@ export default function DocxPreviewClient({
       const blob = await blobRes.blob();
       try {
         const { renderAsync } = await import('docx-preview');
-        if (isCancelled || !bodyRef.current) return;
+        // Ensure the loading UI (with hidden bodyRef) has committed before render.
+        await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+        if (isCancelled || !bodyRef.current) {
+          setError('Preview surface not ready. Please try again.');
+          setMode('error');
+          return;
+        }
         bodyRef.current.innerHTML = '';
         if (styleRef.current) styleRef.current.innerHTML = '';
         await Promise.race([
@@ -284,7 +308,7 @@ export default function DocxPreviewClient({
         if (isCancelled) return;
         setMode('docx-preview');
       } catch {
-        if (!isCancelled && await tryPdfFallback()) return;
+        if (!isCancelled && !restricted && await tryPdfFallback()) return;
         if (isCancelled) return;
         setError('Failed to render the document. The file may be corrupted or in an unsupported format.');
         setMode('error');
@@ -311,9 +335,11 @@ export default function DocxPreviewClient({
     }
 
     return () => { cancelled = true; };
-  }, [pathParam, identifierParam, languageParam, isGujarati]);
+  }, [pathParam, identifierParam, languageParam, isGujarati, restricted]);
 
-  const docxDownloadHref = buildDocxDownloadHref(pathParam, identifierParam, languageParam);
+  const docxDownloadHref = restricted
+    ? null
+    : buildDocxDownloadHref(pathParam, identifierParam, languageParam);
 
   const handleDownloadDocx = useCallback(async () => {
     if (!docxDownloadHref) return;
@@ -368,10 +394,15 @@ export default function DocxPreviewClient({
   // ── Loading spinner ────────────────────────────────────────────────────────
   if (mode === 'loading') {
     return (
-      <div className={`flex items-center justify-center ${layout === 'embedded' ? 'min-h-[320px]' : 'min-h-screen bg-gray-100'}`}>
+      <div className={`relative flex items-center justify-center ${layout === 'embedded' ? 'min-h-[320px] h-full' : 'min-h-screen bg-gray-100'}`}>
         <div className="flex flex-col items-center gap-3">
           <div className={`h-10 w-10 animate-spin rounded-full border-4 border-t-transparent ${layout === 'embedded' ? 'border-green-500' : 'border-purple-600'}`} />
           <p className="text-sm font-medium text-gray-600">Preparing document…</p>
+        </div>
+        {/* Keep render targets mounted so renderAsync never races an empty ref. */}
+        <div className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0" aria-hidden>
+          <div ref={styleRef} />
+          <div ref={bodyRef} />
         </div>
       </div>
     );
@@ -593,8 +624,14 @@ export default function DocxPreviewClient({
   // ── In-browser docx-preview (fallback / "Quick Preview") ──────────────────
   // `mode === 'loading'` is always handled by the early return above (incl. when switchToDocxPreview starts).
   return (
-    <div className={`relative flex flex-col bg-[#d1d5db] ${layout === 'embedded' ? 'min-h-[320px]' : 'min-h-screen'}`}>
-      {layout === 'full' && (
+    <div
+      className={`relative flex flex-col bg-[#d1d5db] ${layout === 'embedded' ? 'min-h-[320px] h-full' : 'min-h-screen'} ${restricted ? 'select-none' : ''}`}
+      onCopy={restricted ? (e) => e.preventDefault() : undefined}
+      onCut={restricted ? (e) => e.preventDefault() : undefined}
+      onPaste={restricted ? (e) => e.preventDefault() : undefined}
+      onContextMenu={restricted ? (e) => e.preventDefault() : undefined}
+    >
+      {layout === 'full' && !restricted && (
         <div className="sticky top-0 z-10 flex shrink-0 flex-col gap-1 border-b border-gray-200 bg-white px-4 py-2 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-3">
@@ -626,7 +663,7 @@ export default function DocxPreviewClient({
         </div>
       )}
 
-      {layout === 'embedded' && (
+      {layout === 'embedded' && !restricted && (
         <div className="flex shrink-0 flex-col items-end gap-1 px-1 pt-1">
           <div className="flex items-center gap-2">
             {docxDownloadHref && (
@@ -642,23 +679,28 @@ export default function DocxPreviewClient({
         </div>
       )}
 
-      <div className="docx-scroll-area flex-1">
+      <div className="docx-scroll-area flex-1 min-h-0 overflow-auto">
         <div ref={styleRef} className="docx-preview-styles" aria-hidden="true" />
         <div
           ref={bodyRef}
           className={
             mode === 'docx-preview'
-              ? `docx-preview-surface${isGujarati ? ' docx-gujarati-text' : ''}`
+              ? `docx-preview-surface${isGujarati ? ' docx-gujarati-text' : ''}${restricted ? ' select-none' : ''}`
               : 'hidden'
           }
         />
-        {mode === 'docx-preview' && (
+        {mode === 'docx-preview' && !restricted && (
           <p className="mx-auto w-[794px] max-w-full px-2 pb-8 pt-3 text-center text-[11px] leading-snug text-gray-500">
             Quick preview — some images (logos, WMF graphics) may differ from the original.{' '}
             <strong>Download original</strong> opens the exact file in Microsoft Word.
             {officeViewerUrl && (
               <> Or use <a href={officeViewerUrl} target="_blank" rel="noopener noreferrer" className="underline">Office Online</a> for pixel-perfect rendering.</>
             )}
+          </p>
+        )}
+        {mode === 'docx-preview' && restricted && (
+          <p className="mx-auto w-[794px] max-w-full px-2 pb-8 pt-3 text-center text-[11px] leading-snug text-amber-700">
+            View only — download, copy, and print are disabled for this SOP.
           </p>
         )}
       </div>

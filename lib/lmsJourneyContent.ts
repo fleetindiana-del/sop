@@ -106,9 +106,15 @@ function buildJourneyContent(
     slidesEn,
     slidesGu,
     sopPdfUrl,
-    sopFileType: sop?.fileType === 'docx' ? 'docx' : 'pdf',
+    sopFileType:
+      sop?.fileType === 'docx' || /\.docx($|\?)/i.test(sop?.fileUrl || '')
+        ? 'docx'
+        : 'pdf',
     sopPdfUrlGu,
-    sopFileTypeGu: gujSop?.fileType === 'docx' ? 'docx' : 'pdf',
+    sopFileTypeGu:
+      gujSop?.fileType === 'docx' || /\.docx($|\?)/i.test(gujSop?.fileUrl || '')
+        ? 'docx'
+        : 'pdf',
     mcqCount,
     mcqCountGu,
   };

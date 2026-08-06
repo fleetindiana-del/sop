@@ -7,7 +7,7 @@ import {
   GraduationCap, LogOut, Search, PlayCircle, BookOpen, Clock,
   CheckCircle2, AlertCircle, Loader2, RefreshCw,
   FileText, ClipboardList, TrendingUp, Award, Calendar,
-  ArrowDown, ArrowUp, ChevronsUpDown,
+  ArrowDown, ArrowUp, ChevronsUpDown, Check, X, EyeOff,
 } from 'lucide-react';
 import {
   clearLmsClientCache,
@@ -68,9 +68,24 @@ interface ProgressRecord {
 }
 
 type FilterTab = 'all' | 'in_progress' | 'completed' | 'overdue' | 'due' | 'upcoming';
-type SortKey = 'sopCode' | 'sopName' | 'department' | 'type' | 'status' | 'due' | 'progress';
+type SortKey = 'sopCode' | 'sopName' | 'department' | 'type' | 'status' | 'approved' | 'due' | 'progress';
 type SortDir = 'asc' | 'desc';
 interface SortState { key: SortKey; dir: SortDir; }
+
+/** Due column: month name only (e.g. "August"). */
+function formatDueMonth(a: SopAssignment): string {
+  if (a.monthName?.trim()) {
+    const name = a.monthName.trim();
+    // Prefer full month; fall back if stored as "Jan".
+    if (name.length <= 3) {
+      const d = new Date(a.year, a.month - 1, 1);
+      return d.toLocaleString('en-US', { month: 'long' });
+    }
+    return name;
+  }
+  const d = new Date(a.year, a.month - 1, 1);
+  return d.toLocaleString('en-US', { month: 'long' });
+}
 
 interface DashboardCache {
   assignments: SopAssignment[];
@@ -226,7 +241,7 @@ function statusSortRank(
 
 function nextSort(prev: SortState, key: SortKey): SortState {
   if (prev.key === key) return { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
-  const ascKeys: SortKey[] = ['sopCode', 'sopName', 'department', 'type', 'status', 'due'];
+  const ascKeys: SortKey[] = ['sopCode', 'sopName', 'department', 'type', 'status', 'approved', 'due'];
   return { key, dir: ascKeys.includes(key) ? 'asc' : 'desc' };
 }
 
@@ -460,6 +475,8 @@ function TrainingTable({
   onOpenStep,
   onCertificate,
   onPrefetch,
+  onIgnoreSop,
+  ignoringKey,
 }: {
   rows: SopAssignment[];
   progressMap: Map<string, ProgressRecord>;
@@ -468,6 +485,8 @@ function TrainingTable({
   onOpenStep: (sopCode: string, stepId: string) => void;
   onCertificate: (sopCode: string) => void;
   onPrefetch?: (sopCode: string) => void;
+  onIgnoreSop?: (a: SopAssignment) => void;
+  ignoringKey?: string | null;
 }) {
   const [sort, setSort] = useState<SortState>({ key: 'sopCode', dir: 'asc' });
   const [picker, setPicker] = useState<{ sopCode: string; def: ResourceDef } | null>(null);
@@ -512,6 +531,12 @@ function TrainingTable({
         case 'status':
           cmp = statusSortRank(sa, schedA) - statusSortRank(sb, schedB);
           break;
+        case 'approved': {
+          const aa = assetsMap[a.sopCode]?.lmsApproved !== false ? 1 : 0;
+          const ab = assetsMap[b.sopCode]?.lmsApproved !== false ? 1 : 0;
+          cmp = aa - ab;
+          break;
+        }
         case 'due':
           cmp = a.year !== b.year ? a.year - b.year : a.month - b.month;
           break;
@@ -528,7 +553,7 @@ function TrainingTable({
     <>
     <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[980px] border-collapse text-sm">
+        <table className="w-full min-w-[1080px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
               <th className="w-9 px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-gray-500" />
@@ -537,6 +562,7 @@ function TrainingTable({
               <SortHeader label="Dept" sortKey="department" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
               <SortHeader label="Type" sortKey="type" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
               <SortHeader label="Status" sortKey="status" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
+              <SortHeader label="Approved" sortKey="approved" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
               <SortHeader label="Due" sortKey="due" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
               <SortHeader label="Progress" sortKey="progress" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
               <th className="whitespace-nowrap px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-gray-500">Action</th>
@@ -553,11 +579,10 @@ function TrainingTable({
               const asset = assetsMap[assignment.sopCode];
               const docExpired = isSopDocumentExpired(assignment) || asset?.sopExpired === true;
               const notApproved = asset?.lmsApproved === false;
-              const examLocked = docExpired || notApproved;
+              // Approval is display-only (✔/✖). Exams lock only when the SOP document is expired.
+              const examLocked = docExpired;
               const lockReason = docExpired
                 ? 'SOP expired — renew the document before taking the exam'
-                : notApproved
-                ? 'SOP is not approved for LMS exams'
                 : undefined;
               const highlightExpiredDue =
                 docExpired && !isFullyComplete(progress) && (schedule === 'due' || schedule === 'overdue');
@@ -589,11 +614,6 @@ function TrainingTable({
                     {highlightExpiredDue && (
                       <p className="mt-0.5 text-[10px] font-semibold text-red-700">
                         Expired{assignment.expiryDate ? ` ${assignment.expiryDate}` : ''} — exam locked until renewed
-                      </p>
-                    )}
-                    {notApproved && !highlightExpiredDue && (
-                      <p className="mt-0.5 text-[10px] font-semibold text-amber-700">
-                        Not Approved for LMS exams
                       </p>
                     )}
                     {progress?.lastAccessedAt && status === 'in_progress' && (
@@ -636,11 +656,20 @@ function TrainingTable({
                       {trainingStatusLabel(isFullyComplete(progress) ? 'completed' : status, schedule)}
                     </span>
                   </td>
+                  <td className="whitespace-nowrap px-2 py-1.5 text-center">
+                    {notApproved ? (
+                      <span className="inline-flex items-center justify-center text-red-600" title="Not Approved">
+                        <X className="h-4 w-4 stroke-[2.5]" aria-label="Not Approved" />
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center justify-center text-green-600" title="Approved">
+                        <Check className="h-4 w-4 stroke-[2.5]" aria-label="Approved" />
+                      </span>
+                    )}
+                  </td>
                   <td className="whitespace-nowrap px-2 py-1.5">
                     <span className={`text-xs ${schedule === 'upcoming' ? 'text-gray-400' : 'text-gray-500'}`}>
-                      {assignment.examDate
-                        ? new Date(assignment.examDate + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-                        : `${assignment.monthName.slice(0, 3)} ${assignment.year}`}
+                      {formatDueMonth(assignment)}
                     </span>
                   </td>
                   <td className="px-2 py-1.5">
@@ -676,6 +705,18 @@ function TrainingTable({
                         >
                           <Award className="h-3.5 w-3.5" />
                           Cert
+                        </button>
+                      )}
+                      {onIgnoreSop && !isFullyComplete(progress) && (
+                        <button
+                          type="button"
+                          onClick={() => onIgnoreSop(assignment)}
+                          disabled={ignoringKey === `${assignment.sopCode}-${assignment.month}-${assignment.year}`}
+                          className="inline-flex items-center gap-0.5 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                          title="Ignore this SOP for the department (rollout)"
+                        >
+                          <EyeOff className="h-3 w-3" />
+                          Ignore
                         </button>
                       )}
                     </div>
@@ -917,6 +958,8 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
   const [search,   setSearch]   = useState('');
   const [filter,   setFilter]   = useState<FilterTab>('all');
   const [showCalendar, setShowCalendar] = useState(false);
+  const [ignoringKey, setIgnoringKey] = useState<string | null>(null);
+  const [ignoreMonthBusy, setIgnoreMonthBusy] = useState(false);
   const trainingsRef = useRef<HTMLElement>(null);
 
   const handleStatClick = useCallback((tab: FilterTab) => {
@@ -986,6 +1029,79 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
   const handleCertificate = useCallback((sopCode: string) => {
     router.push(`/lms/certificate/${sopCode}`);
   }, [router]);
+
+  const handleIgnoreSop = useCallback(async (a: SopAssignment) => {
+    const label = `${a.sopCode} (${formatDueMonth(a)} ${a.year})`;
+    if (!window.confirm(
+      `Ignore ${label} for the entire ${employee.department} department?\n\nThis hides it from Due / In Progress / Upcoming for all staff in this department (rollout cleanup).`,
+    )) return;
+    const key = `${a.sopCode}-${a.month}-${a.year}`;
+    setIgnoringKey(key);
+    try {
+      const res = await fetch('/api/lms/ignore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: 'sop', sopCode: a.sopCode, month: a.month, year: a.year }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        window.alert(json.error || 'Failed to ignore SOP');
+        return;
+      }
+      clearLmsClientCache();
+      await load(true);
+    } finally {
+      setIgnoringKey(null);
+    }
+  }, [employee.department, load]);
+
+  const handleIgnoreMonth = useCallback(async () => {
+    // Build unique month options from current assignments (oldest first).
+    const months = Array.from(
+      new Map(
+        assignments.map((a) => [`${a.year}-${a.month}`, { month: a.month, year: a.year, label: `${formatDueMonth(a)} ${a.year}` }]),
+      ).values(),
+    ).sort((a, b) => (a.year !== b.year ? a.year - b.year : a.month - b.month));
+
+    if (months.length === 0) {
+      window.alert('No trainings to ignore.');
+      return;
+    }
+
+    const list = months.map((m, i) => `${i + 1}. ${m.label}`).join('\n');
+    const pick = window.prompt(
+      `Ignore ALL SOPs for one month across ${employee.department}.\n\nEnter the number of the month to ignore:\n${list}`,
+      '1',
+    );
+    if (pick == null) return;
+    const idx = Number(pick) - 1;
+    if (!Number.isInteger(idx) || idx < 0 || idx >= months.length) {
+      window.alert('Invalid selection.');
+      return;
+    }
+    const chosen = months[idx];
+    if (!window.confirm(
+      `Ignore every SOP scheduled for ${chosen.label} in ${employee.department}?\n\nThis cannot be undone from this screen.`,
+    )) return;
+
+    setIgnoreMonthBusy(true);
+    try {
+      const res = await fetch('/api/lms/ignore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: 'month', month: chosen.month, year: chosen.year }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        window.alert(json.error || 'Failed to ignore month');
+        return;
+      }
+      clearLmsClientCache();
+      await load(true);
+    } finally {
+      setIgnoreMonthBusy(false);
+    }
+  }, [assignments, employee.department, load]);
 
   // Warm the journey cache on hover/focus so clicking "Start"/"Continue" paints
   // the journey page instantly instead of waiting on the fetch. Purely additive:
@@ -1165,14 +1281,26 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
                 <h2 className="flex items-center gap-1.5 text-xs font-bold text-gray-800">
                   <ClipboardList className="h-3.5 w-3.5 text-purple-600" /> My Trainings
                 </h2>
-                <div className="relative w-full max-w-xs">
-                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-                  <input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search SOP code or name…"
-                    className="w-full rounded-lg border border-gray-200 py-1.5 pl-8 pr-3 text-sm focus:border-purple-300 focus:outline-none"
-                  />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleIgnoreMonth}
+                    disabled={ignoreMonthBusy || assignments.length === 0}
+                    className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                    title="Ignore all SOPs for a selected month across your department"
+                  >
+                    <EyeOff className="h-3.5 w-3.5" />
+                    {ignoreMonthBusy ? 'Ignoring…' : 'Ignore month'}
+                  </button>
+                  <div className="relative w-full max-w-xs sm:w-56">
+                    <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search SOP code or name…"
+                      className="w-full rounded-lg border border-gray-200 py-1.5 pl-8 pr-3 text-sm focus:border-purple-300 focus:outline-none"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1223,6 +1351,8 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
                   onOpenStep={handleOpenStep}
                   onCertificate={handleCertificate}
                   onPrefetch={prefetchJourney}
+                  onIgnoreSop={handleIgnoreSop}
+                  ignoringKey={ignoringKey}
                 />
               )}
 

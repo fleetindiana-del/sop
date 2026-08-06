@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft, Check, ChevronLeft, ChevronRight, PlayCircle,
@@ -9,7 +9,11 @@ import {
   Maximize2, Flag, XCircle,
 } from 'lucide-react';
 import type { JourneyStep } from '@/app/api/lms/journey/[sopCode]/route';
-import { buildOfficeOnlineEmbedUrl } from '@/lib/file-urls';
+import {
+  BrandlessVideoPlayer,
+  orderLmsVideos,
+} from '@/components/shared/BrandlessVideoPlayer';
+import { RestrictedLmsDocxPreview } from '@/components/lms/RestrictedLmsDocxPreview';
 import {
   getCachedLmsEmployeeId,
   invalidateLmsClientFields,
@@ -81,63 +85,26 @@ function VideoStep({
   onProgress: (pct: number, ts: number) => void;
   onComplete: () => void;
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const lastReported = useRef(step.percentage ?? 0);
-  const nearEndFired = useRef(false);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [speed, setSpeed] = useState(1);
-  const urls = step.urls || [];
+  const [expanded, setExpanded] = useState(false);
+  const videos = useMemo(() => orderLmsVideos(step.urls || []), [step.urls]);
 
-  // Reset near-end guard when video src changes
-  useEffect(() => { nearEndFired.current = false; }, [currentIdx]);
-
-  const handleSpeedChange = (s: number) => {
-    setSpeed(s);
-    if (videoRef.current) videoRef.current.playbackRate = s;
-  };
-
-  // Restore position on first load
   useEffect(() => {
-    const v = videoRef.current;
-    if (!v || !step.lastTimestamp) return;
-    v.currentTime = step.lastTimestamp;
-  }, [currentIdx, step.lastTimestamp]);
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpanded(false);
+    };
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [expanded]);
 
-  const handleTimeUpdate = () => {
-    const v = videoRef.current;
-    if (!v || isNaN(v.duration) || v.duration === 0) return;
-
-    // Stop playback 2 s before end and treat as finished (hides watermark outro)
-    if (!nearEndFired.current && v.duration > 4 && v.currentTime >= v.duration - 2) {
-      nearEndFired.current = true;
-      v.pause();
-      if (currentIdx < urls.length - 1) {
-        nearEndFired.current = false;
-        setCurrentIdx((i) => i + 1);
-      } else {
-        onProgress(100, 0);
-        onComplete();
-      }
-      return;
-    }
-
-    const pct = Math.round((v.currentTime / v.duration) * 100);
-    if (pct >= lastReported.current + 5) {
-      lastReported.current = pct;
-      onProgress(pct, Math.round(v.currentTime));
-    }
-  };
-
-  // Prevent seeking into the last 2 seconds
-  const handleSeeked = () => {
-    const v = videoRef.current;
-    if (!v || isNaN(v.duration) || v.duration === 0) return;
-    if (v.currentTime > v.duration - 2) {
-      v.currentTime = Math.max(0, v.duration - 2);
-    }
-  };
-
-  if (urls.length === 0) {
+  if (videos.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center text-gray-400">
         <p className="text-sm">No video available for this step.</p>
@@ -145,56 +112,74 @@ function VideoStep({
     );
   }
 
+  const active = videos[Math.min(currentIdx, videos.length - 1)];
+
+  const handleNearEnd = () => {
+    if (currentIdx < videos.length - 1) {
+      setCurrentIdx((i) => i + 1);
+    } else {
+      onProgress(100, 0);
+      onComplete();
+    }
+  };
+
+  const player = (fillParent: boolean) => (
+    <BrandlessVideoPlayer
+      url={active.url}
+      startAt={currentIdx === 0 ? (step.lastTimestamp ?? 0) : 0}
+      playbackRate={speed}
+      maxHeight={fillParent ? '100%' : '60vh'}
+      fillParent={fillParent}
+      hideFullscreenButton
+      onProgress={onProgress}
+      onNearEnd={handleNearEnd}
+    />
+  );
+
   return (
     <div className="flex flex-1 flex-col gap-3">
-      {urls.length > 1 && (
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          {urls.map((_, i) => (
+          {videos.map((v, i) => (
             <button
-              key={i}
+              key={`${v.label}-${i}`}
               onClick={() => setCurrentIdx(i)}
               className={`rounded-full px-3 py-1 text-xs font-medium transition ${
                 i === currentIdx ? 'bg-purple-600 text-white' : 'border border-gray-200 text-gray-500 hover:bg-gray-50'
               }`}
+              title={v.label === 'Short' ? 'Brief video' : 'Explainer video'}
             >
-              Part {i + 1}
+              {v.label}
             </button>
           ))}
         </div>
-      )}
-
-      {/* Video container — overflow:hidden clips any branding that extends outside */}
-      <div className="relative overflow-hidden rounded-xl bg-black shadow-lg select-none">
-        <video
-          ref={videoRef}
-          key={urls[currentIdx]}
-          src={urls[currentIdx]}
-          controls
-          controlsList="nodownload nofullscreen"
-          disablePictureInPicture
-          className="w-full"
-          style={{ maxHeight: '60vh' }}
-          onTimeUpdate={handleTimeUpdate}
-          onSeeked={handleSeeked}
-          onContextMenu={(e) => e.preventDefault()}
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100"
         >
-          Your browser does not support HTML5 video.
-        </video>
-        {/* Overlay that covers the third-party watermark in the bottom-right corner */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute bottom-10 right-0 h-7 w-36 bg-black"
-        />
+          <Maximize2 className="h-3.5 w-3.5" /> Expand View
+        </button>
       </div>
 
-      {/* Speed controls */}
+      {!expanded && (
+        <div className="relative overflow-hidden rounded-xl bg-black shadow-lg select-none">
+          {player(false)}
+        </div>
+      )}
+      {expanded && (
+        <div className="flex h-[40vh] items-center justify-center rounded-xl border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400">
+          Playing in Expand View…
+        </div>
+      )}
+
       <div className="flex items-center gap-2">
-        <span className="text-xs font-medium text-gray-400 shrink-0">Speed:</span>
+        <span className="shrink-0 text-xs font-medium text-gray-400">Speed:</span>
         <div className="flex gap-1">
           {SPEEDS.map((s) => (
             <button
               key={s}
-              onClick={() => handleSpeedChange(s)}
+              onClick={() => setSpeed(s)}
               className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
                 speed === s
                   ? 'bg-purple-600 text-white'
@@ -205,10 +190,11 @@ function VideoStep({
             </button>
           ))}
         </div>
-        <span className="ml-auto flex items-center gap-2 text-xs text-gray-400">
-          <span className="flex items-center gap-1"><Volume2 className="h-3.5 w-3.5" /> Audio controls in player</span>
+        <span className="ml-auto flex items-center gap-1 text-xs text-gray-400">
+          <Volume2 className="h-3.5 w-3.5" /> Audio controls in player
         </span>
       </div>
+
       {step.completed ? (
         <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">
           <Check className="h-3.5 w-3.5" /> Marked as watched. You may re-watch anytime.
@@ -220,6 +206,47 @@ function VideoStep({
         >
           <Check className="h-4 w-4 text-green-500" /> Mark as Watched
         </button>
+      )}
+
+      {expanded && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-black/90 px-3 py-2 sm:px-4">
+            <div className="flex min-w-0 items-center gap-2">
+              <PlayCircle className="h-4 w-4 shrink-0 text-purple-400" />
+              <span className="truncate text-sm font-semibold text-white">
+                {step.label || 'Video'} · {active.label}
+              </span>
+              <div className="ml-2 hidden items-center gap-1 sm:flex">
+                {videos.map((v, i) => (
+                  <button
+                    key={`exp-${v.label}-${i}`}
+                    onClick={() => setCurrentIdx(i)}
+                    className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition ${
+                      i === currentIdx
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white/10 text-white/70 hover:bg-white/20'
+                    }`}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20"
+              title="Close (Esc)"
+            >
+              <X className="h-3.5 w-3.5" /> Close
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 p-2 sm:p-3">
+            <div className="h-full overflow-hidden rounded-lg bg-black">
+              {player(true)}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -290,66 +317,68 @@ function SlidesStep({
   );
 }
 
-// ─── PDF step ─────────────────────────────────────────────────────────────────
+// ─── PDF / Word step — dashboard docx-preview, view-only (no download) ───────
 
 function PdfStep({
   step,
+  sopIdentifier,
   onComplete,
 }: {
   step: JourneyStep;
+  sopIdentifier?: string | null;
   onComplete: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [acknowledged, setAcknowledged] = useState(step.completed);
 
-  // While the immersive reader is open, lock background scroll and allow ESC to exit.
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setFullscreen(false);
-      // Soft block common screenshot / save shortcuts (cannot stop OS PrintScreen).
-      if ((e.ctrlKey || e.metaKey) && ['c', 'C', 's', 'S', 'p', 'P'].includes(e.key)) {
-        e.preventDefault();
-      }
-    };
-    const block = (e: Event) => e.preventDefault();
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', onKey);
-    document.addEventListener('copy', block);
-    document.addEventListener('cut', block);
-    document.addEventListener('contextmenu', block);
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      window.removeEventListener('keydown', onKey);
-      document.removeEventListener('copy', block);
-      document.removeEventListener('cut', block);
-      document.removeEventListener('contextmenu', block);
-    };
-  }, [fullscreen]);
+  const language =
+    step.id === 'sopPdfGu' || /guj|gujarati/i.test(step.label || '')
+      ? 'Gujarati'
+      : 'English';
+
+  const wordPath =
+    step.url && /\.docx?($|\?)/i.test(step.url) ? step.url : null;
+
+  const watermarkText = useMemo(() => {
+    const cached = readLmsClientCache<{
+      employee?: { id?: string; _id?: string; name?: string; department?: string };
+    }>(lmsClientFields.employee);
+    const emp = cached?.value?.employee;
+    const name = String(emp?.name || 'LMS user').trim();
+    const id = String(emp?.id || emp?._id || getCachedLmsEmployeeId() || '').trim();
+    const code = String(sopIdentifier || '').trim().toUpperCase();
+    return [name, id ? `ID ${id.slice(-6)}` : null, code || null].filter(Boolean).join(' · ');
+  }, [sopIdentifier]);
 
   useEffect(() => {
-    if (!open || fullscreen) return;
-    const block = (e: Event) => e.preventDefault();
+    if (!open && !fullscreen) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && ['c', 'C', 's', 'S', 'p', 'P'].includes(e.key)) {
+      if (fullscreen && e.key === 'Escape') setFullscreen(false);
+      if (e.key === 'PrintScreen') e.preventDefault();
+      if ((e.ctrlKey || e.metaKey) && ['c', 'C', 'x', 'X', 's', 'S', 'p', 'P', 'a', 'A'].includes(e.key)) {
         e.preventDefault();
       }
     };
+    const block = (e: Event) => e.preventDefault();
+    const prevOverflow = fullscreen ? document.body.style.overflow : null;
+    if (fullscreen) document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKey, true);
     document.addEventListener('copy', block);
     document.addEventListener('cut', block);
+    document.addEventListener('paste', block);
     document.addEventListener('contextmenu', block);
-    window.addEventListener('keydown', onKey);
     return () => {
+      if (prevOverflow !== null) document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey, true);
       document.removeEventListener('copy', block);
       document.removeEventListener('cut', block);
+      document.removeEventListener('paste', block);
       document.removeEventListener('contextmenu', block);
-      window.removeEventListener('keydown', onKey);
     };
   }, [open, fullscreen]);
 
-  if (!step.url) {
+  if (!step.url && !sopIdentifier) {
     return (
       <div className="flex flex-1 items-center justify-center text-gray-400">
         <p className="text-sm">SOP document not available.</p>
@@ -357,25 +386,26 @@ function PdfStep({
     );
   }
 
-  const isDocx = step.fileType === 'docx' || step.url.toLowerCase().endsWith('.docx');
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  // PDFs render through the same preview route the dashboard uses, so the inline
-  // and full-screen previews look identical to the dashboard. DOCX uses Office Online.
-  const viewerSrc = isDocx
-    ? buildOfficeOnlineEmbedUrl(step.url, origin)
-    : `/api/sops/preview?path=${encodeURIComponent(step.url)}&type=pdf`;
-
   const reviewed = acknowledged || step.completed;
   const markReviewed = () => { setAcknowledged(true); onComplete(); };
+
+  const preview = (
+    <RestrictedLmsDocxPreview
+      pathParam={wordPath}
+      identifierParam={sopIdentifier || null}
+      languageParam={language}
+      watermarkText={watermarkText}
+    />
+  );
 
   return (
     <div
       className="flex flex-1 flex-col gap-3 select-none"
       onCopy={(e) => e.preventDefault()}
       onCut={(e) => e.preventDefault()}
+      onPaste={(e) => e.preventDefault()}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* Landing card — prevents auto-download on page load */}
       {!open && (
         <div className="flex flex-1 flex-col items-center justify-center gap-5 rounded-2xl border border-gray-200 bg-linear-to-b from-gray-50 to-white py-16">
           <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white shadow-md ring-1 ring-gray-100">
@@ -384,7 +414,7 @@ function PdfStep({
           <div className="text-center">
             <p className="text-base font-semibold text-gray-700">SOP Document</p>
             <p className="mt-0.5 text-xs text-gray-400">
-              {isDocx ? 'Word document' : 'PDF'} · View-only — download, copy, and screenshots are restricted
+              Word preview · View-only — switches to black if you leave the window or use screenshot keys
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">
@@ -416,88 +446,83 @@ function PdfStep({
         </div>
       )}
 
+      {/* Single preview instance — fullscreen only changes chrome, not remount. */}
       {open && (
         <>
-          {/* Inline viewer toolbar — no download / open-in-new-tab */}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <button
-              onClick={() => setOpen(false)}
-              className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" /> Hide document
-            </button>
-            <button
-              onClick={() => setFullscreen(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100"
-            >
-              <Maximize2 className="h-3.5 w-3.5" /> Fullscreen
-            </button>
-          </div>
-
-          <div className="relative flex-1 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm h-[70vh] sm:h-[76vh] lg:h-[80vh]">
-            <iframe
-              src={viewerSrc}
-              className="h-full w-full border-0"
-              title="SOP Document"
-              sandbox="allow-scripts allow-same-origin allow-popups"
-              referrerPolicy="no-referrer"
-            />
-          </div>
-
-          {!reviewed ? (
-            <button
-              onClick={markReviewed}
-              className="flex items-center justify-center gap-2 rounded-lg bg-purple-600 py-2.5 text-sm font-medium text-white hover:bg-purple-700"
-            >
-              <Check className="h-4 w-4" /> Confirm I have read this document
-            </button>
-          ) : (
-            <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">
-              <Check className="h-3.5 w-3.5" /> Document reviewed. You can re-open it anytime.
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Immersive full-screen reader */}
-      {fullscreen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-[#e5e7eb] select-none">
-          <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-white px-3 py-2 shadow-sm sm:px-4">
-            <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-gray-700">
-              <FileText className="h-4 w-4 shrink-0 text-purple-600" />
-              <span className="truncate">{step.label || 'SOP Document'}</span>
-              <span className="hidden rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 sm:inline">
-                View only
-              </span>
-            </span>
-            <div className="flex items-center gap-2">
-              {!reviewed && (
-                <button
-                  onClick={markReviewed}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700"
-                >
-                  <Check className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Mark as read</span>
-                </button>
-              )}
+          {!fullscreen && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <button
-                onClick={() => setFullscreen(false)}
-                className="inline-flex items-center justify-center rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-                title="Close (Esc)"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700"
               >
-                <X className="h-4 w-4" />
+                <ChevronLeft className="h-3.5 w-3.5" /> Hide document
+              </button>
+              <button
+                onClick={() => setFullscreen(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100"
+              >
+                <Maximize2 className="h-3.5 w-3.5" /> Fullscreen
               </button>
             </div>
+          )}
+
+          <div
+            className={
+              fullscreen
+                ? 'fixed inset-0 z-50 flex flex-col bg-[#e5e7eb]'
+                : 'relative flex flex-1 flex-col overflow-hidden rounded-xl border border-gray-200 bg-[#d1d5db] shadow-sm h-[70vh] sm:h-[76vh] lg:h-[80vh]'
+            }
+          >
+            {fullscreen && (
+              <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-white px-3 py-2 shadow-sm sm:px-4">
+                <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-gray-700">
+                  <FileText className="h-4 w-4 shrink-0 text-purple-600" />
+                  <span className="truncate">{step.label || 'SOP Document'}</span>
+                  <span className="hidden rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 sm:inline">
+                    View only
+                  </span>
+                </span>
+                <div className="flex items-center gap-2">
+                  {!reviewed && (
+                    <button
+                      onClick={markReviewed}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700"
+                    >
+                      <Check className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Mark as read</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setFullscreen(false)}
+                    className="inline-flex items-center justify-center rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                    title="Close (Esc)"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className={fullscreen ? 'min-h-0 flex-1 overflow-hidden p-2 sm:p-3' : 'min-h-0 flex-1'}>
+              <div className={fullscreen ? 'h-full overflow-hidden rounded-lg border border-gray-200 bg-[#d1d5db] shadow' : 'h-full'}>
+                {preview}
+              </div>
+            </div>
           </div>
-          <div className="min-h-0 flex-1 p-2 sm:p-3">
-            <iframe
-              src={viewerSrc}
-              className="h-full w-full rounded-lg border-0 bg-white shadow"
-              title="SOP Document fullscreen"
-              sandbox="allow-scripts allow-same-origin allow-popups"
-              referrerPolicy="no-referrer"
-            />
-          </div>
-        </div>
+
+          {!fullscreen && (
+            !reviewed ? (
+              <button
+                onClick={markReviewed}
+                className="flex items-center justify-center gap-2 rounded-lg bg-purple-600 py-2.5 text-sm font-medium text-white hover:bg-purple-700"
+              >
+                <Check className="h-4 w-4" /> Confirm I have read this document
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">
+                <Check className="h-3.5 w-3.5" /> Document reviewed. You can re-open it anytime.
+              </div>
+            )
+          )}
+        </>
       )}
     </div>
   );
@@ -1605,6 +1630,7 @@ export default function JourneyPage() {
               <PdfStep
                 key={activeStep.id}
                 step={activeStep}
+                sopIdentifier={data?.sop?.identifier || sopCode}
                 onComplete={() => markStepComplete(activeStep.id)}
               />
             )}

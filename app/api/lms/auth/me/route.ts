@@ -9,6 +9,7 @@ import {
   lmsServerKeys,
   lmsServerTtl,
 } from '@/lib/lmsCache';
+import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTrainingIgnore';
 import Employee from '@/models/Employee';
 
 export const runtime = 'nodejs';
@@ -35,6 +36,9 @@ export async function GET() {
 
         const assignmentsMap = await getEmployeeAssignmentsMap();
         const key = `${employee.department}||${employee.name}`.trim().toLowerCase();
+        const raw = assignmentsMap.get(key) || [];
+        const ignoreRules = await listTrainingIgnores(employee.department);
+        const assignments = filterIgnoredAssignments(raw, ignoreRules, employee.department);
 
         return {
           employee: {
@@ -43,7 +47,7 @@ export async function GET() {
             designation: employee.designation,
             department: employee.department,
           },
-          assignments: assignmentsMap.get(key) || [],
+          assignments,
         };
       },
     );

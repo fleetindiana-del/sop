@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFileBuffer } from "@/lib/bunny";
+import path from "path";
+import {
+  loadStoredFileBuffer,
+  resolveAlternateStoredLocation,
+} from "@/lib/loadStoredFileBuffer";
+import { getContentType } from "@/lib/extractContent";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
@@ -11,13 +16,27 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const buffer = await readFileBuffer(filePath);
+    let buffer = await loadStoredFileBuffer(filePath, { trustedRemote: true });
+    if (!buffer) {
+      const alt = await resolveAlternateStoredLocation(filePath, null, undefined);
+      if (alt) buffer = await loadStoredFileBuffer(alt, { trustedRemote: true });
+    }
+    if (!buffer) {
+      return NextResponse.json({ error: "File not found" }, { status: 404 });
+    }
 
-    // PDF — serve directly with inline display header
+    const filename = path.basename(filePath.split("?")[0] ?? filePath);
+    const contentType =
+      type === "pdf" || /\.pdf($|\?)/i.test(filePath)
+        ? "application/pdf"
+        : getContentType(filename);
+
     return new Response(new Uint8Array(buffer), {
       headers: {
-        "Content-Type": "application/pdf",
+        "Content-Type": contentType,
         "Content-Disposition": "inline",
+        "Cache-Control": "private, max-age=300",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (err) {
