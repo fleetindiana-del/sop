@@ -150,12 +150,16 @@ export async function GET(_req: NextRequest, { params }: Params) {
             lastAccessedAt: new Date(),
           });
           progress = created.toObject();
-        } else if (progress.availableSteps.length === 0 && availableStepIds.length > 0) {
+        } else if (
+          Array.isArray(progress.availableSteps) &&
+          availableStepIds.some((id) => !progress.availableSteps.includes(id))
+        ) {
+          const merged = Array.from(new Set([...progress.availableSteps, ...availableStepIds]));
           await LearningProgress.updateOne(
             { _id: progress._id },
-            { $set: { availableSteps: availableStepIds } },
+            { $set: { availableSteps: merged } },
           );
-          progress = { ...progress, availableSteps: availableStepIds };
+          progress = { ...progress, availableSteps: merged };
         }
 
         const steps = progress as typeof progress & { steps?: Record<string, unknown> };

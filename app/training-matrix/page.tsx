@@ -35,6 +35,15 @@ function monthMatchesActive(month: string, activeMonth: string): boolean {
   return month.split(',').map((s) => s.trim()).includes(activeMonth);
 }
 
+function matchesMonthStatusFilter(
+  pending: number,
+  filter: 'all' | 'completed' | 'pending',
+): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'completed') return !(pending > 0);
+  return pending > 0;
+}
+
 function sopCodesMatch(a: string, b: string): boolean {
   const au = String(a || '').toUpperCase();
   const bu = String(b || '').toUpperCase();
@@ -3099,6 +3108,8 @@ export default function TrainingMatrixPage() {
   const [showUpload, setShowUpload] = useState(false);
   const [activeDept, setActiveDept] = useState<ActiveDept>('All');
   const [activeMonth, setActiveMonth] = useState<ActiveMonth>('All');
+  /** Filter SOP table by month training completion (All / fully done / still pending). */
+  const [monthStatusFilter, setMonthStatusFilter] = useState<'all' | 'completed' | 'pending'>('all');
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<MatrixViewMode>('sop'); // default: SOP-wise
   const [groupBy, setGroupBy] = useState<GroupByMode>('department');
@@ -3393,6 +3404,136 @@ export default function TrainingMatrixPage() {
     }
     return codes.size;
   }, [data, activeDept]);
+
+  /** Month-scoped training progress for employees + trainers (Excel snapshot ticks). */
+  const monthTrainingProgress = useMemo(() => {
+    const empty = {
+      sopAssigned: 0,
+      sopCompleted: 0,
+      sopPending: 0,
+      empTotal: 0,
+      empCompleted: 0,
+      empPending: 0,
+      empPct: 0,
+      trainerTotal: 0,
+      trainerCompleted: 0,
+      trainerPending: 0,
+      trainerPct: 0,
+      label: 'All months',
+    };
+    if (!data) return empty;
+
+    const depts: Dept[] = activeDept === 'All' ? [...departments] : [activeDept];
+    const nameEq = (a: string, b: string) =>
+      String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+
+    const sopEmp = new Map<string, { completed: number; pending: number }>();
+    let empTotal = 0;
+    let empCompleted = 0;
+    let empPending = 0;
+    let trainerTotal = 0;
+    let trainerCompleted = 0;
+    let trainerPending = 0;
+    const seenTrainerKeys = new Set<string>();
+
+    for (const dept of depts) {
+      const monthMap = data.sopMonthMapByDept?.[dept] || {};
+      const trainerMap =
+        ((data.perDept?.[dept] as DeptCardData | undefined)?.trainerBySopCode as
+          | Record<string, string>
+          | undefined) || {};
+      const employees =
+        (data.perDept?.[dept] as DeptCardData | undefined)?.employees ||
+        data.employees.filter((e) => e.department === dept);
+
+      for (const emp of employees) {
+        for (const [sopCode, done] of Object.entries(emp.training || {})) {
+          const mo = monthForCode(monthMap, sopCode);
+          if (!monthMatchesActive(mo, activeMonth)) continue;
+
+          const key = stripVersion(sopCode);
+          if (!sopEmp.has(key)) sopEmp.set(key, { completed: 0, pending: 0 });
+          const st = sopEmp.get(key)!;
+          if (done) {
+            st.completed++;
+            empCompleted++;
+          } else {
+            st.pending++;
+            empPending++;
+          }
+          empTotal++;
+        }
+      }
+
+      // Trainer progress: assigned trainer's own tick for SOPs in this month
+      const sopCodes = data.sopCodesByDept?.[dept] || [];
+      for (const sopCode of sopCodes) {
+        const mo = monthForCode(monthMap, sopCode);
+        if (!monthMatchesActive(mo, activeMonth)) continue;
+        const trainerName =
+          trainerMap[sopCode] ||
+          trainerMap[stripVersion(sopCode)] ||
+          '';
+        if (!trainerName) continue;
+        const tKey = `${dept}|${stripVersion(sopCode)}|${trainerName.trim().toLowerCase()}`;
+        if (seenTrainerKeys.has(tKey)) continue;
+        seenTrainerKeys.add(tKey);
+
+        const trainerEmp = employees.find((e) => nameEq(e.name, trainerName));
+        const status = trainerEmp
+          ? trainingStatusForSop(trainerEmp.training, sopCode)
+          : undefined;
+        if (status === undefined) continue;
+        trainerTotal++;
+        if (status) trainerCompleted++;
+        else trainerPending++;
+      }
+    }
+
+    // Prefer unique SOPs visible for the selected month; fall back to tick map size.
+    const assignedFromVisible = visibleSops.length;
+    const sopAssigned = assignedFromVisible > 0 ? assignedFromVisible : sopEmp.size;
+
+    let sopCompleted = 0;
+    let sopPending = 0;
+    const counted = new Set<string>();
+    for (const { code } of visibleSops) {
+      const key = stripVersion(code);
+      if (counted.has(key)) continue;
+      counted.add(key);
+      const st = sopEmp.get(key);
+      if (!st) {
+        sopPending++;
+        continue;
+      }
+      if (st.pending === 0 && st.completed > 0) sopCompleted++;
+      else sopPending++;
+    }
+    // If visibleSops empty (e.g. no DB filter), derive from tick map alone
+    if (visibleSops.length === 0) {
+      sopCompleted = 0;
+      sopPending = 0;
+      for (const st of sopEmp.values()) {
+        if (st.pending === 0 && st.completed > 0) sopCompleted++;
+        else sopPending++;
+      }
+    }
+
+    return {
+      sopAssigned,
+      sopCompleted,
+      sopPending,
+      empTotal,
+      empCompleted,
+      empPending,
+      empPct: empTotal ? Math.round((empCompleted / empTotal) * 100) : 0,
+      trainerTotal,
+      trainerCompleted,
+      trainerPending,
+      trainerPct: trainerTotal ? Math.round((trainerCompleted / trainerTotal) * 100) : 0,
+      label: activeMonth === 'All' ? 'All months' : activeMonth,
+    };
+  }, [data, activeDept, activeMonth, departments, visibleSops]);
 
   const fetchCapsuleViews = useCallback(async () => {
     setCapsuleLoading(true);
@@ -4164,6 +4305,7 @@ export default function TrainingMatrixPage() {
         })
         .filter((r) => {
           if (!monthMatchesActive(r.month, activeMonth)) return false;
+          if (!matchesMonthStatusFilter(r.pending, monthStatusFilter)) return false;
           if (!term) return true;
           return (
             r.sopCode.toLowerCase().includes(term) ||
@@ -4224,6 +4366,7 @@ export default function TrainingMatrixPage() {
         })
         .filter((r) => {
           if (!monthMatchesActive(r.month, activeMonth)) return false;
+          if (!matchesMonthStatusFilter(r.pending, monthStatusFilter)) return false;
           if (!term) return true;
           return r.sopCode.toLowerCase().includes(term) || r.pendingEmployees.length > 0 || r.completedEmployees.length > 0;
         })
@@ -4291,6 +4434,7 @@ export default function TrainingMatrixPage() {
         })
         .filter((r) => {
           if (!monthMatchesActive(r.month, activeMonth)) return false;
+          if (!matchesMonthStatusFilter(r.pending, monthStatusFilter)) return false;
           if (!term) return true;
           return r.sopCode.toLowerCase().includes(term) || (r.month || '').toLowerCase().includes(term) || r.pendingEmployees.length > 0 || r.completedEmployees.length > 0;
         });
@@ -4402,6 +4546,7 @@ export default function TrainingMatrixPage() {
         })
         .filter((r) => {
           if (!monthMatchesActive(r.month, activeMonth)) return false;
+          if (!matchesMonthStatusFilter(r.pending, monthStatusFilter)) return false;
           if (!term) return true;
           // keep if sop matches month/code search too
           return r.sopCode.toLowerCase().includes(term) || (r.month || '').toLowerCase().includes(term) || r.pendingEmployees.length > 0 || r.completedEmployees.length > 0;
@@ -4412,7 +4557,7 @@ export default function TrainingMatrixPage() {
     }
 
     return out.filter((g) => g.sops.length > 0);
-  }, [data, activeDept, activeMonth, search, capsuleSopFilter, activeDbCodeSet]);
+  }, [data, activeDept, activeMonth, search, capsuleSopFilter, activeDbCodeSet, monthStatusFilter]);
 
   const falsySopRows = useMemo((): FalsySopRow[] => {
     const rows: FalsySopRow[] = [];
@@ -7272,7 +7417,7 @@ export default function TrainingMatrixPage() {
                   count={totalUniqueSops}
                   active={activeMonth === 'All'}
                   accent={activeDept === 'All' ? getDeptAccent('Total') : getDeptAccent(activeDept)}
-                  onClick={() => setActiveMonth('All')}
+                  onClick={() => { setActiveMonth('All'); setMonthStatusFilter('all'); }}
                 />
                 {MONTHS.map((m) => (
                   <MonthCapsule
@@ -7281,11 +7426,100 @@ export default function TrainingMatrixPage() {
                     count={monthCountsForGrid[m] || 0}
                     active={activeMonth === m}
                     accent={activeDept === 'All' ? getDeptAccent('Total') : getDeptAccent(activeDept)}
-                    onClick={() => setActiveMonth(m)}
+                    onClick={() => { setActiveMonth(m); setMonthStatusFilter('all'); }}
                   />
                 ))}
               </div>
             </div>
+
+            {/* Month-wise training progress (SOPs · employees · trainers) */}
+            <div className="mt-2 rounded-xl border border-gray-200 bg-white px-3 py-2.5 shadow-sm">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold text-gray-700">
+                  Month progress
+                  <span className="ml-1.5 font-normal text-gray-500">
+                    · {monthTrainingProgress.label}
+                    {activeDept !== 'All' ? ` · ${activeDept}` : ''}
+                  </span>
+                </p>
+                <div className="flex items-center gap-1">
+                  {(
+                    [
+                      { id: 'all', label: 'All SOPs', count: monthTrainingProgress.sopAssigned },
+                      { id: 'completed', label: 'Completed', count: monthTrainingProgress.sopCompleted },
+                      { id: 'pending', label: 'Pending', count: monthTrainingProgress.sopPending },
+                    ] as const
+                  ).map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setMonthStatusFilter(f.id)}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${
+                        monthStatusFilter === f.id
+                          ? f.id === 'completed'
+                            ? 'bg-emerald-600 text-white'
+                            : f.id === 'pending'
+                              ? 'bg-amber-500 text-white'
+                              : 'bg-gray-800 text-white'
+                          : 'border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'
+                      }`}
+                    >
+                      {f.label}
+                      <span
+                        className={`rounded-full px-1 text-[9px] tabular-nums ${
+                          monthStatusFilter === f.id ? 'bg-white/25' : 'bg-white text-gray-800'
+                        }`}
+                      >
+                        {f.count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="rounded-lg border border-gray-100 bg-gray-50/80 px-2.5 py-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">SOPs assigned</p>
+                  <div className="mt-1 flex items-baseline gap-2">
+                    <span className="text-lg font-bold tabular-nums text-gray-900">{monthTrainingProgress.sopAssigned}</span>
+                    <span className="text-[10px] text-emerald-700 tabular-nums">{monthTrainingProgress.sopCompleted} done</span>
+                    <span className="text-[10px] text-amber-700 tabular-nums">{monthTrainingProgress.sopPending} pending</span>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-gray-100 bg-gray-50/80 px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Employees</p>
+                    <span className="text-[10px] font-bold tabular-nums text-gray-800">{monthTrainingProgress.empPct}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-200">
+                    <div
+                      className="h-full rounded-full bg-emerald-500 transition-all"
+                      style={{ width: `${monthTrainingProgress.empPct}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-[10px] text-gray-600 tabular-nums">
+                    {monthTrainingProgress.empCompleted}/{monthTrainingProgress.empTotal} completed
+                    <span className="text-amber-700"> · {monthTrainingProgress.empPending} pending</span>
+                  </p>
+                </div>
+                <div className="rounded-lg border border-gray-100 bg-gray-50/80 px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Trainers</p>
+                    <span className="text-[10px] font-bold tabular-nums text-gray-800">{monthTrainingProgress.trainerPct}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-200">
+                    <div
+                      className="h-full rounded-full bg-purple-500 transition-all"
+                      style={{ width: `${monthTrainingProgress.trainerPct}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-[10px] text-gray-600 tabular-nums">
+                    {monthTrainingProgress.trainerCompleted}/{monthTrainingProgress.trainerTotal} completed
+                    <span className="text-amber-700"> · {monthTrainingProgress.trainerPending} pending</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div className="mt-1 flex items-center justify-end gap-3">
                 {capsuleSopFilter ? (
                   <div className="flex items-center gap-2">

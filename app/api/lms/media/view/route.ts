@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Media file could not be loaded' }, { status: 502 });
     }
 
-    const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+    const upstreamType = (upstream.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
     const lower = url.toLowerCase();
     const filename = lower.includes('.pptx')
       ? 'slides.pptx'
@@ -62,6 +62,16 @@ export async function GET(req: NextRequest) {
           ? 'document.pdf'
           : 'document';
 
+    // Force correct MIME so Chrome's PDF viewer can render inline (Bunny sometimes sends octet-stream).
+    let contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+    if (lower.includes('.pdf') || upstreamType === 'application/pdf') {
+      contentType = 'application/pdf';
+    } else if (lower.includes('.pptx')) {
+      contentType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    } else if (lower.includes('.ppt')) {
+      contentType = 'application/vnd.ms-powerpoint';
+    }
+
     return new NextResponse(upstream.body, {
       status: 200,
       headers: {
@@ -69,6 +79,8 @@ export async function GET(req: NextRequest) {
         'Content-Disposition': `inline; filename="${filename}"`,
         'Cache-Control': 'private, no-store',
         'X-Content-Type-Options': 'nosniff',
+        // Allow same-origin iframe embedding (Chrome PDF viewer).
+        'Content-Security-Policy': "frame-ancestors 'self'",
       },
     });
   } catch (err: unknown) {

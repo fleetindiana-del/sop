@@ -13,6 +13,7 @@ import {
   BrandlessVideoPlayer,
   orderLmsVideos,
 } from '@/components/shared/BrandlessVideoPlayer';
+import { BrandlessSlidesViewer } from '@/components/shared/BrandlessSlidesViewer';
 import { RestrictedLmsDocxPreview } from '@/components/lms/RestrictedLmsDocxPreview';
 import {
   getCachedLmsEmployeeId,
@@ -357,21 +358,20 @@ function SlidesStep({
 
   const isLast = currentIdx === urls.length - 1;
   const usingOffice = Boolean(viewerSrc && viewerSrc.includes('officeapps.live.com'));
+  const rawUrl = urls[currentIdx] || '';
+  const viewingPdf = Boolean(viewerSrc && !usingOffice && (isPdfUrl(rawUrl) || viewerSrc.includes('/api/lms/media/view')));
+  // Chrome blocks its built-in PDF viewer inside a sandboxed iframe — never sandbox PDF/proxy embeds.
+  const frameSrc = viewingPdf && viewerSrc
+    ? `${viewerSrc}${viewerSrc.includes('#') ? '' : '#toolbar=0&navpanes=0&scrollbar=1'}`
+    : viewerSrc;
 
-  const frame = viewerSrc ? (
-    <div className="relative h-full w-full overflow-hidden bg-white" style={fullscreen ? { height: '100%' } : { minHeight: '55vh' }}>
-      <iframe
-        src={viewerSrc}
-        className="h-full w-full"
-        style={fullscreen ? { height: '100%' } : { minHeight: '55vh' }}
-        title={`${step.label} - Deck ${currentIdx + 1}`}
-        allowFullScreen
-        sandbox={usingOffice ? undefined : 'allow-scripts allow-same-origin'}
-      />
-      {usingOffice && (
-        <div className="pointer-events-auto absolute inset-x-0 top-0 z-10 h-12 bg-white" aria-hidden />
-      )}
-    </div>
+  const frame = frameSrc ? (
+    <BrandlessSlidesViewer
+      src={frameSrc}
+      title={`${step.label} - Deck ${currentIdx + 1}`}
+      mode={usingOffice ? 'office' : viewingPdf ? 'pdf' : 'iframe'}
+      style={fullscreen ? { height: '100%' } : { minHeight: '55vh' }}
+    />
   ) : (
     <div className="flex min-h-[55vh] items-center justify-center bg-stone-100">
       {viewerError ? (
@@ -1713,9 +1713,11 @@ export default function JourneyPage() {
           );
         }
         if (newPct >= 100 && !hasCert) {
-          const certRes = await fetch(`/api/lms/certificate/${sopCode}`);
-          const certData = await certRes.json();
-          if (certData.certificate) setHasCert(true);
+          try {
+            const certRes = await fetch(`/api/lms/certificate/${sopCode}`, { method: 'POST' });
+            const certData = await certRes.json().catch(() => ({}));
+            if (certData.certificate) setHasCert(true);
+          } catch { /* non-critical */ }
         }
         return newPct;
       }
@@ -1759,14 +1761,22 @@ export default function JourneyPage() {
 
     const newPct = await updateProgress(stepId, { completed: passed, passed, score, attempts: newAttempts });
 
-    // Certificate + celebration only after progress is confirmed at 100%
-    if (passed && newPct !== null && newPct >= 100) {
+    // Certificate + celebration after a passing attempt (server verifies / completes progress).
+    if (passed) {
       try {
         const r = await fetch(`/api/lms/certificate/${sopCode}`, { method: 'POST' });
-        const d = await r.json();
-        if (d.certificate) setHasCert(true);
-        if (r.ok) setShowCelebration(true);
-      } catch { /* non-critical */ }
+        const d = await r.json().catch(() => ({}));
+        if (d.certificate) {
+          setHasCert(true);
+          setShowCelebration(true);
+          if (typeof newPct !== 'number' || newPct < 100) setOverallPct(100);
+        } else if (newPct !== null && newPct >= 100) {
+          // Progress complete but cert create failed — still celebrate; user can retry from footer.
+          setShowCelebration(true);
+        }
+      } catch {
+        if (newPct !== null && newPct >= 100) setShowCelebration(true);
+      }
     }
   }, [updateProgress, sopCode]);
 

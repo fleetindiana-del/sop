@@ -66,18 +66,43 @@ export async function POST(_req: NextRequest, { params }: Params) {
     if (existing) return NextResponse.json({ certificate: existing });
 
     // Verify progress is complete AND the quiz was actually passed
-    const progress = await LearningProgress.findOne({ employeeId: payload.sub, sopCode }).lean();
-    if (!progress || progress.overallPercentage < 100 || progress.status !== 'completed') {
+    let progress = await LearningProgress.findOne({ employeeId: payload.sub, sopCode });
+    if (!progress) {
       return NextResponse.json({ error: 'Training not yet completed' }, { status: 400 });
     }
-    const stepsRecord = progress.steps as Record<string, { passed?: boolean; completed?: boolean }> | undefined;
+
+    const stepsRecord = progress.steps as Record<string, { passed?: boolean; completed?: boolean; score?: number }> | undefined;
     const availableSteps = (progress.availableSteps ?? []) as string[];
     const quizKeys = availableSteps.filter((k) => k === 'quiz' || k === 'quizGu');
-    if (quizKeys.length > 0) {
-      const quizPassed = quizKeys.some((k) => stepsRecord?.[k]?.passed === true || stepsRecord?.[k]?.completed === true);
-      if (!quizPassed) {
-        return NextResponse.json({ error: 'Assessment not passed' }, { status: 400 });
+    // Also accept quiz completion even if availableSteps was stale / missing quiz keys.
+    const allQuizKeys = ['quiz', 'quizGu'] as const;
+    const quizPassed = (quizKeys.length > 0 ? quizKeys : [...allQuizKeys]).some(
+      (k) => stepsRecord?.[k]?.passed === true || stepsRecord?.[k]?.completed === true,
+    );
+
+    if (!quizPassed && quizKeys.length > 0) {
+      return NextResponse.json({ error: 'Assessment not passed' }, { status: 400 });
+    }
+
+    // If quiz passed but overall % was stuck (stale availableSteps), complete training now.
+    if (quizPassed && (progress.overallPercentage < 100 || progress.status !== 'completed')) {
+      progress.overallPercentage = 100;
+      progress.status = 'completed';
+      if (!progress.completedAt) progress.completedAt = new Date();
+      // Ensure quiz keys exist in availableSteps for future recalcs.
+      for (const k of allQuizKeys) {
+        if (stepsRecord?.[k]?.passed || stepsRecord?.[k]?.completed) {
+          if (!progress.availableSteps.includes(k)) {
+            progress.availableSteps = [...progress.availableSteps, k];
+          }
+        }
       }
+      await progress.save();
+      invalidateLmsLearnerCache(payload.sub, sopCode);
+    }
+
+    if (progress.overallPercentage < 100 || progress.status !== 'completed') {
+      return NextResponse.json({ error: 'Training not yet completed' }, { status: 400 });
     }
 
     // Get employee details

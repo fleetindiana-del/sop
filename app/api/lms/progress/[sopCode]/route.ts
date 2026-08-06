@@ -107,15 +107,28 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       });
     }
 
-    // Initialize available steps if provided and not yet set
-    if (Array.isArray(initSteps) && progress.availableSteps.length === 0) {
-      progress.availableSteps = initSteps as string[];
+    // Keep availableSteps in sync with the current journey (quiz added later, etc.)
+    if (Array.isArray(initSteps) && initSteps.length > 0) {
+      if (progress.availableSteps.length === 0) {
+        progress.availableSteps = initSteps as string[];
+      } else {
+        const mergedSteps = new Set([
+          ...(progress.availableSteps as string[]),
+          ...(initSteps as string[]),
+        ]);
+        progress.availableSteps = Array.from(mergedSteps);
+      }
     }
 
     if (typeof step === 'string' && step) {
       const validSteps = ['videoEn', 'videoGu', 'slidesEn', 'slidesGu', 'sopPdf', 'sopPdfGu', 'quiz', 'quizGu'];
       if (!validSteps.includes(step)) {
         return NextResponse.json({ error: 'Invalid step' }, { status: 400 });
+      }
+
+      // Ensure the step being updated is counted toward overall progress / certificate.
+      if (!progress.availableSteps.includes(step)) {
+        progress.availableSteps = [...progress.availableSteps, step];
       }
 
       // Merge step data
