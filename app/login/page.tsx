@@ -1,13 +1,19 @@
 "use client";
 
 import { signIn, useSession } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 
+function safeCallbackUrl(raw: string | null): string {
+  if (!raw) return "/dashboard";
+  // Only allow same-origin relative paths (block open redirects).
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/dashboard";
+  return raw;
+}
+
 function LoginForm() {
   const { data: session, status } = useSession();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -15,8 +21,11 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (session) router.replace("/dashboard");
-  }, [session, router]);
+    if (status === "authenticated" && session) {
+      const next = safeCallbackUrl(searchParams.get("callbackUrl"));
+      window.location.replace(next);
+    }
+  }, [session, status, searchParams]);
 
   if (status === "loading") {
     return (
@@ -28,20 +37,47 @@ function LoginForm() {
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     setError("");
-    const callbackUrl = searchParams.get("callbackUrl") ?? "/dashboard";
-    const result = await signIn("credentials", {
-      username,
-      password,
-      redirect: false,
-    });
-    setLoading(false);
-    if (result?.error) {
-      setError("Invalid username or password");
-      return;
+    const callbackUrl = safeCallbackUrl(searchParams.get("callbackUrl"));
+    try {
+      const result = await signIn("credentials", {
+        username: username.trim(),
+        password,
+        redirect: false,
+        callbackUrl,
+      });
+
+      if (!result) {
+        setError("Sign-in failed — no response from the server. Please try again.");
+        return;
+      }
+      if (result.error) {
+        setError(
+          result.error === "CredentialsSignin"
+            ? "Invalid username or password"
+            : `Sign-in failed: ${result.error}`,
+        );
+        return;
+      }
+      if (result.ok === false) {
+        setError("Invalid username or password");
+        return;
+      }
+
+      // Hard navigation so the session cookie is always picked up by middleware.
+      window.location.assign(callbackUrl);
+    } catch (err) {
+      console.error("[login] signIn error:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not reach the sign-in service. Check your connection and try again.",
+      );
+    } finally {
+      setLoading(false);
     }
-    router.push(callbackUrl);
   };
 
   return (
@@ -61,7 +97,8 @@ function LoginForm() {
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+              disabled={loading}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-60"
             />
           </label>
           <label className="block text-sm">
@@ -72,21 +109,24 @@ function LoginForm() {
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+              disabled={loading}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-60"
             />
           </label>
 
           {error && (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+              {error}
+            </p>
           )}
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !username.trim() || !password}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-violet-600 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60"
           >
             {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-            Sign In
+            {loading ? "Signing in…" : "Sign In"}
           </button>
         </form>
       </div>

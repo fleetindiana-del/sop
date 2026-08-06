@@ -881,12 +881,21 @@ function LoginCard({ onLogin }: { onLogin: (emp: Employee) => void }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), password }),
       });
-      const json = await res.json();
+      let json: { error?: string; employee?: Employee } = {};
+      try {
+        json = await res.json();
+      } catch {
+        setError('Sign-in failed — invalid server response. Please try again.');
+        return;
+      }
       if (!res.ok) { setError(json.error || 'Login failed'); return; }
+      if (!json.employee) { setError('Login failed — no employee returned.'); return; }
       // Drop any previous learner's cached progress/assignments before writing this session.
       clearLmsClientCache();
       writeLmsClientCache(lmsClientFields.employee, { employee: json.employee });
       onLogin(json.employee);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not reach the learning portal. Try again.');
     } finally {
       setLoading(false);
     }

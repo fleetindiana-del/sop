@@ -5,6 +5,28 @@ import { ensureDefaultAdmin } from "@/lib/ensure-admin";
 import { connectDB } from "@/lib/mongodb";
 import User from "@/models/User";
 
+/** On Vercel, ignore localhost NEXTAUTH_URL so CSRF/cookies use the real host. */
+function ensureNextAuthUrl(): void {
+  const current = (process.env.NEXTAUTH_URL || "").trim();
+  const looksLocal = !current || /localhost|127\.0\.0\.1/i.test(current);
+  const onVercel = process.env.VERCEL === "1" || Boolean(process.env.VERCEL_URL);
+
+  if (onVercel && looksLocal) {
+    const host =
+      process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+      process.env.VERCEL_URL;
+    if (host) {
+      process.env.NEXTAUTH_URL = host.startsWith("http") ? host : `https://${host}`;
+    }
+    return;
+  }
+
+  if (!current && process.env.VERCEL_URL) {
+    process.env.NEXTAUTH_URL = `https://${process.env.VERCEL_URL}`;
+  }
+}
+ensureNextAuthUrl();
+
 export type AppRole = "admin" | "trainer" | "viewer";
 
 declare module "next-auth" {
