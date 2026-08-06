@@ -146,7 +146,7 @@ export async function saveComplianceReport(data: {
   return ComplianceReport.findOneAndUpdate(
     { sopId: new mongoose.Types.ObjectId(data.sopId) },
     { $set: reportData },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
 }
 

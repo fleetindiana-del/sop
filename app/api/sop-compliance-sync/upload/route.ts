@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
             if (version) updates.version = version;
             if (department) updates.department = department;
 
-            await SOP.findByIdAndUpdate(sop._id, { $set: updates }, { new: true });
+            await SOP.findByIdAndUpdate(sop._id, { $set: updates }, { returnDocument: 'after' });
             totalUpdated++;
           }
         }

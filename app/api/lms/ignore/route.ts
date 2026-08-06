@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
         ignoredByName: ctx.employee.name,
       },
     },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
 
   bustIgnoreCaches();

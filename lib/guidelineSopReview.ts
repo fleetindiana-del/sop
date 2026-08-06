@@ -69,7 +69,7 @@ export async function runGuidelineSopReview(options: GuidelineSopReviewOptions) 
       guidelineIds: guidelines.map((g) => g._id.toString()),
       runAt: new Date(),
     },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
 
   return { result, report };

@@ -35,7 +35,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const { id } = await context.params;
     await connectDB();
     const body = await request.json();
-    const sop = await SOP.findByIdAndUpdate(id, body, { new: true }).lean();
+    const sop = await SOP.findByIdAndUpdate(id, body, { returnDocument: 'after' }).lean();
     if (!sop) {
       return NextResponse.json({ error: "SOP not found" }, { status: 404 });
     }

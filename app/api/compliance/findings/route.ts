@@ -78,7 +78,7 @@ export async function PATCH(request: NextRequest) {
       $set.resolutionStatus = "needs-manual-review";
     }
 
-    const updated = await ComplianceGapFinding.findOneAndUpdate({ gapId }, { $set }, { new: true }).lean();
+    const updated = await ComplianceGapFinding.findOneAndUpdate({ gapId }, { $set }, { returnDocument: 'after' }).lean();
 
     if (!updated) {
       return NextResponse.json({ success: false, error: "Finding not found" }, { status: 404 });

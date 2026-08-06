@@ -123,7 +123,7 @@ async function buildSopList() {
     ExamSettings.findOneAndUpdate(
       { settingsKey: 'global' },
       { $setOnInsert: { settingsKey: 'global' } },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
     ).lean(),
     SopExamSettings.find({}).lean(),
     MCQBank.aggregate<{
@@ -363,7 +363,7 @@ export async function PATCH(req: NextRequest) {
     const saved = await SopExamSettings.findOneAndUpdate(
       { sopCode },
       { $set },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
     ).lean();
 
     invalidateLmsServerKeys(lmsServerKeys.adminSopExamSettings());

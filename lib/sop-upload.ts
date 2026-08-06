@@ -305,7 +305,7 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
         uploadedAt: new Date(),
         pipelineStatus: generateMcq ? "mcq_generating" : existing.pipelineStatus,
       },
-      { new: true },
+      { returnDocument: 'after' },
     );
   } else {
     sop = await SOP.create({

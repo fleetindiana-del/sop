@@ -375,7 +375,7 @@ export async function POST(request: NextRequest) {
           guidelineIds,
           runAt: new Date(),
         },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
       );
     } catch (saveErr) {
       console.warn("sop-guideline-review: could not persist result:", saveErr);

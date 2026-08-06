@@ -26,7 +26,7 @@ export async function GET() {
         const settings = await ExamSettings.findOneAndUpdate(
           { settingsKey: 'global' },
           { $setOnInsert: { settingsKey: 'global' } },
-          { upsert: true, new: true, setDefaultsOnInsert: true },
+          { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
         ).lean();
         return { settings };
       },
@@ -62,7 +62,7 @@ export async function PATCH(req: NextRequest) {
     const settings = await ExamSettings.findOneAndUpdate(
       { settingsKey: 'global' },
       { $set: update },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
     ).lean();
 
     invalidateLmsServerKeys(

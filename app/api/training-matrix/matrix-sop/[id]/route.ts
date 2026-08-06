@@ -24,7 +24,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const assignment = await MatrixSOPAssignment.findByIdAndUpdate(
       id,
       { $set: update },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!assignment) {
       return NextResponse.json({ error: 'Assignment not found' }, { status: 404 });

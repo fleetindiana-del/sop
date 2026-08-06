@@ -31,7 +31,7 @@ export async function PATCH(
       update.editedAt = new Date();
     }
 
-    const review = await MCQReview.findByIdAndUpdate(id, { $set: update }, { new: true });
+    const review = await MCQReview.findByIdAndUpdate(id, { $set: update }, { returnDocument: 'after' });
     if (!review) {
       return NextResponse.json({ success: false, error: "Review not found" }, { status: 404 });
     }

@@ -64,7 +64,7 @@ export async function resolveExamSettingsForSop(
     ExamSettings.findOneAndUpdate(
       { settingsKey: 'global' },
       { $setOnInsert: { settingsKey: 'global' } },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
     ).lean<IExamSettings>(),
     code
       ? SopExamSettings.findOne({ sopCode: code }).lean()

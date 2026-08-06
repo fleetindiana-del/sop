@@ -159,7 +159,7 @@ export async function PUT(req: NextRequest) {
     const entry = await MatrixEntryData.findByIdAndUpdate(
       id,
       { $set: update },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!entry) return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
 
@@ -183,7 +183,7 @@ export async function DELETE(req: NextRequest) {
     const entry = await MatrixEntryData.findByIdAndUpdate(
       id,
       { $set: { deletedAt: new Date(), deletedBy } },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!entry) return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
 

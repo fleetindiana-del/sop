@@ -20,7 +20,7 @@ export async function ensureDefaultAdmin() {
         designation: "Administrator",
       },
     },
-    { upsert: true, new: true, runValidators: true },
+    { upsert: true, returnDocument: 'after', runValidators: true },
   );
 
   if (!user?.passwordHash) {

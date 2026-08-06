@@ -36,7 +36,7 @@ try {
       lmsUsername: "login",
       lmsPasswordHash,
     },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
   console.log("OK: LMS demo login created/updated");
   console.log("DB:", mongoose.connection.db.databaseName);

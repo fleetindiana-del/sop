@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
           },
           $setOnInsert: { createdBy },
         },
-        { upsert: true, new: true },
+        { upsert: true, returnDocument: 'after' },
       );
       if (doc) created.push(serializeSchedule(doc.toObject()));
     }

@@ -203,7 +203,7 @@ export async function updateGapResolution(
   if (update.resolutionStatus) $set.resolutionStatus = update.resolutionStatus;
   if (update.proposedVerbiage) $set.proposedVerbiage = update.proposedVerbiage;
 
-  return ComplianceGapFinding.findOneAndUpdate({ gapId }, { $set }, { new: true }).lean();
+  return ComplianceGapFinding.findOneAndUpdate({ gapId }, { $set }, { returnDocument: 'after' }).lean();
 }
 
 export async function attachGapIdsToReportFindings(

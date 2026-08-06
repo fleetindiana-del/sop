@@ -53,7 +53,7 @@ try {
       department: "QA",
       designation: "Administrator",
     },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
   console.log("OK: Admin created/updated");
   console.log("DB:", mongoose.connection.db.databaseName);
