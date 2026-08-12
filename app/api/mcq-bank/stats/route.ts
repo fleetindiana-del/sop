@@ -26,12 +26,17 @@ export async function GET() {
     const mcqBankCol = db.collection("mcqbanks");
 
     // ── 1. Active SOP families — same source as the Main Dashboard ───────────
+    const allGrouped = await getGroupedRegistryRows();
     const grouped = filterByAssignedDepartments(
       auth.session.user.role,
       auth.session.user.department,
-      await getGroupedRegistryRows(),
+      allGrouped,
     );
     const sopFamilyMap = buildActiveSopFamilyMap(grouped);
+    // Obsolete reconciliation writes are GLOBAL, so they must be judged against the
+    // whole registry. Using the caller's department-scoped view would mark every
+    // other department's MCQ bank as an orphan (and hide Start Test in the LMS).
+    const allSopFamilyMap = buildActiveSopFamilyMap(allGrouped);
 
     // ── 2. Aggregate MCQBank data (non-obsolete banks only) ───────────────────
     const bankAgg = await mcqBankCol.aggregate([
@@ -96,7 +101,7 @@ export async function GET() {
     const markedObsoleteFamilies = aggregateMcqBanksByFamily(obsoleteBankAgg as never[]);
 
     const orphanMcqFamilies = findObsoleteMcqFamilies(sopFamilyMap, bankByIdentifier);
-    void reconcileMcqBankObsoleteFlags(new Set(sopFamilyMap.keys()), bankByIdentifier);
+    void reconcileMcqBankObsoleteFlags(new Set(allSopFamilyMap.keys()), bankByIdentifier);
 
     const obsoleteMcqFamilyMap = new Map<string, typeof orphanMcqFamilies[number]>();
     for (const fam of orphanMcqFamilies) obsoleteMcqFamilyMap.set(fam.famKey, fam);

@@ -8,6 +8,7 @@ import {
 } from '@/lib/lmsCache';
 import SOP from '@/models/SOP';
 import MCQBank from '@/models/MCQBank';
+import { sopFamilyIdentifierRegex } from '@/lib/sop-utils';
 
 function toArray(val: string | string[] | undefined | null): string[] {
   if (!val) return [];
@@ -133,16 +134,21 @@ function sopMatchesCode(sop: SopLean, code: string): boolean {
   return id === codeUpper || baseId === codeUpper || id.startsWith(codeUpper);
 }
 
+/**
+ * Usable question count per language — must mirror `fetchQuestions` in
+ * /api/lms/quiz exactly (same family regex, same isSimilar exclusion), or the
+ * Start Test button appears for a bank the exam then serves 0 questions from.
+ */
 function mcqCountForCode(
   code: string,
-  bankDocs: Array<{ sopIdentifier?: string; totalQuestions?: number; language?: string }>,
+  bankDocs: Array<{ sopIdentifier?: string; usableQuestions?: number; language?: string }>,
   language: 'English' | 'Gujarati',
 ): number {
-  const re = new RegExp(`^${escapeRegex(code)}`, 'i');
+  const re = sopFamilyIdentifierRegex(code);
   let total = 0;
   for (const bank of bankDocs) {
     if ((bank.language || 'English') !== language) continue;
-    if (re.test(String(bank.sopIdentifier || ''))) total += bank.totalQuestions || 0;
+    if (re.test(String(bank.sopIdentifier || ''))) total += bank.usableQuestions || 0;
   }
   return total;
 }
@@ -175,15 +181,35 @@ export async function getJourneyContentBatch(
     SOP.find({ isObsolete: { $ne: true }, $or: sopOr })
       .select('name identifier sopBaseId department fileUrl fileType language mediaLinks versionNum uploadedAt')
       .lean<SopLean[]>(),
-    MCQBank.find({
-      isObsolete: { $ne: true },
-      language: { $in: ['English', 'Gujarati'] },
-      $or: missing.map((code) => ({
-        sopIdentifier: { $regex: new RegExp(`^${escapeRegex(code)}`, 'i') },
-      })),
-    })
-      .select('sopIdentifier totalQuestions language')
-      .lean<Array<{ sopIdentifier?: string; totalQuestions?: number; language?: string }>>(),
+    // Count non-similar questions server-side so the (large) mcqs arrays never
+    // cross the wire — one aggregate for every requested code.
+    MCQBank.aggregate<{ sopIdentifier?: string; usableQuestions?: number; language?: string }>([
+      {
+        $match: {
+          isObsolete: { $ne: true },
+          language: { $in: ['English', 'Gujarati'] },
+          $or: missing.map((code) => ({
+            sopIdentifier: { $regex: sopFamilyIdentifierRegex(code) },
+          })),
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          sopIdentifier: 1,
+          language: 1,
+          usableQuestions: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ['$mcqs', []] },
+                as: 'q',
+                cond: { $ne: ['$$q.isSimilar', true] },
+              },
+            },
+          },
+        },
+      },
+    ]),
   ]);
 
   for (const code of missing) {

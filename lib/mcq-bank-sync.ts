@@ -54,6 +54,10 @@ export async function reconcileMcqBankObsoleteFlags(
   activeFamilyKeys: Set<string>,
   mcqFamilies: Map<string, AggregatedMcqFamily>,
 ): Promise<{ marked: number; identifiers: string[] }> {
+  // Never reconcile against an empty or partial universe — a caller passing a
+  // department-scoped (or unloaded) registry would obsolete every other bank and
+  // silently remove the LMS exam for those SOPs.
+  if (activeFamilyKeys.size === 0) return { marked: 0, identifiers: [] };
   const orphan = [...mcqFamilies.values()].filter((f) => !activeFamilyKeys.has(f.famKey));
   return syncOrphanMcqBanks(orphan);
 }
