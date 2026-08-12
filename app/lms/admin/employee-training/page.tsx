@@ -43,6 +43,8 @@ interface SopBreakdown {
   sopNameGujarati?: string;
   status: SopStatus;
   months: number[];
+  year?: number;
+  scheduleStatus?: 'ignored' | 'upcoming' | 'due' | 'overdue' | 'missed';
   hasExam: boolean;
   components: Record<ComponentKey, ComponentStatus>;
 }
@@ -57,9 +59,12 @@ interface EmployeeTrainingRecord {
   designation: string;
   department: string;
   isActive: boolean;
+  isTrainer?: boolean;
   totalSops: number;
   completedSops: number;
   notCompletedSops: number;
+  missedSops?: number;
+  ignoredSops?: number;
   overallPct: number;
   monthlyCounts: number[];
   monthlyBreakdown?: MonthBreakdown[];
@@ -401,6 +406,21 @@ export default function EmployeeTrainingDashboardPage() {
   const [sopFilter, setSopFilter] = useState<'all' | SopStatus>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('employee');
   const [sopDrill, setSopDrill] = useState<SopGridDrill | null>(null);
+  const [monthFilter, setMonthFilter] = useState<number | 'all'>('all');
+  const [learnerFilter, setLearnerFilter] = useState<'all' | 'employees' | 'pending' | 'missed'>('all');
+  const [monthExamCounts, setMonthExamCounts] = useState<number[]>(() => Array(12).fill(0));
+  const [cycleStart, setCycleStart] = useState<string>('');
+  const [rescheduleTarget, setRescheduleTarget] = useState<{
+    employeeId: string;
+    employeeName: string;
+    department: string;
+    sopCode: string;
+    sopName: string;
+    fromMonth: number;
+    fromYear: number;
+  } | null>(null);
+  const [rescheduleToMonth, setRescheduleToMonth] = useState(new Date().getMonth() + 1);
+  const [rescheduleBusy, setRescheduleBusy] = useState(false);
 
   useEffect(() => {
     if (authStatus === 'unauthenticated') router.push('/login');
@@ -423,6 +443,8 @@ export default function EmployeeTrainingDashboardPage() {
         const json = await trainingRes.json();
         const recs = json.records || [];
         setRecords(recs);
+        setMonthExamCounts(Array.isArray(json.monthExamCounts) ? json.monthExamCounts : Array(12).fill(0));
+        if (json.trainingCycleStart) setCycleStart(String(json.trainingCycleStart));
         writeLmsClientCache(field, { records: recs });
       }
     } finally {
@@ -447,6 +469,13 @@ export default function EmployeeTrainingDashboardPage() {
     return records
       .filter((r) => {
         if (dept !== 'All' && (r.department || 'Unknown') !== dept) return false;
+        if (learnerFilter === 'employees' && r.isTrainer) return false;
+        if (learnerFilter === 'pending' && (r.isTrainer || r.notCompletedSops <= 0)) return false;
+        if (learnerFilter === 'missed' && (r.isTrainer || (r.missedSops ?? 0) <= 0)) return false;
+        if (monthFilter !== 'all') {
+          const hasMonth = r.sops.some((s) => s.months.includes(monthFilter));
+          if (!hasMonth) return false;
+        }
         if (q && !`${r.employeeName} ${r.designation} ${r.department}`.toLowerCase().includes(q)) return false;
         if (!matchesEmpFilter(r, empFilter)) return false;
         return true;
@@ -465,19 +494,68 @@ export default function EmployeeTrainingDashboardPage() {
         sops:             r.sops,
         trainingLoaded:   true,
       }));
-  }, [records, dept, search, empFilter]);
+  }, [records, dept, search, empFilter, monthFilter, learnerFilter]);
 
   const trainingSopRows = useMemo(() => buildSopTrainingRows(records, 'All'), [records]);
 
-  const sopRows = useMemo((): SopGridRow[] => {
+  const sopRows = useMemo((): SopTrainingRow[] => {
     const q = search.trim().toLowerCase();
     return buildRegistrySopRows(registry, trainingSopRows, dept).filter((row) => {
       if (sopFilter !== 'all' && sopRowStatus(row) !== sopFilter) return false;
+      if (monthFilter !== 'all' && !row.months.includes(monthFilter)) return false;
       if (!q) return true;
       const hay = `${row.sopName} ${row.sopNameGujarati || ''} ${row.sopCode} ${row.department}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [registry, trainingSopRows, dept, search, sopFilter]);
+  }, [registry, trainingSopRows, dept, search, sopFilter, monthFilter]);
+
+  const employeeOptions = useMemo(() => {
+    const scoped = records.filter((r) => {
+      if (r.isTrainer) return false;
+      if (dept !== 'All' && (r.department || 'Unknown') !== dept) return false;
+      return true;
+    });
+    return scoped
+      .map((r) => ({
+        id: r.employeeId,
+        name: r.employeeName,
+        pending: r.notCompletedSops,
+        missed: r.missedSops ?? 0,
+        department: r.department,
+      }))
+      .sort((a, b) => b.pending - a.pending || a.name.localeCompare(b.name));
+  }, [records, dept]);
+
+  const missedInScope = useMemo(() => {
+    const out: Array<{
+      employeeId: string;
+      employeeName: string;
+      department: string;
+      sopCode: string;
+      sopName: string;
+      fromMonth: number;
+      fromYear: number;
+    }> = [];
+    for (const r of records) {
+      if (dept !== 'All' && (r.department || 'Unknown') !== dept) continue;
+      if (r.isTrainer) continue;
+      for (const s of r.sops) {
+        if (s.status === 'completed') continue;
+        if (s.scheduleStatus !== 'missed' && s.scheduleStatus !== 'overdue') continue;
+        if (monthFilter !== 'all' && !s.months.includes(monthFilter)) continue;
+        out.push({
+          employeeId: r.employeeId,
+          employeeName: r.employeeName,
+          department: r.department,
+          sopCode: s.sopCode,
+          sopName: s.sopName,
+          fromMonth: s.months[0] ?? 1,
+          fromYear: s.year ?? new Date().getFullYear(),
+        });
+      }
+    }
+    return out;
+  }, [records, dept, monthFilter]);
 
   // Employee metrics from training records; SOP totals from the dashboard registry
   // (/api/sops/stats + /api/sops?all=1 — same source as the main SOP dashboard).
@@ -624,9 +702,16 @@ export default function EmployeeTrainingDashboardPage() {
             <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
           </div>
 
-          {(!isDefaultEmpFilter(empFilter) || sopFilter !== 'all' || search || dept !== 'All') && (
+          {(!isDefaultEmpFilter(empFilter) || sopFilter !== 'all' || search || dept !== 'All' || monthFilter !== 'all' || learnerFilter !== 'all') && (
             <button
-              onClick={() => { setEmpFilter(DEFAULT_EMP_FILTER); setSopFilter('all'); setSearch(''); setDept('All'); }}
+              onClick={() => {
+                setEmpFilter(DEFAULT_EMP_FILTER);
+                setSopFilter('all');
+                setSearch('');
+                setDept('All');
+                setMonthFilter('all');
+                setLearnerFilter('all');
+              }}
               className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-800"
             >
               <X className="h-3.5 w-3.5" /> Clear filters
@@ -637,8 +722,143 @@ export default function EmployeeTrainingDashboardPage() {
             {viewMode === 'employee'
               ? `${gridRows.length} employee${gridRows.length !== 1 ? 's' : ''}`
               : `${sopRows.length} SOP${sopRows.length !== 1 ? 's' : ''}`}
+            {cycleStart ? ` · Cycle from ${cycleStart}` : ''}
           </span>
         </div>
+
+        {/* Month filter — shows scheduled exam counts */}
+        <div className="rounded-xl border border-gray-200 bg-white p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Month filter</p>
+            <p className="text-[10px] text-gray-400">SOP exams scheduled per month</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => setMonthFilter('all')}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                monthFilter === 'all' ? 'bg-purple-600 text-white' : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              All months
+            </button>
+            {MONTHS_FULL.map((name, idx) => {
+              const month = idx + 1;
+              const count = monthExamCounts[idx] ?? 0;
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() => setMonthFilter((prev) => (prev === month ? 'all' : month))}
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                    monthFilter === month
+                      ? 'bg-indigo-600 text-white'
+                      : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                  }`}
+                  title={`${count} SOP exam${count !== 1 ? 's' : ''} scheduled in ${name}`}
+                >
+                  {name.slice(0, 3)}
+                  <span className={`ml-1 ${monthFilter === month ? 'opacity-80' : 'text-gray-400'}`}>{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Employee filter — non-trainers with pending / missed counts */}
+        <div className="rounded-xl border border-gray-200 bg-white p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Employee filter</p>
+            <div className="flex flex-wrap gap-1">
+              {([
+                { id: 'all', label: 'All' },
+                { id: 'employees', label: 'Employees only' },
+                { id: 'pending', label: 'Pending exams' },
+                { id: 'missed', label: 'Missed exams' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setLearnerFilter(opt.id)}
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                    learnerFilter === opt.id
+                      ? opt.id === 'missed'
+                        ? 'bg-red-600 text-white'
+                        : 'bg-purple-600 text-white'
+                      : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+            {employeeOptions.length === 0 ? (
+              <p className="text-xs text-gray-400">No non-trainer employees in this department scope.</p>
+            ) : (
+              employeeOptions.slice(0, 40).map((e) => (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={() => {
+                    setLearnerFilter('employees');
+                    setViewMode('employee');
+                    setSearch(e.name);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-medium text-gray-700 hover:border-purple-300 hover:bg-purple-50"
+                  title={`${e.pending} pending · ${e.missed} missed`}
+                >
+                  <span className="truncate max-w-[10rem]">{e.name}</span>
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{e.pending}</span>
+                  {e.missed > 0 && (
+                    <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{e.missed}</span>
+                  )}
+                </button>
+              ))
+            )}
+            {employeeOptions.length > 40 && (
+              <span className="self-center text-[10px] text-gray-400">+{employeeOptions.length - 40} more — use search</span>
+            )}
+          </div>
+        </div>
+
+        {/* Missed exams — review + reschedule */}
+        {missedInScope.length > 0 && (
+          <div className="rounded-xl border border-red-200 bg-red-50/40 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-red-700">
+                Missed SOP exams ({missedInScope.length})
+              </p>
+              <p className="text-[10px] text-red-600/80">Reschedule moves the exam to another month without keeping the original month overdue</p>
+            </div>
+            <div className="max-h-48 space-y-1 overflow-y-auto">
+              {missedInScope.slice(0, 50).map((m) => (
+                <div
+                  key={`${m.employeeId}-${m.sopCode}-${m.fromMonth}-${m.fromYear}`}
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-red-100 bg-white px-3 py-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-gray-800">{m.employeeName}</p>
+                    <p className="truncate text-[11px] text-gray-500">
+                      {m.sopCode} — {m.sopName} · {MONTHS_FULL[m.fromMonth - 1]} {m.fromYear}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRescheduleTarget(m);
+                      setRescheduleToMonth(Math.min(12, Math.max(1, m.fromMonth + 1)));
+                    }}
+                    className="rounded-md bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-indigo-700"
+                  >
+                    Reschedule
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {viewMode === 'employee' ? (
           <div className="flex min-h-[calc(100vh-16rem)] flex-col">
@@ -662,6 +882,75 @@ export default function EmployeeTrainingDashboardPage() {
 
       {sopDrill && (
         <SopDrillDownModal drill={sopDrill} records={records} dept={dept} onClose={() => setSopDrill(null)} />
+      )}
+
+      {rescheduleTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !rescheduleBusy && setRescheduleTarget(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-sm font-bold text-gray-900">Reschedule missed SOP exam</h2>
+            <p className="mt-1 text-xs text-gray-500">
+              {rescheduleTarget.employeeName} · {rescheduleTarget.sopCode}
+            </p>
+            <p className="mt-2 text-xs text-gray-600">
+              From <strong>{MONTHS_FULL[rescheduleTarget.fromMonth - 1]} {rescheduleTarget.fromYear}</strong> to:
+            </p>
+            <select
+              value={rescheduleToMonth}
+              onChange={(e) => setRescheduleToMonth(Number(e.target.value))}
+              className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
+            >
+              {MONTHS_FULL.map((name, idx) => (
+                <option key={name} value={idx + 1} disabled={idx + 1 === rescheduleTarget.fromMonth}>
+                  {name} {rescheduleTarget.fromYear}
+                </option>
+              ))}
+            </select>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={rescheduleBusy}
+                onClick={() => setRescheduleTarget(null)}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={rescheduleBusy || rescheduleToMonth === rescheduleTarget.fromMonth}
+                onClick={async () => {
+                  setRescheduleBusy(true);
+                  try {
+                    const res = await fetch('/api/lms/reschedule', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        department: rescheduleTarget.department,
+                        sopCode: rescheduleTarget.sopCode,
+                        employeeId: rescheduleTarget.employeeId,
+                        employeeName: rescheduleTarget.employeeName,
+                        fromMonth: rescheduleTarget.fromMonth,
+                        fromYear: rescheduleTarget.fromYear,
+                        toMonth: rescheduleToMonth,
+                        toYear: rescheduleTarget.fromYear,
+                      }),
+                    });
+                    const json = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(json.error || 'Reschedule failed');
+                    setRescheduleTarget(null);
+                    await load(true);
+                  } catch (err) {
+                    window.alert(err instanceof Error ? err.message : 'Reschedule failed');
+                  } finally {
+                    setRescheduleBusy(false);
+                  }
+                }}
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {rescheduleBusy ? 'Saving…' : 'Save reschedule'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

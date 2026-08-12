@@ -5,7 +5,7 @@ import MCQGenJob from "@/models/MCQGenJob";
 
 /** In-flight MCQ generation jobs — used to resume UI polling after page reload. */
 export async function GET() {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {

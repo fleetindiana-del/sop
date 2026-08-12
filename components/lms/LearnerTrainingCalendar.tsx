@@ -6,6 +6,8 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import type { EventClickArg, EventInput } from '@fullcalendar/core';
 import { Calendar, X } from 'lucide-react';
 
+import { isOverdueInCycle } from '@/lib/lmsTrainingCycle';
+
 export interface LearnerCalendarAssignment {
   sopCode: string;
   sopName?: string;
@@ -50,10 +52,7 @@ function eventColors(
 }
 
 function isMonthOverdue(a: LearnerCalendarAssignment): boolean {
-  const now = new Date();
-  const start = new Date(a.year, a.month - 1, 1);
-  const current = new Date(now.getFullYear(), now.getMonth(), 1);
-  return start < current;
+  return isOverdueInCycle(a);
 }
 
 export default function LearnerTrainingCalendar({

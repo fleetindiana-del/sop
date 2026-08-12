@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
+import { forbidUnlessDepartmentAccess, requireAuth } from "@/lib/withAuth";
+import { mcqResolveDept } from "@/lib/mcq-bank-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +10,9 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const auth = await requireAuth(["admin", "trainer", "viewer"]);
+  if (auth.error) return auth.error;
+
   try {
     await connectDB();
     const { id } = await params;
@@ -28,6 +33,13 @@ export async function GET(
     if (!mcqBank) {
       return NextResponse.json({ success: false, error: "Bank not found" }, { status: 404 });
     }
+
+    const denied = forbidUnlessDepartmentAccess(
+      auth.session.user.role,
+      auth.session.user.department,
+      mcqResolveDept(String(mcqBank.sopIdentifier ?? ""), String(mcqBank.department ?? "")),
+    );
+    if (denied) return denied;
 
     if (Array.isArray(mcqBank.mcqs)) {
       mcqBank.totalQuestions = mcqBank.mcqs.length;

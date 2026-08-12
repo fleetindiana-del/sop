@@ -12,6 +12,7 @@ import {
   Plus,
   RefreshCw,
   Shield,
+  ShieldCheck,
   Trash2,
   UserPlus,
   Users,
@@ -239,6 +240,12 @@ export default function AdminUsersPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Link
+              href="/admin/access"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              <ShieldCheck className="h-3.5 w-3.5" /> Access Management
+            </Link>
             <button
               type="button"
               onClick={() => void load()}

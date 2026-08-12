@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
-import { requireAuth } from "@/lib/withAuth";
+import { requireAuth, forbidUnlessDepartmentAccess } from "@/lib/withAuth";
 import SOP from "@/models/SOP";
 import { sopFamilyGroupKey, resolveSopVersion, versionFromIdentifier } from "@/lib/sop-utils";
 import { normalizeMcqDifficulty } from "@/lib/mcq-bank-write";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
+import { mcqResolveDept } from "@/lib/mcq-bank-utils";
 
 const langCodeOf = (language: unknown): "EN" | "GU" =>
   String(language ?? "").toLowerCase() === "gujarati" ? "GU" : "EN";
@@ -31,6 +32,17 @@ export async function GET(request: NextRequest) {
     const bank = await col.findOne({ _id: new mongoose.Types.ObjectId(id) });
 
     if (!bank) return NextResponse.json({ error: "Bank not found" }, { status: 404 });
+
+    const bankDept = mcqResolveDept(
+      String(bank.sopIdentifier ?? ""),
+      String(bank.department ?? ""),
+    );
+    const denied = forbidUnlessDepartmentAccess(
+      auth.session.user.role,
+      auth.session.user.department,
+      bankDept,
+    );
+    if (denied) return denied;
 
     // Fix stale totalQuestions
     if (Array.isArray(bank.mcqs)) {

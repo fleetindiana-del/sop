@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
-import { requireAuth } from "@/lib/withAuth";
+import { requireAuth, filterByAssignedDepartments } from "@/lib/withAuth";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
 import { sopFamilyGroupKey } from "@/lib/sop-utils";
 import {
@@ -319,13 +319,29 @@ export async function GET(request: NextRequest) {
 
     if (all) {
       const { active, obsolete } = await buildFullRegistry();
-      return NextResponse.json({ active, obsolete });
+      return NextResponse.json({
+        active: filterByAssignedDepartments(
+          auth.session.user.role,
+          auth.session.user.department,
+          active,
+        ),
+        obsolete: filterByAssignedDepartments(
+          auth.session.user.role,
+          auth.session.user.department,
+          obsolete,
+        ),
+      });
     }
 
     // Legacy paginated path — kept for compatibility; prefer all=1 from the client.
     const { active, obsolete } = await buildFullRegistry();
     const obsoleteOnly = searchParams.get("obsoleteOnly") === "true";
     let entries = obsoleteOnly ? obsolete : active;
+    entries = filterByAssignedDepartments(
+      auth.session.user.role,
+      auth.session.user.department,
+      entries,
+    );
     const total = entries.length;
     return NextResponse.json({ items: entries, total, page: 1, limit: total, obsoleteOnly });
   } catch (error) {

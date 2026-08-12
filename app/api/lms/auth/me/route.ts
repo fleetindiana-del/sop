@@ -10,6 +10,8 @@ import {
   lmsServerTtl,
 } from '@/lib/lmsCache';
 import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTrainingIgnore';
+import { applyReschedulesToList, listTrainingReschedules } from '@/lib/lmsTrainingReschedule';
+import { formatCycleStart, getTrainingCycleStart } from '@/lib/lmsTrainingCycle';
 import Employee from '@/models/Employee';
 
 export const runtime = 'nodejs';
@@ -37,9 +39,17 @@ export async function GET() {
         const assignmentsMap = await getEmployeeAssignmentsMap();
         const key = `${employee.department}||${employee.name}`.trim().toLowerCase();
         const raw = assignmentsMap.get(key) || [];
-        const ignoreRules = await listTrainingIgnores(employee.department);
-        const assignments = filterIgnoredAssignments(raw, ignoreRules, employee.department);
+        const [ignoreRules, rescheduleRules] = await Promise.all([
+          listTrainingIgnores(employee.department),
+          listTrainingReschedules(employee.department),
+        ]);
+        const notExplicitlyIgnored = filterIgnoredAssignments(raw, ignoreRules, employee.department);
+        const assignments = applyReschedulesToList(notExplicitlyIgnored, rescheduleRules, {
+          employeeId: String(employee._id),
+          employeeDepartment: employee.department,
+        });
 
+        const cycle = getTrainingCycleStart();
         return {
           employee: {
             id: String(employee._id),
@@ -48,6 +58,7 @@ export async function GET() {
             department: employee.department,
           },
           assignments,
+          trainingCycleStart: formatCycleStart(cycle),
         };
       },
     );

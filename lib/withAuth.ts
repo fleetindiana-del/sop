@@ -2,6 +2,14 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions, type AppRole } from "@/lib/auth";
+import {
+  canAccessDepartment,
+  filterByAssignedDepartments,
+  forbidUnlessDepartmentAccess,
+  isDeptScopedRole,
+  parseAssignedDepartments,
+} from "@/lib/access-control";
+import { canMutate as canMutateRole, isAdmin as isAdminRole } from "@/lib/roles";
 
 type RouteHandler = (
   req: NextRequest,
@@ -28,9 +36,17 @@ export function withAuth(handler: RouteHandler, allowedRoles?: AppRole[]): Route
 }
 
 export function canMutate(role: AppRole) {
-  return role === "admin" || role === "trainer";
+  return canMutateRole(role);
 }
 
 export function isAdmin(role: AppRole) {
-  return role === "admin";
+  return isAdminRole(role);
 }
+
+export {
+  canAccessDepartment,
+  filterByAssignedDepartments,
+  forbidUnlessDepartmentAccess,
+  isDeptScopedRole,
+  parseAssignedDepartments,
+};

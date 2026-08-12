@@ -19,6 +19,7 @@ function toPublicUser(user: IUser) {
     role: user.role,
     department: user.department ?? "",
     designation: user.designation ?? "",
+    pageAccess: Array.isArray(user.pageAccess) ? user.pageAccess : null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };

@@ -635,6 +635,7 @@ export default function FindingCard({
 
   return (
     <div
+      data-finding-card
       className={`rounded-2xl border-l-4 overflow-hidden bg-white shadow-sm transition-all ${levelBorder} ${
         isSelected ? 'ring-2 ring-purple-400 border-purple-200' : 'border border-gray-200'
       }`}
@@ -659,6 +660,7 @@ export default function FindingCard({
       >
         {showCheckbox && index !== undefined && onToggleSelect && (
           <input
+            data-pdf-hide
             type="checkbox"
             checked={isSelected ?? false}
             onClick={(e) => e.stopPropagation()}
@@ -759,7 +761,7 @@ export default function FindingCard({
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div data-pdf-hide className="flex items-center gap-1.5 shrink-0">
           {isActionable && onToggleApplicable && (
             <label
               className="flex items-center gap-1 cursor-pointer select-none pointer-events-auto"
@@ -962,7 +964,7 @@ export default function FindingCard({
                     <div className="mt-0.5 rounded border border-emerald-300 bg-white px-1.5 py-1 flex flex-col flex-1 min-h-0">
                       <div className="flex flex-wrap items-center justify-between gap-0.5 mb-0.5 shrink-0">
                         <p className="text-[9px] font-black text-emerald-800 uppercase">Proposed</p>
-                        <div className="flex flex-wrap items-center gap-1">
+                        <div data-pdf-hide className="flex flex-wrap items-center gap-1">
                           {rewriting ? (
                             <>
                               <button
@@ -1092,7 +1094,7 @@ export default function FindingCard({
                     <p className="text-xs font-medium text-gray-900 leading-snug mt-0.5 flex-1 border-l-2 border-indigo-400 pl-1.5 bg-white/60 rounded-r whitespace-pre-wrap">
                       {displayGuidelinePoint}
                     </p>
-                    <div className="flex flex-wrap items-center gap-1 mt-1 shrink-0">
+                    <div data-pdf-hide className="flex flex-wrap items-center gap-1 mt-1 shrink-0">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -1210,6 +1212,7 @@ export default function FindingCard({
               {(['pending', 'accepted', 'disputed', 'implemented'] as const).map((s) => (
                 <button
                   key={s}
+                  data-pdf-hide
                   type="button"
                   onClick={() => onReviewStatusChange(id, s)}
                   className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all capitalize ${
@@ -1221,6 +1224,14 @@ export default function FindingCard({
                   {s}
                 </button>
               ))}
+              {finding.reviewStatus && (
+                <span
+                  data-pdf-show
+                  className="hidden px-2 py-0.5 rounded text-[9px] font-bold border bg-purple-600 text-white border-purple-500 capitalize"
+                >
+                  {finding.reviewStatus}
+                </span>
+              )}
             </div>
           )}
         </div>

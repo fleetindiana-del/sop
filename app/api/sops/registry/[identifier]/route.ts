@@ -13,7 +13,7 @@ import {
 import { clearImportStateAfterPermanentDelete } from "@/lib/sop-files-import";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { markMcqBanksObsoleteForIdentifier, reviveMcqBanksForIdentifier } from "@/lib/mcq-bank-sync";
-import { requireAuth } from "@/lib/withAuth";
+import { forbidUnlessDepartmentAccess, requireAuth } from "@/lib/withAuth";
 
 type RouteContext = { params: Promise<{ identifier: string }> };
 
@@ -38,6 +38,12 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     if (!group.length) {
       return NextResponse.json({ error: "SOP not found" }, { status: 404 });
     }
+    const denied = forbidUnlessDepartmentAccess(
+      auth.session.user.role,
+      auth.session.user.department,
+      group[0].department,
+    );
+    if (denied) return denied;
     return NextResponse.json(buildEditFormData(group));
   } catch (error) {
     return NextResponse.json(
@@ -48,7 +54,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {
@@ -80,7 +86,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
 // Revive an obsolete SOP family — move it back to the active registry.
 export async function POST(_request: NextRequest, context: RouteContext) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {
@@ -103,7 +109,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   // `?permanent=1` removes the family outright; otherwise it is merely marked

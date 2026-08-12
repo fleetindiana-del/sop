@@ -6,7 +6,7 @@ import { findMcqGenJob, updateMcqGenJob } from "@/lib/mcq-gen-job-store";
 // client while a row is generating. Returns 404 when no run has been started for
 // the identifier (the client treats that as "idle").
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {

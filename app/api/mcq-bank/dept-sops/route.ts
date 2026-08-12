@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import SOP from "@/models/SOP";
 import User from "@/models/User";
-import { requireAuth } from "@/lib/withAuth";
+import { requireAuth, forbidUnlessDepartmentAccess } from "@/lib/withAuth";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
 import { sopFamilyGroupKey } from "@/lib/sop-utils";
 import {
@@ -46,6 +46,13 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const dept = searchParams.get("dept");
     if (!dept) return NextResponse.json({ error: "dept required" }, { status: 400 });
+
+    const denied = forbidUnlessDepartmentAccess(
+      auth.session.user.role,
+      auth.session.user.department,
+      dept,
+    );
+    if (denied) return denied;
 
     const mcqBankCol = db.collection("mcqbanks");
 

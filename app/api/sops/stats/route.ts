@@ -4,7 +4,12 @@ import Department from "@/models/Department";
 import { buildDashboardStats, sortByDeptOrder } from "@/lib/sop-utils";
 import { loadGroupedRegistry } from "@/lib/dashboardRegistrySource";
 import { isDashboardDepartmentName } from "@/lib/dashboardDepartments";
-import { requireAuth } from "@/lib/withAuth";
+import {
+  filterByAssignedDepartments,
+  isDeptScopedRole,
+  requireAuth,
+} from "@/lib/withAuth";
+import { parseAssignedDepartments } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -15,10 +20,22 @@ export async function GET() {
   try {
     await connectDB();
 
-    const registry = await loadGroupedRegistry();
+    const role = auth.session.user.role;
+    const userDepartment = auth.session.user.department;
+    const registry = filterByAssignedDepartments(
+      role,
+      userDepartment,
+      await loadGroupedRegistry(),
+    );
 
     // Fetch persisted department names (empty departments created via the UI)
-    const persistedDepts = (await Department.distinct("name")) as string[];
+    let persistedDepts = (await Department.distinct("name")) as string[];
+    if (isDeptScopedRole(role)) {
+      const assigned = parseAssignedDepartments(userDepartment);
+      persistedDepts = persistedDepts.filter((name) =>
+        assigned.some((d) => d.toLowerCase() === name.toLowerCase()),
+      );
+    }
 
     const stats = buildDashboardStats(registry, persistedDepts);
 

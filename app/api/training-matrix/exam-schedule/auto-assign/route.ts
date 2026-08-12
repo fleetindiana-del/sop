@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic';
 // Body: { year: number, month?: number, createdBy?: string }
 export async function POST(req: NextRequest) {
   try {
-    const auth = await requireAuth(['admin', 'trainer']);
+    const auth = await requireAuth(['admin']);
     if (auth.error) return auth.error;
 
     await connectDB();

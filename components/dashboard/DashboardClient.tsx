@@ -20,7 +20,7 @@ import {
 } from "@/lib/sop-utils";
 import { exportSopsToExcel } from "@/lib/export-missing";
 import { displaySopCode } from "@/lib/sop-display";
-import { canMutate, isAdmin } from "@/lib/roles";
+import { canMutate, hasFullDashboardAccess, isAdmin } from "@/lib/roles";
 import type { AppRole } from "@/lib/auth";
 import { DashboardHeader } from "./DashboardHeader";
 import { DashboardToolbar } from "./DashboardToolbar";
@@ -43,10 +43,14 @@ import GuidelinesResultPanel, { type ComplianceResult } from "./GuidelinesResult
 import ComplianceFullViewer from "./ComplianceFullViewer";
 
 export function DashboardClient() {
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const role = (session?.user?.role ?? "viewer") as AppRole;
   const userCanMutate = canMutate(role);
   const userIsAdmin = isAdmin(role);
+  const fullDashboard = hasFullDashboardAccess(role);
+  const cacheScope = `${role}:${session?.user?.department ?? ""}`;
+  const scopedSopCacheKey = `${DASHBOARD_CACHE_KEY}:${cacheScope}`;
+  const scopedStatsCacheKey = `${DASHBOARD_STATS_CACHE_KEY}:${cacheScope}`;
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [departmentList, setDepartmentList] = useState<string[]>([]);
 
@@ -126,6 +130,7 @@ export function DashboardClient() {
   );
 
   useEffect(() => {
+    if (!fullDashboard) return;
     if (!guidelinesWizardOpen && !prefetchedGuidelines) {
       fetch("/api/guidelines/upload?summary=true")
         .then((r) => r.json())
@@ -134,9 +139,10 @@ export function DashboardClient() {
         })
         .catch(() => {});
     }
-  }, [guidelinesWizardOpen, prefetchedGuidelines]);
+  }, [guidelinesWizardOpen, prefetchedGuidelines, fullDashboard]);
 
   useEffect(() => {
+    if (!fullDashboard) return;
     fetch("/api/dashboard/sop-guideline-review?listAll=true", { cache: "no-store" })
       .then((r) => r.json())
       .then((json) => {
@@ -157,7 +163,7 @@ export function DashboardClient() {
         setComplianceCache((prev) => ({ ...cache, ...prev }));
       })
       .catch(() => {});
-  }, []);
+  }, [fullDashboard]);
 
   const {
     filters,
@@ -193,7 +199,7 @@ export function DashboardClient() {
 
   const fetchStats = useCallback(async () => {
     const cached = readClientCache<DashboardStats & { departmentList?: string[] }>(
-      DASHBOARD_STATS_CACHE_KEY,
+      scopedStatsCacheKey,
       "stats",
     );
     try {
@@ -213,7 +219,7 @@ export function DashboardClient() {
       const data = await res.json();
       setStats(data);
       setDepartmentList(data.departmentList ?? []);
-      writeClientCache(DASHBOARD_STATS_CACHE_KEY, "stats", data);
+      writeClientCache(scopedStatsCacheKey, "stats", data);
       setError(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load stats";
@@ -225,13 +231,13 @@ export function DashboardClient() {
         setError(msg);
       }
     }
-  }, []);
+  }, [scopedStatsCacheKey]);
 
   const fetchSops = useCallback(async () => {
     setError(null);
     // Stale-while-revalidate: paint the cached registry instantly, then refetch
     // the full set once in the background. All filtering happens client-side.
-    const cached = readClientCache<RegistrySOP[]>(DASHBOARD_CACHE_KEY, "all");
+    const cached = readClientCache<RegistrySOP[]>(scopedSopCacheKey, "all");
     if (cached) {
       setAllItems(cached.map(normalizeRegistrySop));
       setLoading(false);
@@ -247,7 +253,7 @@ export function DashboardClient() {
       const data = await res.json();
       const items = (data.items as RegistrySOP[]).map(normalizeRegistrySop);
       setAllItems(items);
-      writeClientCache(DASHBOARD_CACHE_KEY, "all", items);
+      writeClientCache(scopedSopCacheKey, "all", items);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
       if (!cached) {
@@ -256,7 +262,7 @@ export function DashboardClient() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [scopedSopCacheKey]);
 
   const refresh = useCallback(async () => {
     bustDashboardCache();
@@ -291,7 +297,7 @@ export function DashboardClient() {
         const t2 = performance.now();
         setStats(data);
         setDepartmentList(data.departmentList ?? []);
-        writeClientCache(DASHBOARD_STATS_CACHE_KEY, "stats", data);
+        writeClientCache(scopedStatsCacheKey, "stats", data);
         timings.push({ api: "/api/sops/stats", fetchMs: Math.round(t1 - t0), parseMs: Math.round(t2 - t1), totalMs: Math.round(t2 - t0), status: "ok" });
         console.log(`[Hard Refresh] /api/sops/stats  →  ${Math.round(t2 - t0)}ms  (fetch ${Math.round(t1 - t0)}ms + parse ${Math.round(t2 - t1)}ms)`);
       } catch (e) {
@@ -314,7 +320,7 @@ export function DashboardClient() {
         const data = await res.json();
         const t2 = performance.now();
         setAllItems(data.items);
-        writeClientCache(DASHBOARD_CACHE_KEY, "all", data.items);
+        writeClientCache(scopedSopCacheKey, "all", data.items);
         timings.push({ api: "/api/sops?all=1", fetchMs: Math.round(t1 - t0), parseMs: Math.round(t2 - t1), totalMs: Math.round(t2 - t0), status: "ok" });
         console.log(`[Hard Refresh] /api/sops?all=1   →  ${Math.round(t2 - t0)}ms  (fetch ${Math.round(t1 - t0)}ms + parse ${Math.round(t2 - t1)}ms)`);
       } catch (e) {
@@ -343,7 +349,7 @@ export function DashboardClient() {
       })),
     );
     console.groupEnd();
-  }, []);
+  }, [scopedSopCacheKey, scopedStatsCacheKey]);
 
   // Mark an SOP family obsolete with an instant, optimistic update: flip the
   // family's `isObsolete` flag locally so it leaves the active list and joins the
@@ -366,8 +372,8 @@ export function DashboardClient() {
 
       setAllItems(nextItems);
       setStats(nextStats);
-      writeClientCache(DASHBOARD_CACHE_KEY, "all", nextItems);
-      writeClientCache(DASHBOARD_STATS_CACHE_KEY, "stats", { ...nextStats, departmentList });
+      writeClientCache(scopedSopCacheKey, "all", nextItems);
+      writeClientCache(scopedStatsCacheKey, "stats", { ...nextStats, departmentList });
 
       try {
         const res = await fetch(
@@ -381,12 +387,12 @@ export function DashboardClient() {
       } catch (e) {
         setAllItems(prevItems);
         setStats(prevStats);
-        writeClientCache(DASHBOARD_CACHE_KEY, "all", prevItems);
-        writeClientCache(DASHBOARD_STATS_CACHE_KEY, "stats", prevStats);
+        writeClientCache(scopedSopCacheKey, "all", prevItems);
+        writeClientCache(scopedStatsCacheKey, "stats", prevStats);
         throw e;
       }
     },
-    [allItems, stats, departmentList],
+    [allItems, stats, departmentList, scopedSopCacheKey, scopedStatsCacheKey],
   );
 
   // Revive an obsolete SOP family: optimistically flip `isObsolete` back to false
@@ -408,8 +414,8 @@ export function DashboardClient() {
 
       setAllItems(nextItems);
       setStats(nextStats);
-      writeClientCache(DASHBOARD_CACHE_KEY, "all", nextItems);
-      writeClientCache(DASHBOARD_STATS_CACHE_KEY, "stats", { ...nextStats, departmentList });
+      writeClientCache(scopedSopCacheKey, "all", nextItems);
+      writeClientCache(scopedStatsCacheKey, "stats", { ...nextStats, departmentList });
 
       try {
         const res = await fetch(
@@ -423,12 +429,12 @@ export function DashboardClient() {
       } catch (e) {
         setAllItems(prevItems);
         setStats(prevStats);
-        writeClientCache(DASHBOARD_CACHE_KEY, "all", prevItems);
-        writeClientCache(DASHBOARD_STATS_CACHE_KEY, "stats", prevStats);
+        writeClientCache(scopedSopCacheKey, "all", prevItems);
+        writeClientCache(scopedStatsCacheKey, "stats", prevStats);
         throw e;
       }
     },
-    [allItems, stats, departmentList],
+    [allItems, stats, departmentList, scopedSopCacheKey, scopedStatsCacheKey],
   );
 
   // Permanently delete an SOP family. Unlike obsolete, this is irreversible, so
@@ -454,15 +460,16 @@ export function DashboardClient() {
 
       setAllItems(nextItems);
       setStats(nextStats);
-      writeClientCache(DASHBOARD_CACHE_KEY, "all", nextItems);
-      writeClientCache(DASHBOARD_STATS_CACHE_KEY, "stats", { ...nextStats, departmentList });
+      writeClientCache(scopedSopCacheKey, "all", nextItems);
+      writeClientCache(scopedStatsCacheKey, "stats", { ...nextStats, departmentList });
     },
-    [allItems, departmentList],
+    [allItems, departmentList, scopedSopCacheKey, scopedStatsCacheKey],
   );
 
   useEffect(() => {
+    if (sessionStatus !== "authenticated") return;
     const cachedStats = readClientCache<DashboardStats & { departmentList?: string[] }>(
-      DASHBOARD_STATS_CACHE_KEY,
+      scopedStatsCacheKey,
       "stats",
     );
     if (cachedStats) {
@@ -470,11 +477,12 @@ export function DashboardClient() {
       setDepartmentList(cachedStats.departmentList ?? []);
     }
     fetchStats();
-  }, [fetchStats]);
+  }, [fetchStats, scopedStatsCacheKey, sessionStatus]);
 
   useEffect(() => {
+    if (sessionStatus !== "authenticated") return;
     fetchSops();
-  }, [fetchSops]);
+  }, [fetchSops, sessionStatus]);
 
   const handleSort = (field: string) => {
     setFilter({
@@ -538,11 +546,15 @@ export function DashboardClient() {
         canMutate={userCanMutate}
         isAdmin={userIsAdmin}
         onFilesImportComplete={refresh}
-        onOpenGuidelinesWizard={() => {
-          setGuidelinesWizardPreset(null);
-          setGuidelinesWizardOpen(true);
-          setWizardMinimized(false);
-        }}
+        onOpenGuidelinesWizard={
+          fullDashboard
+            ? () => {
+                setGuidelinesWizardPreset(null);
+                setGuidelinesWizardOpen(true);
+                setWizardMinimized(false);
+              }
+            : undefined
+        }
       />
 
       {error && (
@@ -564,7 +576,7 @@ export function DashboardClient() {
         </div>
       )}
 
-      {stats && (
+      {fullDashboard && stats && (
         <DepartmentCapsules
           capsules={stats.departments}
           onDepartmentAdded={handleDepartmentAdded}
@@ -588,110 +600,114 @@ export function DashboardClient() {
         />
       </div>
 
-      <FilterSidebar sops={items} />
-      <GuidelinesPanel />
+      {fullDashboard && (
+        <>
+          <FilterSidebar sops={items} />
+          <GuidelinesPanel />
 
-      <UploadSOPModal
-        open={uploadModalOpen}
-        onClose={() => setUploadModalOpen(false)}
-        onSuccess={refresh}
-        departmentList={departmentList}
-      />
-      <SopFolderUploadModal
-        open={folderUploadOpen}
-        onClose={() => setFolderUploadOpen(false)}
-        onSuccess={refresh}
-        departmentList={departmentList}
-      />
-      <GujaratiFolderUploadModal
-        open={gujaratiUploadOpen}
-        onClose={() => setGujaratiUploadOpen(false)}
-        onSuccess={refresh}
-      />
-      <BulkPdfUploadModal
-        open={pdfUploadOpen}
-        onClose={() => setPdfUploadOpen(false)}
-        onSuccess={refresh}
-      />
-      <BulkLocationUploadModal
-        open={locationUploadOpen}
-        onClose={() => setLocationUploadOpen(false)}
-        onSuccess={refresh}
-      />
-      <BulkVideosSlidesModal
-        open={videoUploadOpen}
-        onClose={() => setVideoUploadOpen(false)}
-        onSuccess={refresh}
-      />
-      <MigrateBunnyModal
-        open={bunnyMigrateOpen}
-        onClose={() => setBunnyMigrateOpen(false)}
-        onSuccess={refresh}
-        isAdmin={userIsAdmin}
-      />
+          <UploadSOPModal
+            open={uploadModalOpen}
+            onClose={() => setUploadModalOpen(false)}
+            onSuccess={refresh}
+            departmentList={departmentList}
+          />
+          <SopFolderUploadModal
+            open={folderUploadOpen}
+            onClose={() => setFolderUploadOpen(false)}
+            onSuccess={refresh}
+            departmentList={departmentList}
+          />
+          <GujaratiFolderUploadModal
+            open={gujaratiUploadOpen}
+            onClose={() => setGujaratiUploadOpen(false)}
+            onSuccess={refresh}
+          />
+          <BulkPdfUploadModal
+            open={pdfUploadOpen}
+            onClose={() => setPdfUploadOpen(false)}
+            onSuccess={refresh}
+          />
+          <BulkLocationUploadModal
+            open={locationUploadOpen}
+            onClose={() => setLocationUploadOpen(false)}
+            onSuccess={refresh}
+          />
+          <BulkVideosSlidesModal
+            open={videoUploadOpen}
+            onClose={() => setVideoUploadOpen(false)}
+            onSuccess={refresh}
+          />
+          <MigrateBunnyModal
+            open={bunnyMigrateOpen}
+            onClose={() => setBunnyMigrateOpen(false)}
+            onSuccess={refresh}
+            isAdmin={userIsAdmin}
+          />
 
-      <ComplianceModal
-        open={complianceOpen}
-        onClose={() => setComplianceOpen(false)}
-        sops={items}
-        onComplete={refresh}
-      />
-      <AdminToolsModal
-        open={adminOpen}
-        onClose={() => setAdminOpen(false)}
-        onSuccess={refresh}
-        isAdmin={userIsAdmin}
-      />
-      <PipelineDock onComplete={refresh} />
+          <ComplianceModal
+            open={complianceOpen}
+            onClose={() => setComplianceOpen(false)}
+            sops={items}
+            onComplete={refresh}
+          />
+          <AdminToolsModal
+            open={adminOpen}
+            onClose={() => setAdminOpen(false)}
+            onSuccess={refresh}
+            isAdmin={userIsAdmin}
+          />
+          <PipelineDock onComplete={refresh} />
+
+          <GuidelinesComplianceWizard
+            open={guidelinesWizardOpen}
+            minimized={wizardMinimized}
+            onClose={() => {
+              setGuidelinesWizardOpen(false);
+              setWizardMinimized(false);
+            }}
+            onMinimize={() => setWizardMinimized(true)}
+            registryRows={registryRowsForWizard}
+            prefetchedGuidelines={prefetchedGuidelines}
+            presetSop={guidelinesWizardPreset}
+            onResult={handleComplianceResult}
+          />
+
+          {viewingComplianceSopNo && complianceCache[viewingComplianceSopNo] && (
+            <GuidelinesResultPanel
+              result={complianceCache[viewingComplianceSopNo]}
+              onClose={() => setViewingComplianceSopNo(null)}
+              onRerun={() => {
+                const result = complianceCache[viewingComplianceSopNo];
+                const row = registryRowsForWizard.find((r) => String(r.sopNo) === viewingComplianceSopNo);
+                setViewingComplianceSopNo(null);
+                setGuidelinesWizardPreset({
+                  _id: row ? String(row._id) : "",
+                  sopNo: result.sopNo,
+                });
+                setGuidelinesWizardOpen(true);
+              }}
+            />
+          )}
+
+          {viewingComplianceFullSopNo && complianceCache[viewingComplianceFullSopNo] && (
+            <ComplianceFullViewer
+              result={complianceCache[viewingComplianceFullSopNo]}
+              onClose={() => setViewingComplianceFullSopNo(null)}
+              onRerun={() => {
+                const result = complianceCache[viewingComplianceFullSopNo];
+                const row = registryRowsForWizard.find((r) => String(r.sopNo) === viewingComplianceFullSopNo);
+                setViewingComplianceFullSopNo(null);
+                setGuidelinesWizardPreset({
+                  _id: row ? String(row._id) : "",
+                  sopNo: result.sopNo,
+                });
+                setGuidelinesWizardOpen(true);
+              }}
+            />
+          )}
+        </>
+      )}
       <ToastNotification />
-
-      <GuidelinesComplianceWizard
-        open={guidelinesWizardOpen}
-        minimized={wizardMinimized}
-        onClose={() => {
-          setGuidelinesWizardOpen(false);
-          setWizardMinimized(false);
-        }}
-        onMinimize={() => setWizardMinimized(true)}
-        registryRows={registryRowsForWizard}
-        prefetchedGuidelines={prefetchedGuidelines}
-        presetSop={guidelinesWizardPreset}
-        onResult={handleComplianceResult}
-      />
-
-      {viewingComplianceSopNo && complianceCache[viewingComplianceSopNo] && (
-        <GuidelinesResultPanel
-          result={complianceCache[viewingComplianceSopNo]}
-          onClose={() => setViewingComplianceSopNo(null)}
-          onRerun={() => {
-            const result = complianceCache[viewingComplianceSopNo];
-            const row = registryRowsForWizard.find((r) => String(r.sopNo) === viewingComplianceSopNo);
-            setViewingComplianceSopNo(null);
-            setGuidelinesWizardPreset({
-              _id: row ? String(row._id) : "",
-              sopNo: result.sopNo,
-            });
-            setGuidelinesWizardOpen(true);
-          }}
-        />
-      )}
-
-      {viewingComplianceFullSopNo && complianceCache[viewingComplianceFullSopNo] && (
-        <ComplianceFullViewer
-          result={complianceCache[viewingComplianceFullSopNo]}
-          onClose={() => setViewingComplianceFullSopNo(null)}
-          onRerun={() => {
-            const result = complianceCache[viewingComplianceFullSopNo];
-            const row = registryRowsForWizard.find((r) => String(r.sopNo) === viewingComplianceFullSopNo);
-            setViewingComplianceFullSopNo(null);
-            setGuidelinesWizardPreset({
-              _id: row ? String(row._id) : "",
-              sopNo: result.sopNo,
-            });
-            setGuidelinesWizardOpen(true);
-          }}
-        />
-      )}
     </div>
   );
 }

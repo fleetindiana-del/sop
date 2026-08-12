@@ -36,7 +36,7 @@ function clearCache() { summaryCache = null; }
 // ── POST — Upload PDFs ─────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
   const userId = (auth.session?.user as { id?: string })?.id ?? "system";
 
@@ -256,7 +256,7 @@ export async function GET(request: NextRequest) {
 // ── DELETE — Remove single guideline ──────────────────────────────────────
 
 export async function DELETE(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   await connectDB();

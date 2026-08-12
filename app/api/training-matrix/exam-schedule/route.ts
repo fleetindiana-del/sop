@@ -233,7 +233,7 @@ export async function GET(req: NextRequest) {
 // POST /api/training-matrix/exam-schedule — create/upsert department or employee assignment
 export async function POST(req: NextRequest) {
   try {
-    const auth = await requireAuth(['admin', 'trainer']);
+    const auth = await requireAuth(['admin']);
     if (auth.error) return auth.error;
 
     await connectDB();

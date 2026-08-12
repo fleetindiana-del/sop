@@ -8,7 +8,7 @@ import { requireAuth } from "@/lib/withAuth";
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   let body: { scopes?: unknown; parentIdentifier?: string } = {};

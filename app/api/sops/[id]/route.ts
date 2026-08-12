@@ -3,7 +3,7 @@ import { connectDB } from "@/lib/mongodb";
 import SOP from "@/models/SOP";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { markMcqBanksObsoleteForIdentifier } from "@/lib/mcq-bank-sync";
-import { requireAuth } from "@/lib/withAuth";
+import { forbidUnlessDepartmentAccess, requireAuth } from "@/lib/withAuth";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -18,6 +18,12 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     if (!sop) {
       return NextResponse.json({ error: "SOP not found" }, { status: 404 });
     }
+    const denied = forbidUnlessDepartmentAccess(
+      auth.session.user.role,
+      auth.session.user.department,
+      (sop as { department?: string }).department,
+    );
+    if (denied) return denied;
     return NextResponse.json(sop);
   } catch (error) {
     return NextResponse.json(
@@ -28,7 +34,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {
@@ -50,7 +56,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 }
 
 export async function DELETE(_request: NextRequest, context: RouteContext) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {

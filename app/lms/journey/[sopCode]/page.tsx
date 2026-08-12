@@ -754,8 +754,8 @@ function QuizStep({
   const [examAttempts, setExamAttempts] = useState(0);
   /** 'trial' = demo assessment; 'exam' = formal scored attempt. */
   const [quizMode, setQuizMode] = useState<'trial' | 'exam'>('exam');
-  /** Must acknowledge wrong-answer review before starting a retest. */
-  const [retestAck, setRetestAck] = useState(false);
+  /** Per-question acknowledgements on the review screen (wrong + correct cards). */
+  const [ackedQuestionIds, setAckedQuestionIds] = useState<Set<string>>(() => new Set());
 
   const sopTitle = (sopName || '').trim() || sopCode;
 
@@ -787,6 +787,7 @@ function QuizStep({
     setError('');
     setIsRetest(false);
     setRetestQueue([]);
+    setAckedQuestionIds(new Set());
     if (mode === 'exam') setExamAttempts(0);
     try {
       const res = await fetch(`/api/lms/quiz/${sopCode}?mode=${mode}&lang=${lang}`);
@@ -925,7 +926,7 @@ function QuizStep({
     const pct = questions.length > 0 ? Math.round((correct / questions.length) * 100) : 0;
     setScore(pct);
     setRetestQueue(wrong);
-    setRetestAck(false);
+    setAckedQuestionIds(new Set());
     setPhase('review');
 
     // Demo does not count toward attempts / progress.
@@ -951,15 +952,25 @@ function QuizStep({
   // Re-attempt only the questions missed in the previous attempt. Each retest
   // narrows to whatever is still wrong, and requires every answer to be correct.
   const startRetest = () => {
-    if (!retestAck) return;
+    const allAcked = retestQueue.every((q) => ackedQuestionIds.has(q._id));
+    if (!allAcked) return;
     setQuestions(retestQueue);
     setAnswers({});
     setScore(0);
     setError('');
     setIsRetest(true);
     setQuizMode('exam');
-    setRetestAck(false);
+    setAckedQuestionIds(new Set());
     setPhase('answering');
+  };
+
+  const toggleQuestionAck = (questionId: string, checked: boolean) => {
+    setAckedQuestionIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(questionId);
+      else next.delete(questionId);
+      return next;
+    });
   };
 
   const allowRetake = settings?.allowRetakeAfterPass !== false;
@@ -1144,6 +1155,9 @@ function QuizStep({
     const revealAnswers = isDemo
       ? (settings?.showAnswersAfterTrial !== false)
       : (passed || attemptsExhausted);
+    const ackedWrongCount = retestQueue.filter((q) => ackedQuestionIds.has(q._id)).length;
+    const allWrongAcked = missedCount > 0 && ackedWrongCount === missedCount;
+    const wrongInFullReview = questions.filter((q) => answers[q._id] !== q.correctAnswer).length;
 
     if (isDemo) {
       return (
@@ -1164,25 +1178,64 @@ function QuizStep({
 
           {revealAnswers && (
             <div className="w-full max-w-2xl space-y-3">
+              <p className="text-sm font-semibold text-gray-800">Review answers</p>
               {questions.map((q, i) => {
                 const given = answers[q._id];
                 const isRight = given === q.correctAnswer;
                 const correctText = q.displayOptions.find((o) => o.label === q.correctAnswer)?.text ?? q.correctAnswer;
                 const givenText = q.displayOptions.find((o) => o.label === given)?.text;
+                const acked = ackedQuestionIds.has(q._id);
                 return (
                   <div
                     key={q._id}
-                    className={`rounded-xl border p-3 text-sm ${isRight ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}
+                    className={`rounded-xl border p-3 text-sm ${
+                      isRight
+                        ? acked ? 'border-emerald-300 bg-emerald-50' : 'border-green-200 bg-green-50'
+                        : acked ? 'border-amber-300 bg-amber-50/60' : 'border-red-200 bg-red-50'
+                    }`}
                   >
                     <p className="font-medium text-gray-800">{i + 1}. {q.question}</p>
-                    <p className={`mt-1 text-xs ${isRight ? 'text-green-700' : 'text-red-700'}`}>
-                      {isRight
-                        ? `Correct: ${correctText}`
-                        : <>Your answer: {givenText || '—'} · Correct: {correctText}</>}
-                    </p>
-                    {!isRight && q.explanation && (
-                      <p className="mt-1 text-xs text-gray-500">{q.explanation}</p>
+                    {q.sopReference && (
+                      <p className="mt-1.5 rounded-md bg-white/70 px-2 py-1 text-[11px] leading-snug text-slate-600 ring-1 ring-inset ring-slate-200">
+                        <span className="font-semibold text-slate-700">SOP reference: </span>
+                        {q.sopReference}
+                      </p>
                     )}
+                    <div className="mt-2 space-y-1.5">
+                      {isRight ? (
+                        <div className="rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Correct answer</p>
+                          <p className="text-xs text-emerald-900">{correctText}</p>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="rounded-md border border-red-200 bg-white/80 px-2.5 py-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-red-600">Your answer (wrong)</p>
+                            <p className="text-xs text-red-800">{givenText || '—'}</p>
+                          </div>
+                          <div className="rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Correct answer</p>
+                            <p className="text-xs text-emerald-900">{correctText}</p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {!isRight && q.explanation && (
+                      <p className="mt-1.5 text-xs text-gray-500">{q.explanation}</p>
+                    )}
+                    <label className="mt-2.5 flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={acked}
+                        onChange={(e) => toggleQuestionAck(q._id, e.target.checked)}
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                      />
+                      <span>
+                        {isRight
+                          ? 'I have reviewed this correct answer.'
+                          : `I acknowledge this mistake and have reviewed the correct answer${q.sopReference ? ' and its SOP reference' : ''}.`}
+                      </span>
+                    </label>
                   </div>
                 );
               })}
@@ -1240,14 +1293,23 @@ function QuizStep({
             <p className="text-sm font-semibold text-gray-800">
               Review incorrect answers ({missedCount})
             </p>
+            <p className="text-xs text-gray-500">
+              Acknowledge each mistake below before you can start the retest.
+              {ackedWrongCount < missedCount && (
+                <span className="ml-1 font-medium text-amber-700">
+                  ({ackedWrongCount}/{missedCount} acknowledged)
+                </span>
+              )}
+            </p>
             {retestQueue.map((q, i) => {
               const given = answers[q._id];
               const correctText = q.displayOptions.find((o) => o.label === q.correctAnswer)?.text ?? q.correctAnswer;
               const givenText = q.displayOptions.find((o) => o.label === given)?.text;
+              const acked = ackedQuestionIds.has(q._id);
               return (
                 <div
                   key={q._id}
-                  className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm"
+                  className={`rounded-xl border p-3 text-sm ${acked ? 'border-amber-300 bg-amber-50/60' : 'border-red-200 bg-red-50'}`}
                 >
                   <p className="font-medium text-gray-800">{i + 1}. {q.question}</p>
                   {q.sopReference && (
@@ -1256,12 +1318,31 @@ function QuizStep({
                       {q.sopReference}
                     </p>
                   )}
-                  <p className="mt-1 text-xs text-red-700">
-                    Your answer: {givenText || '—'} · Correct: {correctText}
-                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    <div className="rounded-md border border-red-200 bg-white/80 px-2.5 py-1.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-red-600">Your answer (wrong)</p>
+                      <p className="text-xs text-red-800">{givenText || '—'}</p>
+                    </div>
+                    <div className="rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Correct answer</p>
+                      <p className="text-xs text-emerald-900">{correctText}</p>
+                    </div>
+                  </div>
                   {q.explanation && (
-                    <p className="mt-1 text-xs text-gray-500">{q.explanation}</p>
+                    <p className="mt-1.5 text-xs text-gray-500">{q.explanation}</p>
                   )}
+                  <label className="mt-2.5 flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={acked}
+                      onChange={(e) => toggleQuestionAck(q._id, e.target.checked)}
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                    />
+                    <span>
+                      I acknowledge this mistake and have reviewed the correct answer
+                      {q.sopReference ? ' and its SOP reference' : ''}.
+                    </span>
+                  </label>
                 </div>
               );
             })}
@@ -1272,15 +1353,24 @@ function QuizStep({
         {revealAnswers && (
           <div className="w-full max-w-2xl space-y-3">
             <p className="text-sm font-semibold text-gray-800">Full answer review</p>
+            <p className="text-xs text-gray-500">
+              Acknowledge each question below after you have reviewed the answer
+              {wrongInFullReview > 0 ? ' and any SOP references for mistakes' : ''}.
+            </p>
             {questions.map((q, i) => {
               const given = answers[q._id];
               const isRight = given === q.correctAnswer;
               const correctText = q.displayOptions.find((o) => o.label === q.correctAnswer)?.text ?? q.correctAnswer;
               const givenText = q.displayOptions.find((o) => o.label === given)?.text;
+              const acked = ackedQuestionIds.has(q._id);
               return (
                 <div
                   key={q._id}
-                  className={`rounded-xl border p-3 text-sm ${isRight ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}
+                  className={`rounded-xl border p-3 text-sm ${
+                    isRight
+                      ? acked ? 'border-emerald-300 bg-emerald-50' : 'border-green-200 bg-green-50'
+                      : acked ? 'border-amber-300 bg-amber-50/60' : 'border-red-200 bg-red-50'
+                  }`}
                 >
                   <p className="font-medium text-gray-800">{i + 1}. {q.question}</p>
                   {q.sopReference && (
@@ -1289,15 +1379,41 @@ function QuizStep({
                       {q.sopReference}
                     </p>
                   )}
-                  <p className={`mt-1 text-xs ${isRight ? 'text-green-700' : 'text-red-700'}`}>
-                    {isRight
-                      ? `Correct: ${correctText}`
-                      : <>Your answer: {givenText || '—'} · Correct: {correctText}</>
-                    }
-                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    {isRight ? (
+                      <div className="rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Correct answer</p>
+                        <p className="text-xs text-emerald-900">{correctText}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="rounded-md border border-red-200 bg-white/80 px-2.5 py-1.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-red-600">Your answer (wrong)</p>
+                          <p className="text-xs text-red-800">{givenText || '—'}</p>
+                        </div>
+                        <div className="rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Correct answer</p>
+                          <p className="text-xs text-emerald-900">{correctText}</p>
+                        </div>
+                      </>
+                    )}
+                  </div>
                   {!isRight && q.explanation && (
-                    <p className="mt-1 text-xs text-gray-500">{q.explanation}</p>
+                    <p className="mt-1.5 text-xs text-gray-500">{q.explanation}</p>
                   )}
+                  <label className="mt-2.5 flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={acked}
+                      onChange={(e) => toggleQuestionAck(q._id, e.target.checked)}
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                    />
+                    <span>
+                      {isRight
+                        ? 'I have reviewed this correct answer.'
+                        : `I acknowledge this mistake and have reviewed the correct answer${q.sopReference ? ' and its SOP reference' : ''}.`}
+                    </span>
+                  </label>
                 </div>
               );
             })}
@@ -1312,23 +1428,17 @@ function QuizStep({
                 : `No need to redo the whole exam — just the ${missedCount} question${missedCount !== 1 ? 's' : ''} you missed.`}
             </p>
             <p className="text-xs text-amber-700">
-              Review the incorrect answers and SOP references above, then acknowledge to continue.
+              Tick the acknowledgement checkbox on <strong>every</strong> incorrect answer above before continuing.
               The retest requires <strong>100%</strong> on the remaining questions.
             </p>
-            <label className="flex w-full max-w-md cursor-pointer items-start gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2.5 text-left text-xs text-amber-900">
-              <input
-                type="checkbox"
-                checked={retestAck}
-                onChange={(e) => setRetestAck(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-amber-300 text-purple-600 focus:ring-purple-500"
-              />
-              <span>
-                I have reviewed all incorrect questions, the correct answers, and their SOP section references.
-              </span>
-            </label>
+            {!allWrongAcked && (
+              <p className="text-[11px] font-medium text-amber-800">
+                {ackedWrongCount}/{missedCount} mistakes acknowledged
+              </p>
+            )}
             <button
               onClick={startRetest}
-              disabled={!retestAck}
+              disabled={!allWrongAcked}
               className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw className="h-3.5 w-3.5" />

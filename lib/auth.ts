@@ -37,6 +37,7 @@ declare module "next-auth" {
       username: string;
       role: AppRole;
       department?: string;
+      pageAccess?: string[];
       email?: string | null;
     };
   }
@@ -45,6 +46,7 @@ declare module "next-auth" {
     username: string;
     role: AppRole;
     department?: string;
+    pageAccess?: string[];
   }
 }
 
@@ -54,8 +56,14 @@ declare module "next-auth/jwt" {
     username: string;
     role: AppRole;
     department?: string;
+    pageAccess?: string[];
+    /** Epoch ms of the last refresh of role/department/pageAccess from the DB. */
+    accessSyncedAt?: number;
   }
 }
+
+/** How long a token may serve cached access data before re-reading the user. */
+const ACCESS_SYNC_INTERVAL_MS = 60_000;
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -101,6 +109,7 @@ export const authOptions: NextAuthOptions = {
             username: user.username,
             role: user.role,
             department: user.department,
+            pageAccess: user.pageAccess,
           };
         } catch (error) {
           console.error("[auth] authorize error:", error);
@@ -117,12 +126,37 @@ export const authOptions: NextAuthOptions = {
     signIn: "/login",
   },
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.id = user.id;
         token.username = user.username;
         token.role = user.role;
         token.department = user.department;
+        token.pageAccess = user.pageAccess;
+        token.accessSyncedAt = Date.now();
+        return token;
+      }
+
+      // Re-read role/department/page access so permission changes take effect
+      // without forcing the user to sign out.
+      const stale =
+        trigger === "update" ||
+        Date.now() - (token.accessSyncedAt ?? 0) > ACCESS_SYNC_INTERVAL_MS;
+      if (stale && token.id) {
+        try {
+          await connectDB();
+          const fresh = await User.findById(token.id)
+            .select("role department pageAccess")
+            .lean();
+          if (fresh) {
+            token.role = fresh.role;
+            token.department = fresh.department;
+            token.pageAccess = fresh.pageAccess;
+          }
+        } catch (error) {
+          console.error("[auth] failed to refresh access claims:", error);
+        }
+        token.accessSyncedAt = Date.now();
       }
       return token;
     },
@@ -132,6 +166,7 @@ export const authOptions: NextAuthOptions = {
         session.user.username = token.username;
         session.user.role = token.role;
         session.user.department = token.department;
+        session.user.pageAccess = token.pageAccess;
       }
       return session;
     },

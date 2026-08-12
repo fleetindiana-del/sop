@@ -16,6 +16,7 @@ function toPublicUser(user: IUser) {
     role: user.role,
     department: user.department ?? "",
     designation: user.designation ?? "",
+    pageAccess: Array.isArray(user.pageAccess) ? user.pageAccess : null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
@@ -42,6 +43,7 @@ export async function GET() {
         role: u.role,
         department: u.department ?? "",
         designation: u.designation ?? "",
+        pageAccess: Array.isArray(u.pageAccess) ? u.pageAccess : null,
         createdAt: u.createdAt,
         updatedAt: u.updatedAt,
       })),

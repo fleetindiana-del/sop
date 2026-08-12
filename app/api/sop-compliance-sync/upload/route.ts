@@ -6,7 +6,7 @@ import { extractTablesFromDOCX } from "@/lib/docxTableParser";
 
 /** Upload department DOCX files with SOP compliance dates (Effective / Review). */
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {

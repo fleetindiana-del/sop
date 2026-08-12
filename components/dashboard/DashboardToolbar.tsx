@@ -12,11 +12,13 @@ import {
   CloudUpload,
   FileUp,
   FolderUp,
+  GraduationCap,
   Languages,
   MapPin,
   Plus,
   RefreshCw,
   Shield,
+  ShieldCheck,
   Upload,
   UserCog,
   Video,
@@ -73,6 +75,30 @@ export function DashboardToolbar({
       document.getElementById("sop-registry")?.scrollIntoView({ behavior: "smooth" });
     }
   };
+
+  // Trainer / Viewer: only MCQ Bank + LMS redirects.
+  if (!isAdmin) {
+    return (
+      <div className="border-b border-slate-200 bg-white shadow-sm">
+        <div className="mx-auto flex max-w-[1920px] flex-wrap items-center gap-1.5 px-4 py-2">
+          <Btn
+            size="sm"
+            className="border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
+            onClick={() => router.push("/mcq-bank")}
+          >
+            <BarChart3 className="h-3 w-3" /> MCQ Bank
+          </Btn>
+          <Btn
+            size="sm"
+            className="border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+            onClick={() => router.push("/lms/admin")}
+          >
+            <GraduationCap className="h-3 w-3" /> LMS
+          </Btn>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="border-b border-slate-200 bg-white shadow-sm">
@@ -219,6 +245,15 @@ export function DashboardToolbar({
           <BarChart3 className="h-3 w-3" /> MCQ Bank
         </Btn>
 
+        {/* LMS */}
+        <Btn
+          size="sm"
+          className="border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+          onClick={() => router.push("/lms/admin")}
+        >
+          <GraduationCap className="h-3 w-3" /> LMS
+        </Btn>
+
         {/* Developer Tools – consolidates developer-only buttons into one menu */}
         <div className="group relative ml-auto">
           <Btn
@@ -268,6 +303,11 @@ export function DashboardToolbar({
                   icon={<UserCog className="h-3.5 w-3.5 text-violet-600" />}
                   label="Login & Passwords"
                   onClick={() => router.push("/admin/users")}
+                />
+                <DropdownItem
+                  icon={<ShieldCheck className="h-3.5 w-3.5 text-violet-600" />}
+                  label="Access Management"
+                  onClick={() => router.push("/admin/access")}
                 />
                 <DropdownItem
                   icon={<Cloud className="h-3.5 w-3.5 text-orange-500" />}

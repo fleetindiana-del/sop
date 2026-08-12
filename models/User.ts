@@ -8,6 +8,11 @@ export interface IUser extends Document {
   role: "admin" | "trainer" | "viewer";
   department?: string;
   designation?: string;
+  /**
+   * Allowlist of page keys from `lib/page-registry.ts`.
+   * Undefined = never configured, so legacy role defaults apply.
+   */
+  pageAccess?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -21,6 +26,7 @@ const UserSchema = new Schema<IUser>(
     role: { type: String, enum: ["admin", "trainer", "viewer"], default: "viewer" },
     department: { type: String, trim: true },
     designation: { type: String, trim: true },
+    pageAccess: { type: [String], default: undefined },
   },
   { timestamps: true },
 );

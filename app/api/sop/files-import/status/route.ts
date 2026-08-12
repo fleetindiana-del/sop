@@ -4,7 +4,7 @@ import SopFilesImportJob from "@/models/SopFilesImportJob";
 import { requireAuth } from "@/lib/withAuth";
 
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {

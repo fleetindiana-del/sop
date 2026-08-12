@@ -15,7 +15,7 @@ const CODEX_UNAVAILABLE_MESSAGE =
  * and start full (all-guidelines) V3 compliance in the background.
  */
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   let body: { identifiers?: unknown };

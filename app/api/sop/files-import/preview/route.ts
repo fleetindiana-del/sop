@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/withAuth";
 import { parseImportScopes, previewFilesImport } from "@/lib/sop-files-import";
 
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   const scopes = parseImportScopes(request.nextUrl.searchParams.get("scopes"));

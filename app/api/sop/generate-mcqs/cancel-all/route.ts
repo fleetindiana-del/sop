@@ -4,7 +4,7 @@ import { requestMcqGenerationCancelAll } from "@/lib/mcq-generation";
 
 /** POST /api/sop/generate-mcqs/cancel-all — emergency stop for all in-flight MCQ jobs. */
 export async function POST() {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {

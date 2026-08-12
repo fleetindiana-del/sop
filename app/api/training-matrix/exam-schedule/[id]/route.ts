@@ -20,7 +20,7 @@ type Ctx = { params: Promise<{ id: string }> };
 // Body: { examDate?: string, status?: 'cancelled' | 'scheduled' | 'completed', updatedBy? }
 export async function PATCH(req: NextRequest, context: Ctx) {
   try {
-    const auth = await requireAuth(['admin', 'trainer']);
+    const auth = await requireAuth(['admin']);
     if (auth.error) return auth.error;
 
     await connectDB();
@@ -96,7 +96,7 @@ export async function PATCH(req: NextRequest, context: Ctx) {
 // DELETE — soft-cancel
 export async function DELETE(req: NextRequest, context: Ctx) {
   try {
-    const auth = await requireAuth(['admin', 'trainer']);
+    const auth = await requireAuth(['admin']);
     if (auth.error) return auth.error;
 
     await connectDB();

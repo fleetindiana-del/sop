@@ -55,7 +55,7 @@ export async function GET() {
 }
 
 export async function DELETE(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   const folderName = request.nextUrl.searchParams.get("folderName");

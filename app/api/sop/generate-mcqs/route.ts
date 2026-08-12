@@ -8,7 +8,7 @@ import { enqueueMcqGeneration, parseMcqLanguage } from "@/lib/mcq-generation";
 // retries), which routinely blew past the HTTP timeout. The client now polls
 // GET /api/sop/generate-mcqs/status?identifier=… for live progress.
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {

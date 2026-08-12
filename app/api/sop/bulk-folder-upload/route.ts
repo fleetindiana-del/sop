@@ -7,7 +7,7 @@ export const maxDuration = 300;
 const SKIP_PATTERN = /annexure|appendix|cover\s*page|index/i;
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer"]);
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {

@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import User from "@/models/User";
-import { requireAuth } from "@/lib/withAuth";
+import { requireAuth, filterByAssignedDepartments, isDeptScopedRole } from "@/lib/withAuth";
+import { parseAssignedDepartments, departmentsMatch } from "@/lib/roles";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
 import {
   MCQ_DEPARTMENT_ORDER,
@@ -25,7 +26,11 @@ export async function GET() {
     const mcqBankCol = db.collection("mcqbanks");
 
     // ── 1. Active SOP families — same source as the Main Dashboard ───────────
-    const grouped = await getGroupedRegistryRows();
+    const grouped = filterByAssignedDepartments(
+      auth.session.user.role,
+      auth.session.user.department,
+      await getGroupedRegistryRows(),
+    );
     const sopFamilyMap = buildActiveSopFamilyMap(grouped);
 
     // ── 2. Aggregate MCQBank data (non-obsolete banks only) ───────────────────
@@ -216,6 +221,10 @@ export async function GET() {
         guRemaining: d.remainingGuj,
         trainer: trainerByDept.get(deptName) ?? null,
       };
+    }).filter((d) => {
+      if (!isDeptScopedRole(auth.session.user.role)) return true;
+      const assigned = parseAssignedDepartments(auth.session.user.department);
+      return assigned.some((a) => departmentsMatch(a, d.department));
     });
 
     const overall = departments.reduce(

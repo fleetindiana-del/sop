@@ -21,6 +21,16 @@ import {
   isPlaceholderSopName,
   resolveSopFamilyNames,
 } from '@/lib/sop-name-resolution';
+import {
+  applyReschedulesToList,
+  listTrainingReschedules,
+} from '@/lib/lmsTrainingReschedule';
+import {
+  classifyScheduleStatus,
+  formatCycleStart,
+  getTrainingCycleStart,
+  type LmsScheduleStatus,
+} from '@/lib/lmsTrainingCycle';
 import type { ISOP } from '@/models/SOP';
 
 export const dynamic = 'force-dynamic';
@@ -104,6 +114,10 @@ export interface SopBreakdown {
   status: SopStatus;
   /** Scheduled month numbers (1 = Jan … 12 = Dec) from the matrix snapshot. */
   months: number[];
+  /** Primary planned year for schedule classification. */
+  year?: number;
+  /** Cycle-aware schedule status for the primary month (ignored/due/missed/upcoming). */
+  scheduleStatus?: LmsScheduleStatus;
   /** SOP has an MCQ assessment / exam. */
   hasExam: boolean;
   components: Record<ComponentKey, ComponentStatus>;
@@ -115,9 +129,12 @@ export interface EmployeeTrainingRecord {
   designation: string;
   department: string;
   isActive: boolean;
+  isTrainer: boolean;
   totalSops: number;
   completedSops: number;
   notCompletedSops: number;
+  missedSops: number;
+  ignoredSops: number;
   overallPct: number;
   /** Count of assigned SOPs per month, index 0 = Jan … 11 = Dec. */
   monthlyCounts: number[];
@@ -202,10 +219,12 @@ export async function GET(req: NextRequest) {
           }[]>();
 
         const employeeIds = employees.map((e) => e._id);
-        const [assignmentsMap, scheduleByDept] = await Promise.all([
+        const [assignmentsMap, scheduleByDept, rescheduleRules] = await Promise.all([
           getEmployeeAssignmentsMap(),
           buildSopScheduleByDept(),
+          listTrainingReschedules(department || undefined),
         ]);
+        const cycle = getTrainingCycleStart();
 
         // Progress keyed by employeeId + uppercased SOP code (matches the
         // convention used by the training-status endpoint).
@@ -318,10 +337,16 @@ export async function GET(req: NextRequest) {
 
         const records: EmployeeTrainingRecord[] = employees.map((emp) => {
           const id          = String(emp._id);
-          const assignments = resolveAssignmentsForEmployee(emp);
+          const rawAssignments = resolveAssignmentsForEmployee(emp);
+          const assignments = applyReschedulesToList(rawAssignments, rescheduleRules, {
+            employeeId: id,
+            employeeDepartment: emp.department,
+          });
 
           let completedSops = 0;
           let notCompletedSops = 0;
+          let missedSops = 0;
+          let ignoredSops = 0;
           let totalSteps = 0;
           let doneSteps = 0;
 
@@ -335,7 +360,7 @@ export async function GET(req: NextRequest) {
               )
             : [];
 
-          const monthsForSop = (sopCode: string, sopDepartment?: string): number[] => {
+          const monthsForSop = (sopCode: string, sopDepartment?: string, fallbackMonth?: number): number[] => {
             if (sopDepartment) {
               const byDept = scheduleByDept.get(sopDepartment.trim().toLowerCase());
               const months = byDept?.get(stripVersion(sopCode));
@@ -345,13 +370,15 @@ export async function GET(req: NextRequest) {
               const months = sched?.get(stripVersion(sopCode));
               if (months?.length) return months;
             }
-            return homeSched?.get(stripVersion(sopCode)) ?? [];
+            const fromHome = homeSched?.get(stripVersion(sopCode));
+            if (fromHome?.length) return fromHome;
+            return fallbackMonth ? [fallbackMonth] : [];
           };
 
           const monthlyCounts = new Array(12).fill(0) as number[];
           for (const a of assignments) {
             if (isInvalidSopAssignmentCode(a.sopCode)) continue;
-            const months = monthsForSop(a.sopCode, a.sopDepartment);
+            const months = monthsForSop(a.sopCode, a.sopDepartment, a.month);
             for (const m of months) monthlyCounts[m - 1]++;
           }
 
@@ -373,6 +400,17 @@ export async function GET(req: NextRequest) {
             if (status === 'completed') completedSops++;
             else notCompletedSops++;
 
+            const months = monthsForSop(a.sopCode, a.sopDepartment, a.month);
+            const primaryMonth = months[0] ?? a.month;
+            const scheduleStatus = classifyScheduleStatus(
+              { year: a.year, month: primaryMonth },
+              { cycle, completed: status === 'completed' },
+            );
+            if (status !== 'completed') {
+              if (scheduleStatus === 'missed' || scheduleStatus === 'overdue') missedSops++;
+              if (scheduleStatus === 'ignored') ignoredSops++;
+            }
+
             const components = Object.fromEntries(
               (Object.keys(COMPONENT_GROUPS) as ComponentKey[]).map((key) => [
                 key,
@@ -388,7 +426,9 @@ export async function GET(req: NextRequest) {
               sopName: english,
               sopNameGujarati: gujarati,
               status,
-              months: monthsForSop(a.sopCode, a.sopDepartment),
+              months,
+              year: a.year,
+              scheduleStatus,
               hasExam: availableSet.has('quiz') || availableSet.has('quizGu'),
               components,
             }];
@@ -402,9 +442,12 @@ export async function GET(req: NextRequest) {
             designation:      emp.designation,
             department:       emp.department,
             isActive:         emp.isActive,
+            isTrainer:        Boolean(emp.isTrainer),
             totalSops:        sops.length,
             completedSops,
             notCompletedSops,
+            missedSops,
+            ignoredSops,
             overallPct,
             monthlyCounts,
             monthlyBreakdown: buildMonthlyBreakdown(sops),
@@ -414,7 +457,22 @@ export async function GET(req: NextRequest) {
           };
         });
 
-        return { records };
+        // Month → count of SOP exams scheduled (distinct SOP×employee with exam in that month).
+        const monthExamCounts = new Array(12).fill(0) as number[];
+        for (const r of records) {
+          for (const s of r.sops) {
+            if (!s.hasExam) continue;
+            for (const m of s.months) {
+              if (m >= 1 && m <= 12) monthExamCounts[m - 1]++;
+            }
+          }
+        }
+
+        return {
+          records,
+          trainingCycleStart: formatCycleStart(cycle),
+          monthExamCounts,
+        };
       },
     );
 

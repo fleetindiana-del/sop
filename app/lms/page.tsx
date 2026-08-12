@@ -18,6 +18,11 @@ import {
 } from '@/lib/lmsCache';
 import { hasGujaratiScript, isPlaceholderSopName, isInvalidSopAssignmentCode } from '@/lib/sop-name-resolution';
 import { getDeptLabelClasses, normalizeDepartment } from '@/lib/department-colors';
+import {
+  classifyScheduleStatus,
+  isOverdueInCycle,
+  type LmsScheduleStatus,
+} from '@/lib/lmsTrainingCycle';
 import type { SopAssetFlags } from '@/app/api/lms/assets/route';
 
 const LearnerTrainingCalendar = dynamic(
@@ -67,7 +72,7 @@ interface ProgressRecord {
   completedAt?: string;
 }
 
-type FilterTab = 'all' | 'in_progress' | 'completed' | 'overdue' | 'due' | 'upcoming';
+type FilterTab = 'all' | 'in_progress' | 'completed' | 'overdue' | 'due' | 'upcoming' | 'ignored';
 type SortKey = 'sopCode' | 'sopName' | 'department' | 'type' | 'status' | 'approved' | 'due' | 'progress';
 type SortDir = 'asc' | 'desc';
 interface SortState { key: SortKey; dir: SortDir; }
@@ -96,36 +101,20 @@ interface DashboardCache {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function currentMonthStart(): Date {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1);
-}
+type ScheduleStatus = LmsScheduleStatus;
 
-function assignmentMonthStart(a: SopAssignment): Date {
-  return new Date(a.year, a.month - 1, 1);
-}
-
-/** Scheduled for a month after the current calendar month. */
-function isFutureScheduled(a: SopAssignment): boolean {
-  return assignmentMonthStart(a) > currentMonthStart();
-}
-
-/** Due now — scheduled for the current month or earlier. */
-function isDue(a: SopAssignment): boolean {
-  return assignmentMonthStart(a) <= currentMonthStart();
+function scheduleStatus(a: SopAssignment, completed = false): ScheduleStatus {
+  const status = classifyScheduleStatus(a, { completed });
+  // Learner "Overdue" tab uses the missed-in-cycle condition.
+  return status === 'missed' ? 'overdue' : status;
 }
 
 function isOverdue(a: SopAssignment): boolean {
-  if (!isDue(a)) return false;
-  return assignmentMonthStart(a) < currentMonthStart();
+  return isOverdueInCycle(a);
 }
 
-type ScheduleStatus = 'upcoming' | 'due' | 'overdue';
-
-function scheduleStatus(a: SopAssignment): ScheduleStatus {
-  if (isFutureScheduled(a)) return 'upcoming';
-  if (isOverdue(a)) return 'overdue';
-  return 'due';
+function isIgnored(a: SopAssignment): boolean {
+  return classifyScheduleStatus(a) === 'ignored';
 }
 
 function statusLabel(s: FilterTab): string {
@@ -134,6 +123,7 @@ function statusLabel(s: FilterTab): string {
   if (s === 'overdue')      return 'Overdue';
   if (s === 'due')          return 'Due';
   if (s === 'upcoming')     return 'Upcoming';
+  if (s === 'ignored')      return 'Ignored';
   return 'All';
 }
 
@@ -236,6 +226,7 @@ function statusSortRank(
   if (status === 'in_progress') return 1;
   if (schedule === 'overdue') return 2;
   if (schedule === 'due') return 3;
+  if (schedule === 'ignored') return 5;
   return 4;
 }
 
@@ -271,6 +262,7 @@ function StatusIcon({
         : status === 'in_progress' ? 'bg-purple-50'
         : schedule === 'overdue' ? 'bg-red-50'
         : schedule === 'due' ? 'bg-amber-50'
+        : schedule === 'ignored' ? 'bg-gray-100'
         : 'bg-sky-50'
     }`}>
       {status === 'completed'
@@ -281,6 +273,8 @@ function StatusIcon({
         ? <AlertCircle className="h-3.5 w-3.5 text-red-500" />
         : schedule === 'due'
         ? <Clock className="h-3.5 w-3.5 text-amber-600" />
+        : schedule === 'ignored'
+        ? <EyeOff className="h-3.5 w-3.5 text-gray-400" />
         : <Clock className="h-3.5 w-3.5 text-sky-500" />}
     </div>
   );
@@ -343,6 +337,7 @@ function trainingStatusLabel(
   if (status === 'in_progress') return 'In Progress';
   if (schedule === 'upcoming') return 'Upcoming';
   if (schedule === 'overdue') return 'Overdue';
+  if (schedule === 'ignored') return 'Ignored';
   return 'Due';
 }
 
@@ -377,7 +372,11 @@ function ResourceButtons({
   lockReason?: string;
   onSelect: (def: ResourceDef) => void;
 }) {
-  const items = RESOURCE_DEFS.filter((d) => asset[d.enFlag] || asset[d.guFlag]);
+  // The assessment button always shows so learners can see the exam exists (and
+  // why it is unavailable); other resources only when the file exists.
+  const items = RESOURCE_DEFS.filter(
+    (d) => d.kind === 'test' || asset[d.enFlag] || asset[d.guFlag],
+  );
   if (items.length === 0) return null;
 
   return (
@@ -385,16 +384,24 @@ function ResourceButtons({
       {items.map((d) => {
         const Icon = d.Icon;
         const both = asset[d.enFlag] && asset[d.guFlag];
-        const locked = d.kind === 'test' && examLocked;
+        const noMcq = d.kind === 'test' && !asset[d.enFlag] && !asset[d.guFlag];
+        const locked = d.kind === 'test' && (examLocked || noMcq);
+        const title = locked
+          ? noMcq
+            ? 'Test not available yet — no MCQs prepared for this SOP'
+            : (lockReason || 'Exam locked')
+          : d.label;
         return (
           <button
             key={d.kind}
             onClick={() => { if (!locked) onSelect(d); }}
             disabled={locked}
-            title={locked ? (lockReason || 'Exam locked') : d.label}
+            title={title}
             className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-semibold transition ${
               locked
-                ? 'cursor-not-allowed border-red-200 bg-red-50 text-red-400'
+                ? noMcq
+                  ? 'cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
+                  : 'cursor-not-allowed border-red-200 bg-red-50 text-red-400'
                 : d.primary
                 ? 'border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100'
                 : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
@@ -833,16 +840,18 @@ function StatsRow({
   const completed  = assignments.filter((a) => isFullyComplete(getProgress(progressMap, a.sopCode))).length;
   const inProgress = assignments.filter((a) => isActivelyInProgress(getProgress(progressMap, a.sopCode))).length;
   const overdue    = assignments.filter((a) => isOverdue(a) && !isFullyComplete(getProgress(progressMap, a.sopCode))).length;
+  const ignored    = assignments.filter((a) => isIgnored(a) && !isFullyComplete(getProgress(progressMap, a.sopCode))).length;
 
   const stats: { label: string; value: number; filter: FilterTab; Icon: typeof FileText; color: string; bg: string; ring: string }[] = [
     { label: 'Total Assigned', value: total,      filter: 'all',         Icon: FileText,      color: 'text-gray-600',   bg: 'bg-gray-50',    ring: 'ring-gray-400' },
     { label: 'In Progress',    value: inProgress,  filter: 'in_progress', Icon: TrendingUp,    color: 'text-purple-600', bg: 'bg-purple-50', ring: 'ring-purple-400' },
     { label: 'Completed',      value: completed,   filter: 'completed',   Icon: CheckCircle2,  color: 'text-green-600',  bg: 'bg-green-50',  ring: 'ring-green-400' },
     { label: 'Overdue',        value: overdue,     filter: 'overdue',     Icon: AlertCircle,   color: 'text-red-600',    bg: 'bg-red-50',    ring: 'ring-red-400' },
+    { label: 'Ignored',        value: ignored,     filter: 'ignored',     Icon: EyeOff,        color: 'text-gray-500',   bg: 'bg-gray-50',   ring: 'ring-gray-400' },
   ];
 
   return (
-    <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
       {stats.map(({ label, value, filter: tab, Icon, color, bg, ring }) => {
         const active = activeFilter === tab;
         return (
@@ -1164,6 +1173,9 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
     if (filter === 'overdue')      list = list.filter((a) => {
       return scheduleStatus(a) === 'overdue' && !isFullyComplete(getProgress(progressMap, a.sopCode));
     });
+    if (filter === 'ignored')      list = list.filter((a) => {
+      return scheduleStatus(a) === 'ignored' && !isFullyComplete(getProgress(progressMap, a.sopCode));
+    });
     if (search.trim()) {
       const term = search.trim().toLowerCase();
       list = list.filter((a) => {
@@ -1199,6 +1211,9 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
     }).length,
     overdue:     assignments.filter((a) => {
       return scheduleStatus(a) === 'overdue' && !isFullyComplete(getProgress(progressMap, a.sopCode));
+    }).length,
+    ignored:     assignments.filter((a) => {
+      return scheduleStatus(a) === 'ignored' && !isFullyComplete(getProgress(progressMap, a.sopCode));
     }).length,
   }), [assignments, progressMap]);
 
@@ -1324,7 +1339,7 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
 
               {/* Filter tabs */}
               <div className="mb-2.5 flex flex-wrap gap-1">
-                {(['all', 'in_progress', 'due', 'upcoming', 'completed', 'overdue'] as FilterTab[]).map((tab) => (
+                {(['all', 'in_progress', 'due', 'upcoming', 'completed', 'overdue', 'ignored'] as FilterTab[]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setFilter(tab)}
@@ -1332,6 +1347,8 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
                       filter === tab
                         ? tab === 'overdue'
                           ? 'bg-red-600 text-white'
+                          : tab === 'ignored'
+                          ? 'bg-gray-600 text-white'
                           : tab === 'completed'
                           ? 'bg-green-600 text-white'
                           : tab === 'due'

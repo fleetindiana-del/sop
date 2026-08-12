@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import {
   AlertTriangle,
   BookOpen,
@@ -38,6 +39,8 @@ import {
   mcqAnnexureStatusTitle,
   type McqAnnexureStatus,
 } from "@/lib/mcqAnnexureStatus";
+import { isAdmin } from "@/lib/roles";
+import type { AppRole } from "@/lib/auth";
 
 type McqGenProvider = "claude" | "codex" | "ollama";
 
@@ -1548,6 +1551,8 @@ function SortIcon({ col, current, dir }: { col: string; current: string; dir: st
 // ─────────────────────────────────────────────────────────────
 export function MCQBankClient() {
   const router = useRouter();
+  const { data: session } = useSession();
+  const userIsAdmin = isAdmin((session?.user?.role ?? "viewer") as AppRole);
 
   // Modal state
   const [viewerBankId, setViewerBankId] = useState<string | null>(null);
@@ -1681,7 +1686,7 @@ export function MCQBankClient() {
   useEffect(() => { fetchRegistry(); }, [fetchRegistry, refreshKey]);
 
   useEffect(() => {
-    if (selectedProvider !== "claude") {
+    if (!userIsAdmin || selectedProvider !== "claude") {
       setClaudeStatus(null);
       return;
     }
@@ -1712,10 +1717,10 @@ export function MCQBankClient() {
         });
       });
     return () => { cancelled = true; };
-  }, [selectedProvider]);
+  }, [selectedProvider, userIsAdmin]);
 
   useEffect(() => {
-    if (selectedProvider !== "codex") {
+    if (!userIsAdmin || selectedProvider !== "codex") {
       setCodexStatus(null);
       return;
     }
@@ -1745,7 +1750,7 @@ export function MCQBankClient() {
         });
       });
     return () => { cancelled = true; };
-  }, [selectedProvider]);
+  }, [selectedProvider, userIsAdmin]);
 
   // Generate MCQs for a "Not Found" family on demand. The endpoint runs the full
   // generation pipeline into mcqbanks; once it succeeds we refresh stats + registry
@@ -2701,108 +2706,112 @@ export function MCQBankClient() {
                   className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700">
                   <Home className="h-3.5 w-3.5" /> Home
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void stopAllGeneration()}
-                  disabled={stopAllLoading}
-                  className="flex items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
-                  title="Emergency stop — kills all in-flight MCQ generation"
-                >
-                  {stopAllLoading ? (
-                    <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Stopping…</>
-                  ) : (
-                    <>Stop all generation</>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedProvider("claude")}
-                  title={
-                    selectedProvider === "claude" && claudeStatus?.ok
-                      ? `Claude Haiku via your subscription (${claudeStatus.email ?? "logged in"} · ${claudeStatus.subscriptionType ?? "active"} · ${claudeStatus.mcqModel ?? "claude-haiku-4-5"}) — default MCQ generator`
-                      : selectedProvider === "claude" && claudeStatus?.error
-                        ? `Claude not connected: ${claudeStatus.error}`
-                        : "Claude Haiku — default MCQ generator (100 unique questions per language)"
-                  }
-                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    selectedProvider === "claude"
-                      ? claudeStatus?.ok === false && !claudeStatus?.loading
-                        ? "border border-red-600 bg-red-600 text-white hover:bg-red-700 ring-2 ring-red-300"
-                        : "border border-violet-600 bg-violet-600 text-white hover:bg-violet-700 ring-2 ring-violet-300"
-                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  {selectedProvider === "claude"
-                    ? claudeStatus?.loading
-                      ? "Claude…"
-                      : claudeStatus?.ok
-                        ? "Claude ✓"
-                        : "Claude !"
-                    : "Claude"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedProvider("codex")}
-                  title={
-                    selectedProvider === "codex" && codexStatus?.ok
-                      ? `Codex via your ChatGPT subscription (${codexStatus.mcqModel ?? "gpt-5.4-mini"}) — local CLI, no API key`
-                      : selectedProvider === "codex" && codexStatus?.error
-                        ? `Codex not connected: ${codexStatus.error}`
-                        : "Codex gpt-5.4-mini — local CLI via ChatGPT subscription (no API key)"
-                  }
-                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    selectedProvider === "codex"
-                      ? codexStatus?.ok === false && !codexStatus?.loading
-                        ? "border border-red-600 bg-red-600 text-white hover:bg-red-700 ring-2 ring-red-300"
-                        : "border border-sky-600 bg-sky-600 text-white hover:bg-sky-700 ring-2 ring-sky-300"
-                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <Bot className="h-3.5 w-3.5" />
-                  {selectedProvider === "codex"
-                    ? codexStatus?.loading
-                      ? "Codex…"
-                      : codexStatus?.ok
-                        ? "Codex ✓"
-                        : "Codex !"
-                    : "Codex"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedProvider("ollama")}
-                  title={selectedProvider === "ollama" ? "Using local Ollama model (gemma3:12b)" : "Use local Ollama model (gemma3:12b) for MCQ generation"}
-                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    selectedProvider === "ollama"
-                      ? "border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 ring-2 ring-emerald-300"
-                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <Cpu className="h-3.5 w-3.5" />
-                  {selectedProvider === "ollama" ? "Local AI (Gemma3)" : "Local AI"}
-                </button>
-                <button type="button"
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-900">
-                  <Monitor className="h-3.5 w-3.5" /> Dev Mode
-                </button>
-                <button type="button" onClick={() => setRefreshKey((k) => k + 1)}
-                  className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
-                  <RefreshCw className={`h-3.5 w-3.5 ${statsLoading ? "animate-spin" : ""}`} /> Refresh
-                </button>
-                <button type="button" onClick={toggleObsoleteView}
-                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-colors ${
-                    obsoleteOnly ? "bg-red-700 hover:bg-red-800 ring-2 ring-red-300" : "bg-red-500 hover:bg-red-600"
-                  }`}>
-                  Obsolete MCQs{stats?.obsoleteMcqs?.count ? ` (${stats.obsoleteMcqs.count})` : ""}
-                </button>
-                <button type="button"
-                  className="flex items-center gap-1.5 rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600">
-                  Similar Questions
-                </button>
-                <button type="button" onClick={() => router.push("/dashboard")}
-                  className="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-900">
-                  <Upload className="h-3.5 w-3.5" /> Upload SOP
-                </button>
+                {userIsAdmin && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void stopAllGeneration()}
+                      disabled={stopAllLoading}
+                      className="flex items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                      title="Emergency stop — kills all in-flight MCQ generation"
+                    >
+                      {stopAllLoading ? (
+                        <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Stopping…</>
+                      ) : (
+                        <>Stop all generation</>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProvider("claude")}
+                      title={
+                        selectedProvider === "claude" && claudeStatus?.ok
+                          ? `Claude Haiku via your subscription (${claudeStatus.email ?? "logged in"} · ${claudeStatus.subscriptionType ?? "active"} · ${claudeStatus.mcqModel ?? "claude-haiku-4-5"}) — default MCQ generator`
+                          : selectedProvider === "claude" && claudeStatus?.error
+                            ? `Claude not connected: ${claudeStatus.error}`
+                            : "Claude Haiku — default MCQ generator (100 unique questions per language)"
+                      }
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                        selectedProvider === "claude"
+                          ? claudeStatus?.ok === false && !claudeStatus?.loading
+                            ? "border border-red-600 bg-red-600 text-white hover:bg-red-700 ring-2 ring-red-300"
+                            : "border border-violet-600 bg-violet-600 text-white hover:bg-violet-700 ring-2 ring-violet-300"
+                          : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {selectedProvider === "claude"
+                        ? claudeStatus?.loading
+                          ? "Claude…"
+                          : claudeStatus?.ok
+                            ? "Claude ✓"
+                            : "Claude !"
+                        : "Claude"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProvider("codex")}
+                      title={
+                        selectedProvider === "codex" && codexStatus?.ok
+                          ? `Codex via your ChatGPT subscription (${codexStatus.mcqModel ?? "gpt-5.4-mini"}) — local CLI, no API key`
+                          : selectedProvider === "codex" && codexStatus?.error
+                            ? `Codex not connected: ${codexStatus.error}`
+                            : "Codex gpt-5.4-mini — local CLI via ChatGPT subscription (no API key)"
+                      }
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                        selectedProvider === "codex"
+                          ? codexStatus?.ok === false && !codexStatus?.loading
+                            ? "border border-red-600 bg-red-600 text-white hover:bg-red-700 ring-2 ring-red-300"
+                            : "border border-sky-600 bg-sky-600 text-white hover:bg-sky-700 ring-2 ring-sky-300"
+                          : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Bot className="h-3.5 w-3.5" />
+                      {selectedProvider === "codex"
+                        ? codexStatus?.loading
+                          ? "Codex…"
+                          : codexStatus?.ok
+                            ? "Codex ✓"
+                            : "Codex !"
+                        : "Codex"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProvider("ollama")}
+                      title={selectedProvider === "ollama" ? "Using local Ollama model (gemma3:12b)" : "Use local Ollama model (gemma3:12b) for MCQ generation"}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                        selectedProvider === "ollama"
+                          ? "border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 ring-2 ring-emerald-300"
+                          : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Cpu className="h-3.5 w-3.5" />
+                      {selectedProvider === "ollama" ? "Local AI (Gemma3)" : "Local AI"}
+                    </button>
+                    <button type="button"
+                      className="flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-900">
+                      <Monitor className="h-3.5 w-3.5" /> Dev Mode
+                    </button>
+                    <button type="button" onClick={() => setRefreshKey((k) => k + 1)}
+                      className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
+                      <RefreshCw className={`h-3.5 w-3.5 ${statsLoading ? "animate-spin" : ""}`} /> Refresh
+                    </button>
+                    <button type="button" onClick={toggleObsoleteView}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-colors ${
+                        obsoleteOnly ? "bg-red-700 hover:bg-red-800 ring-2 ring-red-300" : "bg-red-500 hover:bg-red-600"
+                      }`}>
+                      Obsolete MCQs{stats?.obsoleteMcqs?.count ? ` (${stats.obsoleteMcqs.count})` : ""}
+                    </button>
+                    <button type="button"
+                      className="flex items-center gap-1.5 rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600">
+                      Similar Questions
+                    </button>
+                    <button type="button" onClick={() => router.push("/dashboard")}
+                      className="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-900">
+                      <Upload className="h-3.5 w-3.5" /> Upload SOP
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -2816,7 +2825,7 @@ export function MCQBankClient() {
               {statsError}
             </div>
           )}
-          {selectedProvider === "claude" && claudeStatus && !claudeStatus.loading && (
+          {userIsAdmin && selectedProvider === "claude" && claudeStatus && !claudeStatus.loading && (
             <div
               className={`rounded-lg border px-4 py-3 text-sm ${
                 claudeStatus.ok
@@ -2848,7 +2857,7 @@ export function MCQBankClient() {
             </div>
           )}
 
-          {selectedProvider === "codex" && codexStatus && !codexStatus.loading && (
+          {userIsAdmin && selectedProvider === "codex" && codexStatus && !codexStatus.loading && (
             <div
               className={`rounded-lg border px-4 py-3 text-sm ${
                 codexStatus.ok

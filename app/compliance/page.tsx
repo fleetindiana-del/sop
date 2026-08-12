@@ -1257,9 +1257,8 @@ export default function ComplianceEnginePage() {
     });
   };
 
-  // Export the full on-screen report (header + every finding) to a PDF that
-  // mirrors the UI layout. Expand all collapsed groups first so nothing is
-  // dropped, then restore the previous collapsed state afterwards.
+  // Export the full on-screen report (header + every finding) via print →
+  // Save as PDF so the file matches the Compliance Result UI with selectable text.
   const handleExportPdf = async () => {
     if (!reportExportRef.current || !selectedReport || exportingPdf) return;
     setExportingPdf(true);
@@ -1277,7 +1276,7 @@ export default function ComplianceEnginePage() {
       });
     } catch (err) {
       console.error('Compliance PDF export failed', err);
-      alert('Could not generate the PDF. Please try again.');
+      alert('Could not open the print dialog. Please try again, then choose “Save as PDF”.');
     } finally {
       if (prevCollapsed.size > 0) setCollapsedFindingGroups(prevCollapsed);
       setExportingPdf(false);
@@ -3132,6 +3131,7 @@ export default function ComplianceEnginePage() {
                   <div className="flex flex-nowrap items-center justify-between gap-2">
                     <div className="flex flex-nowrap items-center gap-1.5 min-w-0 flex-1 overflow-x-auto">
                       <button
+                        data-pdf-hide
                         onClick={() => {
                           setIsFullScreen(false);
                           setSelectedReport(null);
@@ -3225,10 +3225,11 @@ export default function ComplianceEnginePage() {
                         }`} />
                       </div>
                       <button
+                        data-pdf-hide
                         onClick={handleExportPdf}
                         disabled={exportingPdf}
                         className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold transition-all shrink-0 bg-rose-600 text-white hover:bg-rose-700 shadow-sm shadow-rose-200 disabled:opacity-60 disabled:cursor-not-allowed"
-                        title="Export the full compliance results to a PDF, keeping the same layout"
+                        title="Opens print dialog — choose Save as PDF for the same layout with selectable text"
                       >
                         {exportingPdf ? (
                           <>
@@ -3243,6 +3244,7 @@ export default function ComplianceEnginePage() {
                         )}
                       </button>
                       <button
+                        data-pdf-hide
                         onClick={() => {
                           if (!selectedReport) return;
                           setRecheckInitialView('run');
@@ -3260,6 +3262,7 @@ export default function ComplianceEnginePage() {
                         Upload SOP &amp; Re-run
                       </button>
                       <button
+                        data-pdf-hide
                         onClick={() => setFinalSopOpen(true)}
                         disabled={actionableFixes.length === 0}
                         className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold transition-all shrink-0 ${
@@ -3282,6 +3285,7 @@ export default function ComplianceEnginePage() {
 
                   <div className="flex flex-wrap items-center gap-1.5 pt-1 mt-1 border-t border-gray-100">
                     <button
+                      data-pdf-hide
                       onClick={toggleSelectAllFindings}
                       className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-gray-900 transition-colors shrink-0"
                     >
@@ -3352,7 +3356,7 @@ export default function ComplianceEnginePage() {
                       </button>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                    <div data-pdf-hide className="flex flex-wrap items-center gap-1.5 shrink-0">
                       <div className="flex items-center rounded-md border border-gray-200 bg-white overflow-hidden">
                         <button
                           type="button"
@@ -3427,6 +3431,7 @@ export default function ComplianceEnginePage() {
                     </div>
 
                     <button
+                      data-pdf-hide
                       onClick={() => setShowConsolidatedSummary(true)}
                       disabled={selectedFindingIds.size === 0}
                       className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold transition-all shrink-0 ${
@@ -3472,10 +3477,12 @@ export default function ComplianceEnginePage() {
                             <div
                               ref={(el) => { groupRefs.current[group.key] = el; }}
                               data-group-key={group.key}
+                              data-group-header
                               className="flex flex-wrap w-fit items-center gap-1 scroll-mt-2"
                             >
                               <button
                                 type="button"
+                                data-pdf-hide
                                 onClick={() => toggleFindingGroup(group.key)}
                                 className="p-px rounded border border-gray-200 bg-white text-gray-500 hover:text-blue-700 hover:border-blue-300 transition-colors shrink-0"
                                 aria-expanded={isGroupOpen}

@@ -811,7 +811,7 @@ export default function RecheckSopModal({
                   onClick={() => void handleExportPdf()}
                   disabled={exportingPdf}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
-                  title="Download this re-check as a PDF named after the SOP"
+                  title="Opens print dialog — choose Save as PDF for the same layout with selectable text"
                 >
                   {exportingPdf ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />

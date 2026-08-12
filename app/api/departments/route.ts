@@ -4,20 +4,37 @@ import SOP from "@/models/SOP";
 import Department from "@/models/Department";
 import { sortByDeptOrder } from "@/lib/sop-utils";
 import { isDashboardDepartmentName } from "@/lib/dashboardDepartments";
+import {
+  isDeptScopedRole,
+  parseAssignedDepartments,
+  requireAuth,
+} from "@/lib/withAuth";
 
 // Password required to delete a department (also enforced in the UI).
 const DELETE_PASSWORD = "indiana132";
 
 export async function GET() {
+  const auth = await requireAuth(["admin", "trainer", "viewer"]);
+  if (auth.error) return auth.error;
+
   try {
     await connectDB();
     const [sopDepts, persistedDepts] = await Promise.all([
       SOP.distinct("department") as Promise<string[]>,
       Department.distinct("name") as Promise<string[]>,
     ]);
-    const merged = sortByDeptOrder(
+    let merged = sortByDeptOrder(
       [...new Set([...sopDepts, ...persistedDepts])].filter(isDashboardDepartmentName),
-    );    return NextResponse.json({ departments: merged });
+    );
+
+    if (isDeptScopedRole(auth.session.user.role)) {
+      const assigned = parseAssignedDepartments(auth.session.user.department);
+      merged = merged.filter((name) =>
+        assigned.some((d) => d.toLowerCase() === name.toLowerCase()),
+      );
+    }
+
+    return NextResponse.json({ departments: merged });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to fetch departments" },
@@ -27,6 +44,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAuth(["admin"]);
+  if (auth.error) return auth.error;
+
   try {
     await connectDB();
     const { name } = await request.json();
@@ -53,6 +73,9 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
+  const auth = await requireAuth(["admin"]);
+  if (auth.error) return auth.error;
+
   try {
     await connectDB();
     const { oldName, newName } = await request.json();
@@ -88,6 +111,9 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const auth = await requireAuth(["admin"]);
+  if (auth.error) return auth.error;
+
   try {
     await connectDB();
     const { name, password } = await request.json();

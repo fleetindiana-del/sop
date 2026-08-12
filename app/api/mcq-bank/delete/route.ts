@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
-import { requireAuth } from "@/lib/withAuth";
+import { requireAuth, forbidUnlessDepartmentAccess } from "@/lib/withAuth";
 import { deleteBanksForFamily, type McqDeleteScope } from "@/lib/mcq-bank-write";
+import { mcqResolveDept } from "@/lib/mcq-bank-utils";
+import MCQBank from "@/models/MCQBank";
 
 const DELETE_PASSWORD = process.env.SOP_DELETE_PASSWORD ?? "indiana132";
 
@@ -26,6 +28,18 @@ export async function DELETE(request: NextRequest) {
     }
 
     await connectDB();
+    const sample = await MCQBank.findOne({ sopIdentifier: identifier })
+      .select("sopIdentifier department")
+      .lean();
+    if (sample) {
+      const denied = forbidUnlessDepartmentAccess(
+        auth.session.user.role,
+        auth.session.user.department,
+        mcqResolveDept(String(sample.sopIdentifier ?? ""), String(sample.department ?? "")),
+      );
+      if (denied) return denied;
+    }
+
     const deleted = await deleteBanksForFamily(identifier, scope as McqDeleteScope);
     return NextResponse.json({ success: true, deleted });
   } catch (error) {
