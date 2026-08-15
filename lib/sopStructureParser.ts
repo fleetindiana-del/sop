@@ -150,6 +150,96 @@ export function buildSectionSummary(parsed: ParsedSop): string {
     .join("\n");
 }
 
+/**
+ * Extract the SOP section id from a finding/ref string.
+ * Prefers an explicit § marker so V5 refs like "L042 [§4.2 Title]" yield "4.2"
+ * (not the line number "042").
+ */
+export function extractSopSectionId(ref?: string): string {
+  if (!ref?.trim()) return "";
+  const s = ref.trim();
+  const secMark = s.match(/§\s*([A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)/);
+  if (secMark?.[1]) return secMark[1];
+  // Strip L### line refs so they cannot steal the first digit run.
+  const withoutLineRefs = s.replace(/\bL\d{3,}\b/gi, " ");
+  const m = withoutLineRefs.match(/(\d+(?:\.\d+)*)/);
+  return m?.[1] ?? "";
+}
+
+/** Part-wise numeric compare for section ids (1 < 1.3 < 2 < 4.1.2 < 4.11). */
+export function compareSopSectionIds(a?: string, b?: string): number {
+  const parse = (v?: string): number[] => {
+    const id = extractSopSectionId(v);
+    if (!id) return [];
+    return id.split(".").map((p) => {
+      const n = Number(p);
+      return Number.isFinite(n) ? n : -1;
+    });
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (pa.length === 0 || pb.length === 0) {
+    if (pa.length !== pb.length) return pa.length === 0 ? 1 : -1;
+    return (a || "").localeCompare(b || "");
+  }
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const va = pa[i] ?? -1;
+    const vb = pb[i] ?? -1;
+    if (va !== vb) return va - vb;
+  }
+  return (a || "").localeCompare(b || "");
+}
+
+export interface ResolvedSopSection {
+  id: string;
+  title: string;
+  /** Display label, e.g. "4.1.2 — Dispensing …" */
+  label: string;
+}
+
+/**
+ * Locate which numbered section of a parsed SOP contains `excerpt`.
+ * Used after re-check so the § badge reflects where the revised text actually sits
+ * (which may differ from the section named on the original finding).
+ */
+export function resolveSectionForExcerpt(
+  parsed: ParsedSop,
+  excerpt: string,
+): ResolvedSopSection {
+  const empty: ResolvedSopSection = { id: "", title: "", label: "" };
+  const text = (excerpt || "").trim();
+  if (!text) return empty;
+
+  const needle = text.replace(/\s+/g, " ").toLowerCase();
+  if (parsed.lines.length && needle.length >= 12) {
+    const probes: string[] = [];
+    const head = needle.slice(0, Math.min(72, needle.length));
+    if (head.length >= 12) probes.push(head);
+    if (needle.length > 80) {
+      const midStart = Math.floor(needle.length / 3);
+      probes.push(needle.slice(midStart, midStart + 60));
+    }
+
+    for (const probe of probes) {
+      const key = probe.slice(0, Math.min(48, probe.length));
+      if (key.length < 12) continue;
+      const line = parsed.lines.find((l) => l.text.toLowerCase().includes(key));
+      if (!line?.sectionId) continue;
+      const sec = parsed.sections.find((s) => s.id === line.sectionId);
+      const id = line.sectionId;
+      const title = (line.sectionTitle || sec?.title || "").trim();
+      return { id, title, label: title ? `${id} — ${title}` : id };
+    }
+  }
+
+  const id = extractSopSectionId(text);
+  if (!id) return empty;
+  const sec = parsed.sections.find((s) => s.id === id);
+  const title = (sec?.title || "").trim();
+  return { id, title, label: title ? `${id} — ${title}` : id };
+}
+
 /** Extract line numbers referenced in a finding field (e.g. "L042" or "L042-L045"). */
 export function extractLineRefs(text: string): number[] {
   const refs: number[] = [];

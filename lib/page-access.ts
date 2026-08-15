@@ -1,4 +1,4 @@
-import { matchPage, type AppPage } from "@/lib/page-registry";
+import { getPage, matchPage, type AppPage } from "@/lib/page-registry";
 import { parseAssignedDepartments, departmentsMatch } from "@/lib/access-control";
 
 type RoleLike = string | undefined | null;
@@ -33,6 +33,16 @@ export function canAccessPath(
 ): boolean {
   const page = matchPage(pathname);
   if (!page) return true;
+  return canAccessPageKey(role, pageAccess, page);
+}
+
+/** Users who can execute the Compliance Engine (admins + granted users). */
+export function isComplianceOperator(
+  role: RoleLike,
+  pageAccess: string[] | null | undefined,
+): boolean {
+  const page = getPage("compliance");
+  if (!page) return role === "admin";
   return canAccessPageKey(role, pageAccess, page);
 }
 

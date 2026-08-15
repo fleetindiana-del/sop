@@ -9,6 +9,7 @@ import type {
 import { computeWeightedScoreBreakdown } from "@/lib/complianceClassification";
 import { attachGuidelineSourceFields } from "@/lib/guidelineClauseDisplay";
 import mongoose from "mongoose";
+import { completeMatchingComplianceRunRequests } from "@/lib/complianceRunRequests";
 
 function isObjectId(value?: string): boolean {
   return !!value && mongoose.Types.ObjectId.isValid(value);
@@ -143,11 +144,29 @@ export async function saveComplianceReport(data: {
     analyzedAt: new Date(),
   };
 
-  return ComplianceReport.findOneAndUpdate(
+  const saved = await ComplianceReport.findOneAndUpdate(
     { sopId: new mongoose.Types.ObjectId(data.sopId) },
     { $set: reportData },
     { upsert: true, returnDocument: 'after' },
   );
+  try {
+    await completeMatchingComplianceRunRequests({
+      _id: saved?._id,
+      sopId: saved?.sopId ?? data.sopId,
+      sopIdentifier: saved?.sopIdentifier ?? data.sopIdentifier,
+      sopName: saved?.sopName ?? data.sopName,
+      department: saved?.department ?? data.department,
+      overallScore: saved?.overallScore ?? data.overallScore,
+      complianceStatus: saved?.complianceStatus ?? data.complianceStatus,
+      analyzedAt: saved?.analyzedAt,
+      compliantCount: saved?.compliantCount,
+      partialCount: saved?.partialCount,
+      nonCompliantCount: saved?.nonCompliantCount,
+    });
+  } catch (err) {
+    console.error("[compliance] failed to complete matching run requests:", err);
+  }
+  return saved;
 }
 
 export async function getComplianceReport(sopId: string) {

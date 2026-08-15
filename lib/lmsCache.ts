@@ -151,6 +151,7 @@ export const lmsServerKeys = {
   journeyContent: (sopCode: string) => `lms:journey-content:${sopCode.toUpperCase()}`,
   adminTrainingStatus: (department: string) => `lms:admin:training-status:v2:${department || 'all'}`,
   adminEmployeeTraining: (department: string) => `lms:admin:employee-training:v4:${department || 'all'}`,
+  trainerDashboard: (employeeId: string) => `lms:trainer:dashboard:v2:${employeeId}`,
   adminMeta: () => 'lms:admin:meta:v2',
   adminMetaForSop: (sopCode: string) => `lms:admin:meta:sop:v2:${sopCode.toUpperCase()}`,
   adminExamSettings: () => 'lms:admin:exam-settings',

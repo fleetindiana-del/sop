@@ -19,11 +19,18 @@ type Params = { params: Promise<{ sopCode: string }> };
 
 type RawMcq = {
   bankId: unknown;
+  /** Stable master-question id. Identical across languages — the EN and GU
+   *  versions of one MCQ carry the same id. */
+  mcqId?: string;
   question: string;
   options: string[];
   correctAnswer: string;
   explanation?: string;
   sopReference?: string;
+  /** Second-language rendering of THIS question, when a bilingual view was asked
+   *  for. Same options in the same order, so the master's letter still scores. */
+  altQuestion?: string | null;
+  altOptions?: string[] | null;
 };
 
 function toAbcdQuestions(raw: RawMcq[]) {
@@ -39,8 +46,20 @@ function toAbcdQuestions(raw: RawMcq[]) {
       );
       if (idx >= 0 && idx < 4) letter = letters[idx];
     }
+    // The alt options sit at the SAME indexes as the master's, so `letter` above
+    // is the correct answer in both languages — one MCQ, one answer key.
+    const altOpts = Array.isArray(q.altOptions) ? q.altOptions : [];
+    const alt = q.altQuestion && altOpts.length === 4
+      ? {
+          question: q.altQuestion,
+          optionA: altOpts[0] ?? '',
+          optionB: altOpts[1] ?? '',
+          optionC: altOpts[2] ?? '',
+          optionD: altOpts[3] ?? '',
+        }
+      : undefined;
     return {
-      _id: `${String(q.bankId)}_${i}`,
+      _id: `${String(q.bankId)}_${q.mcqId ?? i}`,
       question: q.question,
       optionA: opts[0] ?? '',
       optionB: opts[1] ?? '',
@@ -49,6 +68,7 @@ function toAbcdQuestions(raw: RawMcq[]) {
       correctAnswer: letter,
       explanation: q.explanation ?? '',
       sopReference: String(q.sopReference || '').trim(),
+      ...(alt ? { alt } : {}),
     };
   });
 }
@@ -58,29 +78,55 @@ function toAbcdQuestions(raw: RawMcq[]) {
  * - questions / both → random sample (different set per employee)
  * - options / none   → stable ordered slice (same set for everyone)
  * - all=true         → every non-similar question (trainers); still shuffled when mode says so
+ *
+ * `source` picks where the text comes from:
+ * - 'master'      → the English master questions
+ * - 'translation' → the master questions rendered in `lang` (same questions, same
+ *                   answers, translated text)
+ * - 'legacy'      → a standalone Gujarati bank generated before translations existed
  */
+type QuestionSource = 'master' | 'translation' | 'legacy';
+
 async function fetchQuestions(
   sopCode: string,
   language: string,
   count: number,
   shuffleMode: ShuffleMode,
   all = false,
+  source: QuestionSource = 'master',
+  lang: 'gu' = 'gu',
+  /** Also project the `lang` rendering alongside the master (trainer view). */
+  withAlt = false,
 ): Promise<RawMcq[]> {
   if (!all && count <= 0) return [];
 
   const familyRegex = sopFamilyIdentifierRegex(sopCode);
   const randomize = shuffleMode === 'questions' || shuffleMode === 'both';
+  const translated = source === 'translation';
+  const tPath = `mcqs.translations.${lang}`;
 
   const pipeline: mongoose.PipelineStage[] = [
     {
       $match: {
         sopIdentifier: { $regex: familyRegex },
         isObsolete: { $ne: true },
-        language,
+        // Translations hang off the English master bank, so that is what we read
+        // even when the learner asked for Gujarati.
+        ...(translated
+          ? { $or: [{ language: 'English' }, { language: { $exists: false } }] }
+          : { language }),
       },
     },
     { $unwind: '$mcqs' },
-    { $match: { 'mcqs.isSimilar': { $ne: true } } },
+    {
+      $match: {
+        'mcqs.isSimilar': { $ne: true },
+        // A translation of an edited master is stale — never serve it in an exam.
+        ...(translated
+          ? { [tPath]: { $exists: true, $ne: null }, [`${tPath}.isStale`]: { $ne: true } }
+          : {}),
+      },
+    },
   ];
 
   if (all) {
@@ -94,15 +140,32 @@ async function fetchQuestions(
     pipeline.push({ $limit: count });
   }
 
+  // Sorting always keys off the MASTER text, so the stable (non-shuffled) question
+  // order is the same set in the same sequence in every language.
   pipeline.push({
     $project: {
       _id: 0,
       bankId: '$_id',
-      question: '$mcqs.question',
-      options: '$mcqs.options',
-      correctAnswer: '$mcqs.correctAnswer',
-      explanation: '$mcqs.explanation',
+      mcqId: '$mcqs.mcqId',
+      question: translated ? `$${tPath}.question` : '$mcqs.question',
+      options: translated ? `$${tPath}.options` : '$mcqs.options',
+      correctAnswer: translated ? `$${tPath}.correctAnswer` : '$mcqs.correctAnswer',
+      explanation: translated ? `$${tPath}.explanation` : '$mcqs.explanation',
+      // Clause reference is language-neutral — keep the master's.
       sopReference: '$mcqs.sopReference',
+      // Bilingual view: attach the translation when there is a fresh one. Stale or
+      // missing translations simply yield null, so the question is still asked —
+      // just in the master language only.
+      ...(withAlt
+        ? {
+            altQuestion: {
+              $cond: [{ $eq: [`$${tPath}.isStale`, true] }, null, `$${tPath}.question`],
+            },
+            altOptions: {
+              $cond: [{ $eq: [`$${tPath}.isStale`, true] }, null, `$${tPath}.options`],
+            },
+          }
+        : {}),
     },
   });
 
@@ -207,13 +270,35 @@ export async function GET(req: NextRequest, { params }: Params) {
       });
     }
 
-    const raw = await fetchQuestions(
-      sopCode,
-      language,
-      useAllExamQuestions ? Number.MAX_SAFE_INTEGER : count,
-      resolved.shuffleMode,
-      useAllExamQuestions,
-    );
+    const wanted = useAllExamQuestions ? Number.MAX_SAFE_INTEGER : count;
+
+    // English reads the master bank. Gujarati prefers translations of that same
+    // master (one MCQ, two languages); SOPs not translated yet still fall back to
+    // their legacy standalone Gujarati bank so no learner loses their exam.
+    // Trainers verify the translated paper, so they always sit the bilingual view:
+    // the English master with its Gujarati rendering attached to each question.
+    // It is still ONE question with one answer key — never two exams.
+    let source: QuestionSource = 'master';
+    let raw: RawMcq[] = [];
+    let bilingual = false;
+    if (resolved.isTrainer) {
+      raw = await fetchQuestions(sopCode, 'English', wanted, resolved.shuffleMode, useAllExamQuestions, 'master', 'gu', true);
+      bilingual = raw.some((r) => typeof r.altQuestion === 'string' && r.altQuestion.trim() !== '');
+      // A SOP that only ever had a standalone Gujarati bank has no master to pair.
+      if (raw.length === 0) {
+        source = 'legacy';
+        raw = await fetchQuestions(sopCode, 'Gujarati', wanted, resolved.shuffleMode, useAllExamQuestions, 'legacy');
+      }
+    } else if (language === 'Gujarati') {
+      source = 'translation';
+      raw = await fetchQuestions(sopCode, language, wanted, resolved.shuffleMode, useAllExamQuestions, 'translation');
+      if (raw.length === 0) {
+        source = 'legacy';
+        raw = await fetchQuestions(sopCode, language, wanted, resolved.shuffleMode, useAllExamQuestions, 'legacy');
+      }
+    } else {
+      raw = await fetchQuestions(sopCode, language, wanted, resolved.shuffleMode, useAllExamQuestions, 'master');
+    }
     const questions = toAbcdQuestions(raw);
 
     // Reflect the real set size so the learner UI / timer pacing stay accurate.
@@ -225,6 +310,12 @@ export async function GET(req: NextRequest, { params }: Params) {
       questions,
       mode,
       settings: learnerSettings,
+      language: bilingual ? 'both' : source === 'master' ? 'en' : 'gu',
+      // The UI renders both renderings of every question when this is set.
+      bilingual,
+      // Lets the UI (and support) tell a translated exam from a legacy standalone
+      // Gujarati bank without inspecting the questions.
+      questionSource: source,
     });
   } catch (err: unknown) {
     return NextResponse.json(

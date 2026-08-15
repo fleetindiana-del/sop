@@ -19,6 +19,11 @@ import {
 } from "@/lib/compliance-sop-content";
 import { sopIdentifierMatchFilter } from "@/lib/sopIdentifierNormalize";
 import { findSuggestedTextInRevised, type SuggestionMatch } from "@/lib/recheckResolution";
+import {
+  extractSopSectionId,
+  parseSopStructure,
+  resolveSectionForExcerpt,
+} from "@/lib/sopStructureParser";
 
 export const maxDuration = 300;
 
@@ -41,6 +46,8 @@ interface PointCheck {
   evidence: string;
   note: string;
   revisedExcerpt: string;
+  /** Section number in the REVISED SOP where evidence/revisedExcerpt sits (e.g. "5.13.7"). */
+  revisedSopSection?: string;
 }
 
 /** A verdict banked by an earlier re-check (or by the report itself) that must not regress. */
@@ -48,6 +55,7 @@ interface CarriedVerdict {
   evidence: string;
   note: string;
   revisedExcerpt: string;
+  revisedSopSection: string;
   ignored: boolean;
 }
 
@@ -143,11 +151,12 @@ function buildSystemPrompt(): string {
     "1c. Gaps about data not being tracked, missing forms, logs, or record templates MUST be marked resolved when a linked annexure provides that tracking/form evidence.",
     "1d. JUDGE THE WHOLE DOCUMENT, NOT ONE SECTION. A prior gap names the section, clause, or annexure where it was FIRST observed — that is only where the auditor looked, NOT where the fix must live. Search the ENTIRE revised SOP (every section and clause, all annexures, forms, logs, and record templates) for text that satisfies the requirement. If the requirement is covered ANYWHERE in the document, status='resolved' — even when the wording sits in a different section, a different clause number, or an annexure than the one named in the prior gap.",
     "1e. If the revised SOP contains the 'Suggested action' text (verbatim or reworded, under any clause number), that gap is RESOLVED — quote it in 'evidence'.",
+    "1f. For EACH prior gap, ALSO return 'revisedSopSection': the numbered section heading in the REVISED SOP (or annexure label) where your evidence/revisedExcerpt actually appears — e.g. '5.13.7' or 'Annexure-I'. Do NOT copy the original gap's section if the revised text lives elsewhere.",
     "2. Scan the revised SOP for NEW issues, but be CONSERVATIVE: only raise a new issue when it is a clear, material violation of a SPECIFIC regulatory guideline requirement (name the guideline/clause). Do NOT invent, pad, or force new points. Do NOT raise stylistic, speculative, or minor issues. If nothing material is found, return an empty newIssues array.",
     "2b. NEVER repeat a point that is already in the prior-gaps list, and never repeat a point listed under ALREADY REPORTED — those are tracked separately. A requirement that the revised SOP or an annexure now covers must not be raised again in any form.",
     "Be strict and evidence-based. Do not mark a point resolved unless the revised text genuinely covers it.",
     "Respond with ONLY valid JSON in exactly this shape:",
-    '{"pointChecks":[{"index":0,"status":"resolved"|"open","evidence":"string","note":"string","revisedExcerpt":"string"}],"newIssues":[{"clauseNumber":"string","clauseTitle":"string","guidelineName":"string","issue":"string","severity":"low"|"medium"|"high","suggestion":"string"}]}',
+    '{"pointChecks":[{"index":0,"status":"resolved"|"open","evidence":"string","note":"string","revisedExcerpt":"string","revisedSopSection":"string"}],"newIssues":[{"clauseNumber":"string","clauseTitle":"string","guidelineName":"string","issue":"string","severity":"low"|"medium"|"high","suggestion":"string"}]}',
     "The 'index' in each pointCheck MUST match the index of the prior gap in the provided list. Return one pointCheck per prior gap.",
   ].join("\n");
 }
@@ -367,6 +376,7 @@ export async function POST(request: NextRequest) {
         evidence?: string;
         note?: string;
         revisedExcerpt?: string;
+        revisedSopSection?: string;
         ignored?: boolean;
       }[];
       newIssues?: {
@@ -388,6 +398,7 @@ export async function POST(request: NextRequest) {
           evidence: r.evidence ?? "",
           note: r.note ?? "",
           revisedExcerpt: r.revisedExcerpt ?? "",
+          revisedSopSection: r.revisedSopSection ?? "",
           ignored: !!r.ignored,
         });
       }
@@ -447,7 +458,13 @@ export async function POST(request: NextRequest) {
       if (carried || entry.closedOnReport) {
         carriedByIndex.set(
           i,
-          carried ?? { evidence: "", note: "", revisedExcerpt: "", ignored: false },
+          carried ?? {
+            evidence: "",
+            note: "",
+            revisedExcerpt: "",
+            revisedSopSection: "",
+            ignored: false,
+          },
         );
       } else {
         toCheckIndexes.push(i);
@@ -529,15 +546,38 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Map revised excerpts back onto the REVISED SOP's section numbering so the UI
+    // § badge reflects where the text actually lives (not the original finding's section).
+    const parsedRevised = parseSopStructure(mainRevisedText);
+
+    const resolveRevisedSection = (
+      excerpt: string,
+      modelSection?: string,
+      fallbackFindingSection?: unknown,
+    ): string => {
+      const resolved = resolveSectionForExcerpt(parsedRevised, excerpt);
+      if (resolved.label) return resolved.label;
+      if (resolved.id) return resolved.id;
+      const fromModel = (modelSection || "").trim();
+      if (fromModel) return fromModel;
+      const fromExcerpt = extractSopSectionId(excerpt);
+      if (fromExcerpt) return fromExcerpt;
+      return extractSopSectionId(String(fallbackFindingSection ?? "")) || "";
+    };
+
     const results = priorEntries.map(({ finding, origin }, i) => {
       const carried = carriedByIndex.get(i);
       if (carried) {
+        const carriedExcerpt = carried.evidence || carried.revisedExcerpt;
         return {
           finding,
           status: "addressed" as const,
           evidence: carried.evidence,
           note: carried.note,
           revisedExcerpt: carried.revisedExcerpt,
+          revisedSopSection:
+            carried.revisedSopSection ||
+            resolveRevisedSection(carriedExcerpt, undefined, finding.sopSectionAffected),
           ignored: carried.ignored,
           carriedForward: true,
           origin,
@@ -547,14 +587,22 @@ export async function POST(request: NextRequest) {
       const verified = textVerified.get(i);
       const status: "addressed" | "open" =
         c?.status === "resolved" || verified ? "addressed" : "open";
+      const evidence = verified ? verified.excerpt : c?.evidence ?? "";
+      const revisedExcerpt = verified ? verified.excerpt : c?.revisedExcerpt ?? "";
+      const sectionSource = status === "addressed" ? evidence || revisedExcerpt : revisedExcerpt || evidence;
       return {
         finding,
         status,
-        evidence: verified ? verified.excerpt : c?.evidence ?? "",
+        evidence,
         note: verified
           ? `Suggested text found in the revised SOP (${Math.round(verified.coverage * 100)}% match) — covered outside the originally flagged section.`
           : c?.note ?? "",
-        revisedExcerpt: verified ? verified.excerpt : c?.revisedExcerpt ?? "",
+        revisedExcerpt,
+        revisedSopSection: resolveRevisedSection(
+          sectionSource,
+          c?.revisedSopSection,
+          finding.sopSectionAffected,
+        ),
         ignored: origin === "new-issue" && ignoredIssueKeys.has(findingKey(finding)),
         carriedForward: false,
         origin,

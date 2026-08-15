@@ -19,9 +19,22 @@ import {
   Wand2,
   X,
   Paperclip,
+  Languages,
 } from "lucide-react";
 
+/** One language version of a master MCQ — same question, same correct option. */
+interface McqTranslation {
+  question: string;
+  options: string[];
+  correctAnswer: string;
+  explanation?: string;
+  isStale?: boolean;
+  isVerified?: boolean;
+}
+
 interface MCQ {
+  mcqId?: string;
+  translations?: Record<string, McqTranslation | undefined>;
   question: string;
   difficulty?: "Easy" | "Medium" | "Hard" | string;
   difficultyStars?: string;
@@ -98,6 +111,12 @@ function QuestionCard({ mcq, originalIndex, bankId, searchTerm, onUpdated, onOpe
   const [regenerating, setRegenerating] = useState(false);
   const [regenError, setRegenError] = useState<string | null>(null);
   const difficulty = displayDifficulty(mcq.difficulty);
+
+  // One question, viewed in either language. The Gujarati version is a translation
+  // of THIS question — same options in the same order, same correct answer.
+  const gu = mcq.translations?.gu;
+  const [showGu, setShowGu] = useState(false);
+  const view = showGu && gu ? gu : mcq;
 
   async function toggle(field: "isChecked" | "isReviewed" | "isSimilar") {
     setUpdating(field);
@@ -185,6 +204,27 @@ function QuestionCard({ mcq, originalIndex, bankId, searchTerm, onUpdated, onOpe
                   Creative
                 </span>
               )}
+              {gu && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowGu((v) => !v); }}
+                  title={
+                    gu.isStale
+                      ? "Gujarati translation is out of date — the English question changed since it was made"
+                      : "Show this question in Gujarati"
+                  }
+                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide transition ${
+                    gu.isStale
+                      ? "border-amber-200 bg-amber-50 text-amber-700"
+                      : showGu
+                      ? "border-indigo-300 bg-indigo-600 text-white"
+                      : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                  }`}
+                >
+                  <Languages className="h-3 w-3" />
+                  {showGu ? "EN" : "ગુજ"}
+                  {gu.isStale ? " • stale" : ""}
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-1.5">
               {mcq.isSimilar && (
@@ -210,7 +250,7 @@ function QuestionCard({ mcq, originalIndex, bankId, searchTerm, onUpdated, onOpe
             <div className="flex min-w-0 items-start gap-1.5">
               <span className="mt-px shrink-0 select-none text-[15px] font-black text-purple-600">Q.</span>
               <p className={`flex-1 min-w-0 break-words text-[15px] font-bold leading-snug text-gray-800 line-clamp-3 ${regenerating ? "opacity-40" : ""}`}>
-                {sl ? highlight(mcq.question, sl) : mcq.question}
+                {sl ? highlight(view.question, sl) : view.question}
               </p>
             </div>
             {regenerating && (
@@ -226,8 +266,8 @@ function QuestionCard({ mcq, originalIndex, bankId, searchTerm, onUpdated, onOpe
 
           {/* Options 2×2 */}
           <div className="grid flex-1 grid-cols-2 gap-2">
-            {(mcq.options || []).slice(0, 4).map((opt, oi) => {
-              const isCorrect = opt === mcq.correctAnswer;
+            {(view.options || []).slice(0, 4).map((opt, oi) => {
+              const isCorrect = opt === view.correctAnswer;
               return (
                 <div key={oi}
                   className={`flex items-center gap-2 rounded-lg border px-3 py-3 text-[13px] font-medium ${
@@ -465,6 +505,11 @@ export function MCQViewerModal({ bankId, onClose, onBack }: MCQViewerModalProps)
     creative: mcqs.filter((q) => isCreativeMcq(q)).length,
   };
 
+  // Gujarati coverage of THIS bank's master questions. Stale ones are counted
+  // separately — the LMS will not serve them until they are re-translated.
+  const guTranslated = mcqs.filter((q) => q.translations?.gu).length;
+  const guStale = mcqs.filter((q) => q.translations?.gu?.isStale).length;
+
   const isGuj = (bank?.language ?? "").toLowerCase() === "gujarati";
   const langCode = isGuj ? "GU" : "EN";
 
@@ -601,6 +646,28 @@ export function MCQViewerModal({ bankId, onClose, onBack }: MCQViewerModalProps)
                   <Sparkles className="h-4 w-4" />
                   <span className="hidden sm:inline">Smart Regenerate</span>
                 </button>
+
+                {/* Gujarati translation coverage of this bank's master questions */}
+                {langCode === "EN" && mcqs.length > 0 && (
+                  <div
+                    title={
+                      guStale > 0
+                        ? `${guStale} translation(s) out of date — re-run scripts/translate-mcqs.ts`
+                        : "Master questions available in Gujarati"
+                    }
+                    className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${
+                      guStale > 0
+                        ? "border-amber-200 bg-amber-50 text-amber-700"
+                        : guTranslated === mcqs.length
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : "border-gray-200 bg-gray-50 text-gray-500"
+                    }`}
+                  >
+                    <Languages className="h-4 w-4" />
+                    ગુજ {guTranslated}/{mcqs.length}
+                    {guStale > 0 ? ` • ${guStale} stale` : ""}
+                  </div>
+                )}
 
                 {/* EN/GU toggle — flips between the English & Gujarati banks of this SOP */}
                 <div className="flex overflow-hidden rounded-xl border border-gray-200">

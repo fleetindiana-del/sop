@@ -6,6 +6,7 @@ import Employee from '@/models/Employee';
 import SOP, { type ISOP } from '@/models/SOP';
 import MatrixSOPAssignment from '@/models/MatrixSOPAssignment';
 import TrainingExamSchedule from '@/models/TrainingExamSchedule';
+import ScheduledExam from '@/models/lms/ScheduledExam';
 import { getGroupedRegistryRows } from '@/lib/dashboardRegistrySource';
 import { normalizeDepartment } from '@/lib/department-colors';
 import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
@@ -60,6 +61,10 @@ export interface EmployeeSopAssignment {
   examDate?: string;
   /** ISO date of the current SOP document expiry, if known. */
   expiryDate?: string;
+  /** True when a department trainer scheduled this exam directly for the employee. */
+  scheduledByTrainer?: boolean;
+  /** Name of the trainer who scheduled it (only with `scheduledByTrainer`). */
+  scheduledBy?: string;
 }
 
 function empKey(department: string, name: string): string {
@@ -571,8 +576,96 @@ async function computeEmployeeAssignmentsMap(): Promise<Map<string, EmployeeSopA
 
   await mergeInductionAssignments(map, lookup);
   await attachExamDates(map);
+  // Runs last: a trainer-scheduled exam is authoritative over the matrix date.
+  await mergeTrainerScheduledExams(map, lookup);
 
   return map;
+}
+
+/**
+ * Fold trainer-scheduled exams into the assignment map so they appear in the
+ * employee's LMS even when the SOP is not on their training-matrix row. An
+ * existing assignment for the same SOP is retargeted to the trainer's month and
+ * deadline rather than duplicated.
+ */
+async function mergeTrainerScheduledExams(
+  map: Map<string, EmployeeSopAssignment[]>,
+  lookup: SopLookup,
+): Promise<void> {
+  const schedules = await ScheduledExam.find({ status: 'scheduled' })
+    .select('employeeId employeeName department sopCode sopName scheduledDate month year trainerName')
+    .lean<Array<{
+      employeeId: string;
+      employeeName: string;
+      department: string;
+      sopCode: string;
+      sopName?: string;
+      scheduledDate: Date;
+      month: number;
+      year: number;
+      trainerName?: string;
+    }>>();
+
+  if (schedules.length === 0) return;
+
+  // The employee is the source of truth for name/department: a rename or a
+  // transfer after scheduling must not strand the exam under the old key.
+  const employeeIds = [...new Set(schedules.map((s) => s.employeeId).filter(Boolean))];
+  const liveEmployees = await Employee.find({ _id: { $in: employeeIds }, isActive: true })
+    .select('_id name department')
+    .lean<Array<{ _id: unknown; name: string; department: string }>>();
+  const liveById = new Map(
+    liveEmployees.map((e) => [String(e._id), { name: e.name, department: e.department }]),
+  );
+
+  for (const s of schedules) {
+    const live = liveById.get(String(s.employeeId));
+    // Inactive or deleted employees drop out — their exams must not resurface.
+    if (s.employeeId && !live) continue;
+    const department = String(live?.department || s.department || '').trim();
+    const name = String(live?.name || s.employeeName || '').trim();
+    const code = stripVersion(s.sopCode);
+    if (!department || !name || !code || isInvalidSopAssignmentCode(code)) continue;
+
+    const key = empKey(department, name);
+    const list = map.get(key) || [];
+    const examDate = toDateOnlyIso(new Date(s.scheduledDate));
+    // Version-insensitive: a schedule for "ABC" owns an existing "ABC-00" row.
+    const existing = list.find((a) => stripVersion(a.sopCode) === code);
+
+    if (existing) {
+      existing.month = s.month;
+      existing.monthName = MONTH_NAMES[s.month] || existing.monthName;
+      existing.year = s.year;
+      existing.examDate = examDate;
+      existing.scheduledByTrainer = true;
+      existing.scheduledBy = s.trainerName;
+      continue;
+    }
+
+    const assignment: EmployeeSopAssignment = {
+      sopCode: code,
+      sopName: s.sopName,
+      month: s.month,
+      monthName: MONTH_NAMES[s.month] || `Month ${s.month}`,
+      year: s.year,
+      trainingType: 'training',
+      examDate,
+      scheduledByTrainer: true,
+      scheduledBy: s.trainerName,
+    };
+    enrichAssignment(assignment, department, lookup);
+    list.push(assignment);
+    map.set(key, list);
+  }
+
+  for (const list of map.values()) {
+    list.sort((a, b) => {
+      if (a.year !== b.year) return b.year - a.year;
+      if (a.month !== b.month) return a.month - b.month;
+      return a.sopCode.localeCompare(b.sopCode);
+    });
+  }
 }
 
 /**

@@ -178,6 +178,15 @@ export const useComplianceRunStore = create<ComplianceRunState>((set, get) => ({
       sopLists: { completed: [], cached: [], failed: [] },
     });
 
+    void fetch("/api/compliance/run-requests/ack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sopIds: candidates.map((c) => c._id),
+        identifiers: candidates.map((c) => c.identifier),
+      }),
+    }).catch(() => {});
+
     let lastAnalyzedSopId: string | null = null;
 
     for (const sop of candidates) {

@@ -37,6 +37,17 @@ interface MCQQuestion {
   explanation: string;
   /** MCQ Bank SOP section / clause reference, e.g. "4.2.1 — …". */
   sopReference?: string;
+  /**
+   * Gujarati rendering of this same MCQ (trainer bilingual view only). Its options
+   * sit at the same letters as the English ones, so `correctAnswer` scores both.
+   */
+  alt?: {
+    question: string;
+    optionA: string;
+    optionB: string;
+    optionC: string;
+    optionD: string;
+  };
 }
 
 interface AttemptScore {
@@ -44,7 +55,12 @@ interface AttemptScore {
   score: number;
 }
 
-interface DisplayOption { label: 'A' | 'B' | 'C' | 'D'; text: string; }
+interface DisplayOption {
+  label: 'A' | 'B' | 'C' | 'D';
+  text: string;
+  /** Same option in the second language — carried on the same letter. */
+  altText?: string;
+}
 interface PreparedQuestion extends MCQQuestion { displayOptions: DisplayOption[]; }
 
 interface QuizSettings {
@@ -689,15 +705,38 @@ function shuffleArray<T>(arr: T[]): T[] {
 
 function prepareQuestions(qs: MCQQuestion[], shuffleOpts: boolean): PreparedQuestion[] {
   return qs.map((q) => {
+    // Shuffling moves the PAIR, so an option keeps the same letter in both
+    // languages and the two panels can never drift apart.
     let opts: DisplayOption[] = [
-      { label: 'A', text: q.optionA },
-      { label: 'B', text: q.optionB },
-      { label: 'C', text: q.optionC },
-      { label: 'D', text: q.optionD },
+      { label: 'A', text: q.optionA, altText: q.alt?.optionA },
+      { label: 'B', text: q.optionB, altText: q.alt?.optionB },
+      { label: 'C', text: q.optionC, altText: q.alt?.optionC },
+      { label: 'D', text: q.optionD, altText: q.alt?.optionD },
     ];
     if (shuffleOpts) opts = shuffleArray(opts);
     return { ...q, displayOptions: opts };
   });
+}
+
+/** Gujarati line shown under its English counterpart on review cards. */
+function AltLine({ text, className = '' }: { text?: string; className?: string }) {
+  if (!text) return null;
+  return (
+    <p lang="gu" className={`mt-1 leading-relaxed text-gray-600 ${className}`}>
+      {text}
+    </p>
+  );
+}
+
+/**
+ * Trainer status from the LMS session cache. Used only to skip a language picker
+ * that would have no effect — the server alone decides what a trainer is served.
+ */
+function cachedIsTrainer(): boolean {
+  const cached = readLmsClientCache<{ employee?: { isTrainer?: boolean } }>(
+    lmsClientFields.employee,
+  );
+  return cached?.value?.employee?.isTrainer === true;
 }
 
 function formatTime(seconds: number): string {
@@ -777,10 +816,34 @@ function QuizStep({
     setVisited(new Set([0]));
   }, [questions]);
 
-  // Gujarati assessment pulls from the Gujarati MCQ bank via the lang param.
-  const lang = step.id === 'quizGu' ? 'gu' : 'en';
+  // One assessment, two renderings of the same MCQs. The learner picks a language
+  // (or arrives with ?lang=gu from the dashboard); the questions, their order and
+  // the correct answers are identical either way.
+  const offeredLangs: Array<'en' | 'gu'> = step.languages?.length ? step.languages : ['en'];
+  const [lang, setLang] = useState<'en' | 'gu' | null>(() => {
+    const deepLink = typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('lang')
+      : null;
+    if (deepLink === 'gu' && offeredLangs.includes('gu')) return 'gu';
+    if (deepLink === 'en' && offeredLangs.includes('en')) return 'en';
+    // Trainers get both languages on every question — nothing to choose.
+    if (cachedIsTrainer()) return 'en';
+    // Only ask when there is genuinely a choice to make.
+    return offeredLangs.length === 1 ? offeredLangs[0] : null;
+  });
+  /** Set when a completed learner retakes and should be asked the language again. */
+  const [askLang, setAskLang] = useState(false);
+  /** Server paired every question with its Gujarati rendering (trainer view). */
+  const [bilingual, setBilingual] = useState(false);
 
-  const fetchQuestions = useCallback(async (mode: 'trial' | 'exam' = 'exam') => {
+  // `langOverride` lets the language picker start a retake immediately, before the
+  // `lang` state update has propagated into this callback.
+  const fetchQuestions = useCallback(async (
+    mode: 'trial' | 'exam' = 'exam',
+    langOverride?: 'en' | 'gu',
+  ) => {
+    const useLang = langOverride ?? lang;
+    if (!useLang) return; // waiting on the language choice
     setPhase('loading');
     setAnswers({});
     setScore(0);
@@ -790,13 +853,14 @@ function QuizStep({
     setAckedQuestionIds(new Set());
     if (mode === 'exam') setExamAttempts(0);
     try {
-      const res = await fetch(`/api/lms/quiz/${sopCode}?mode=${mode}&lang=${lang}`);
+      const res = await fetch(`/api/lms/quiz/${sopCode}?mode=${mode}&lang=${useLang}`);
       const data = await res.json() as {
         questions?: MCQQuestion[];
         settings?: QuizSettings;
         error?: string;
         trainerPending?: boolean;
         sopExpired?: boolean;
+        bilingual?: boolean;
       };
 
       if (!res.ok) {
@@ -818,13 +882,14 @@ function QuizStep({
         const trialCount = data.settings?.trialQuestionCount ?? 0;
         if (trialCount <= 0 || !data.questions?.length) {
           setSettings(data.settings ?? null);
-          const examRes = await fetch(`/api/lms/quiz/${sopCode}?mode=exam&lang=${lang}`);
+          const examRes = await fetch(`/api/lms/quiz/${sopCode}?mode=exam&lang=${useLang}`);
           const examData = await examRes.json() as {
             questions?: MCQQuestion[];
             settings?: QuizSettings;
             error?: string;
             trainerPending?: boolean;
             sopExpired?: boolean;
+            bilingual?: boolean;
           };
           if (!examRes.ok || !examData.questions?.length) {
             setSettings(examData.settings ?? data.settings ?? null);
@@ -839,6 +904,7 @@ function QuizStep({
           }
           setSettings(examData.settings ?? data.settings ?? null);
           setQuizMode('exam');
+          setBilingual(examData.bilingual === true);
           setQuestions(prepareQuestions(examData.questions, examData.settings?.shuffleOptions ?? false));
           setPhase('intro');
           return;
@@ -852,6 +918,7 @@ function QuizStep({
       }
       setSettings(data.settings ?? null);
       setQuizMode(mode);
+      setBilingual(data.bilingual === true);
       setQuestions(prepareQuestions(data.questions, data.settings?.shuffleOptions ?? false));
       setPhase('intro');
     } catch {
@@ -861,7 +928,9 @@ function QuizStep({
   }, [sopCode, lang]);
 
   // Prefer demo first when configured; otherwise start on the formal exam.
-  useEffect(() => { if (!step.completed) void fetchQuestions('trial'); }, [fetchQuestions, step.completed]);
+  useEffect(() => {
+    if (!step.completed && lang) void fetchQuestions('trial');
+  }, [fetchQuestions, step.completed, lang]);
 
   // Countdown timer — only when an admin time limit is set (formal exam only).
   useEffect(() => {
@@ -989,8 +1058,52 @@ function QuizStep({
     </div>
   ) : null;
 
+  const showCompletedSummary =
+    step.completed && phase === 'loading' && localAttempts === (step.attempts ?? 0);
+
+  // ── Language selection — same exam, learner's choice of language ────────────
+  if (askLang || (!lang && !showCompletedSummary)) {
+    const pick = (l: 'en' | 'gu') => {
+      setLang(l);
+      // A retake is already past the auto-start effect, so kick it off here.
+      if (askLang) { setAskLang(false); void fetchQuestions('exam', l); }
+    };
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-5 py-12">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-purple-100">
+          <ClipboardList className="h-8 w-8 text-purple-600" />
+        </div>
+        <div className="text-center">
+          <p className="text-lg font-bold text-gray-800">Select language</p>
+          <p className="mt-1 text-sm text-gray-500">
+            The same questions are asked in both languages. / બંને ભાષામાં એક જ પ્રશ્નો પૂછવામાં આવે છે.
+          </p>
+        </div>
+        <div className="grid w-full max-w-md grid-cols-1 gap-3 sm:grid-cols-2">
+          <button
+            onClick={() => pick('en')}
+            disabled={!offeredLangs.includes('en')}
+            className="rounded-xl border border-gray-200 bg-white py-4 text-base font-semibold text-gray-700 shadow-sm hover:border-purple-300 hover:bg-purple-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            English
+          </button>
+          <button
+            onClick={() => pick('gu')}
+            disabled={!offeredLangs.includes('gu')}
+            className="rounded-xl bg-purple-600 py-4 text-base font-semibold text-white shadow-sm hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            ગુજરાતી
+          </button>
+        </div>
+        <button onClick={onExit} className="text-xs font-medium text-gray-500 hover:text-gray-700">
+          Back
+        </button>
+      </div>
+    );
+  }
+
   // ── Already passed (step.completed) — show summary ──────────────────────────
-  if (step.completed && phase === 'loading' && localAttempts === (step.attempts ?? 0)) {
+  if (showCompletedSummary) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 py-12">
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
@@ -1009,7 +1122,12 @@ function QuizStep({
         {attemptHistoryBlock}
         {allowRetake && (
           <button
-            onClick={() => void fetchQuestions('exam')}
+            onClick={() => {
+              // Offer the language choice again when the SOP has more than one.
+              // Trainers always get both, so there is nothing to ask them.
+              if (offeredLangs.length > 1 && !cachedIsTrainer()) setAskLang(true);
+              else void fetchQuestions('exam');
+            }}
             className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
           >
             <RefreshCw className="h-3.5 w-3.5" /> Retake Assessment
@@ -1182,8 +1300,10 @@ function QuizStep({
               {questions.map((q, i) => {
                 const given = answers[q._id];
                 const isRight = given === q.correctAnswer;
-                const correctText = q.displayOptions.find((o) => o.label === q.correctAnswer)?.text ?? q.correctAnswer;
-                const givenText = q.displayOptions.find((o) => o.label === given)?.text;
+                const correctOpt = q.displayOptions.find((o) => o.label === q.correctAnswer);
+                const givenOpt = q.displayOptions.find((o) => o.label === given);
+                const correctText = correctOpt?.text ?? q.correctAnswer;
+                const givenText = givenOpt?.text;
                 const acked = ackedQuestionIds.has(q._id);
                 return (
                   <div
@@ -1195,6 +1315,7 @@ function QuizStep({
                     }`}
                   >
                     <p className="font-medium text-gray-800">{i + 1}. {q.question}</p>
+                    <AltLine text={q.alt?.question} className="text-sm font-medium" />
                     {q.sopReference && (
                       <p className="mt-1.5 rounded-md bg-white/70 px-2 py-1 text-[11px] leading-snug text-slate-600 ring-1 ring-inset ring-slate-200">
                         <span className="font-semibold text-slate-700">SOP reference: </span>
@@ -1206,16 +1327,19 @@ function QuizStep({
                         <div className="rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Correct answer</p>
                           <p className="text-xs text-emerald-900">{correctText}</p>
+                          <AltLine text={correctOpt?.altText} className="text-xs text-emerald-800" />
                         </div>
                       ) : (
                         <>
                           <div className="rounded-md border border-red-200 bg-white/80 px-2.5 py-1.5">
                             <p className="text-[10px] font-semibold uppercase tracking-wide text-red-600">Your answer (wrong)</p>
                             <p className="text-xs text-red-800">{givenText || '—'}</p>
+                            <AltLine text={givenOpt?.altText} className="text-xs text-red-700" />
                           </div>
                           <div className="rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5">
                             <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Correct answer</p>
                             <p className="text-xs text-emerald-900">{correctText}</p>
+                          <AltLine text={correctOpt?.altText} className="text-xs text-emerald-800" />
                           </div>
                         </>
                       )}
@@ -1303,8 +1427,10 @@ function QuizStep({
             </p>
             {retestQueue.map((q, i) => {
               const given = answers[q._id];
-              const correctText = q.displayOptions.find((o) => o.label === q.correctAnswer)?.text ?? q.correctAnswer;
-              const givenText = q.displayOptions.find((o) => o.label === given)?.text;
+              const correctOpt = q.displayOptions.find((o) => o.label === q.correctAnswer);
+              const givenOpt = q.displayOptions.find((o) => o.label === given);
+              const correctText = correctOpt?.text ?? q.correctAnswer;
+              const givenText = givenOpt?.text;
               const acked = ackedQuestionIds.has(q._id);
               return (
                 <div
@@ -1312,6 +1438,7 @@ function QuizStep({
                   className={`rounded-xl border p-3 text-sm ${acked ? 'border-amber-300 bg-amber-50/60' : 'border-red-200 bg-red-50'}`}
                 >
                   <p className="font-medium text-gray-800">{i + 1}. {q.question}</p>
+                  <AltLine text={q.alt?.question} className="text-sm font-medium" />
                   {q.sopReference && (
                     <p className="mt-1.5 rounded-md bg-white/70 px-2 py-1 text-[11px] leading-snug text-slate-600 ring-1 ring-inset ring-slate-200">
                       <span className="font-semibold text-slate-700">SOP reference: </span>
@@ -1322,10 +1449,12 @@ function QuizStep({
                     <div className="rounded-md border border-red-200 bg-white/80 px-2.5 py-1.5">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-red-600">Your answer (wrong)</p>
                       <p className="text-xs text-red-800">{givenText || '—'}</p>
+                      <AltLine text={givenOpt?.altText} className="text-xs text-red-700" />
                     </div>
                     <div className="rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Correct answer</p>
                       <p className="text-xs text-emerald-900">{correctText}</p>
+                      <AltLine text={correctOpt?.altText} className="text-xs text-emerald-800" />
                     </div>
                   </div>
                   {q.explanation && (
@@ -1360,8 +1489,10 @@ function QuizStep({
             {questions.map((q, i) => {
               const given = answers[q._id];
               const isRight = given === q.correctAnswer;
-              const correctText = q.displayOptions.find((o) => o.label === q.correctAnswer)?.text ?? q.correctAnswer;
-              const givenText = q.displayOptions.find((o) => o.label === given)?.text;
+              const correctOpt = q.displayOptions.find((o) => o.label === q.correctAnswer);
+              const givenOpt = q.displayOptions.find((o) => o.label === given);
+              const correctText = correctOpt?.text ?? q.correctAnswer;
+              const givenText = givenOpt?.text;
               const acked = ackedQuestionIds.has(q._id);
               return (
                 <div
@@ -1373,6 +1504,7 @@ function QuizStep({
                   }`}
                 >
                   <p className="font-medium text-gray-800">{i + 1}. {q.question}</p>
+                  <AltLine text={q.alt?.question} className="text-sm font-medium" />
                   {q.sopReference && (
                     <p className="mt-1.5 rounded-md bg-white/70 px-2 py-1 text-[11px] leading-snug text-slate-600 ring-1 ring-inset ring-slate-200">
                       <span className="font-semibold text-slate-700">SOP reference: </span>
@@ -1384,16 +1516,19 @@ function QuizStep({
                       <div className="rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5">
                         <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Correct answer</p>
                         <p className="text-xs text-emerald-900">{correctText}</p>
+                        <AltLine text={correctOpt?.altText} className="text-xs text-emerald-800" />
                       </div>
                     ) : (
                       <>
                         <div className="rounded-md border border-red-200 bg-white/80 px-2.5 py-1.5">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-red-600">Your answer (wrong)</p>
                           <p className="text-xs text-red-800">{givenText || '—'}</p>
+                          <AltLine text={givenOpt?.altText} className="text-xs text-red-700" />
                         </div>
                         <div className="rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Correct answer</p>
                           <p className="text-xs text-emerald-900">{correctText}</p>
+                          <AltLine text={correctOpt?.altText} className="text-xs text-emerald-800" />
                         </div>
                       </>
                     )}
@@ -1515,6 +1650,71 @@ function QuizStep({
     );
   }
 
+  // One answer per question, shared by both language panels: picking an option in
+  // either panel selects the same letter in the other. Nothing is answered twice.
+  const selectedLabel = answers[q._id];
+  const selectOption = (label: 'A' | 'B' | 'C' | 'D') =>
+    setAnswers((prev) => ({ ...prev, [q._id]: label }));
+  const showAlt = bilingual && !!q.alt;
+
+  const renderOptions = (variant: 'primary' | 'alt') => (
+    <div className="space-y-2.5">
+      {q.displayOptions.map((opt) => {
+        const selected = selectedLabel === opt.label;
+        const text = variant === 'alt' ? (opt.altText ?? '') : opt.text;
+        return (
+          <button
+            key={opt.label}
+            onClick={() => selectOption(opt.label)}
+            lang={variant === 'alt' ? 'gu' : 'en'}
+            aria-pressed={selected}
+            className={`flex w-full items-start gap-3 rounded-2xl border px-4 py-3.5 text-left transition ${
+              selected
+                ? 'border-purple-400 bg-purple-50 shadow-sm ring-1 ring-purple-200'
+                : 'border-gray-200 bg-white hover:border-purple-200 hover:bg-purple-50/40'
+            }`}
+          >
+            <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+              selected ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-500'
+            }`}>
+              {opt.label}
+            </span>
+            <span className={`flex-1 text-sm font-medium leading-relaxed ${
+              selected ? 'text-purple-900' : 'text-gray-700'
+            }`}>
+              {text}
+            </span>
+            {selected && <Check className="mt-1 h-4 w-4 shrink-0 text-purple-600" />}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const renderQuestionPanel = (variant: 'primary' | 'alt') => (
+    <div className="flex flex-col rounded-3xl border border-gray-200 bg-white p-5 shadow-sm md:p-6">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="rounded-md bg-purple-600 px-2 py-0.5 text-[11px] font-bold tabular-nums text-white">
+          Q{currentIdx + 1}
+        </span>
+        {showAlt && (
+          <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-[11px] font-semibold text-gray-600">
+            {variant === 'alt' ? 'ગુજરાતી' : 'English'}
+          </span>
+        )}
+      </div>
+      <p
+        lang={variant === 'alt' ? 'gu' : 'en'}
+        className="text-base font-semibold leading-relaxed text-gray-800 md:text-lg"
+      >
+        {variant === 'alt' ? q.alt?.question : q.question}
+      </p>
+      <div className="mt-4 border-t border-dashed border-gray-100 pt-4">
+        {renderOptions(variant)}
+      </div>
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-gray-50">
       {/* Violation warning overlay */}
@@ -1587,10 +1787,16 @@ function QuizStep({
       <div className="flex flex-1 gap-0 overflow-hidden">
         {/* Main question area */}
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
+          <div className={`mx-auto w-full ${showAlt ? 'max-w-6xl' : 'max-w-3xl'}`}>
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <span className="text-sm font-semibold text-gray-500">
               Question {currentIdx + 1} / {questions.length}
             </span>
+            {bilingual && (
+              <span className="rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700">
+                English + ગુજરાતી
+              </span>
+            )}
             {marked.has(currentIdx) && (
               <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
                 Marked for review
@@ -1598,35 +1804,33 @@ function QuizStep({
             )}
           </div>
 
-          {/* Question card */}
-          <div className="mb-5 rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-            <p className="text-lg font-medium leading-relaxed text-gray-800">{q.question}</p>
-          </div>
-
-          {/* Options */}
-          <div className="mb-6 space-y-3">
-            {q.displayOptions.map((opt) => {
-              const selected = answers[q._id] === opt.label;
-              return (
-                <button
-                  key={opt.label}
-                  onClick={() => setAnswers((prev) => ({ ...prev, [q._id]: opt.label }))}
-                  className={`flex w-full items-center gap-3 rounded-2xl border px-5 py-4 text-left text-sm font-medium transition ${
-                    selected
-                      ? 'border-purple-400 bg-purple-50 text-purple-800 shadow-sm'
-                      : 'border-gray-200 bg-white text-gray-700 hover:border-purple-200 hover:bg-purple-50/40'
-                  }`}
-                >
-                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                    selected ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-500'
-                  }`}>
-                    {opt.label}
-                  </span>
-                  {opt.text}
-                </button>
-              );
-            })}
-          </div>
+          {/* Question + options. Trainers see the same MCQ in both languages side
+              by side; both panels drive the one shared answer. */}
+          {showAlt ? (
+            <>
+              <div className="mb-3 flex items-start gap-2 rounded-xl border border-purple-200 bg-purple-50 px-3.5 py-2.5 text-xs text-purple-800">
+                <ClipboardList className="mt-0.5 h-4 w-4 shrink-0 text-purple-600" />
+                <span>
+                  <strong className="font-semibold">Same question in both languages.</strong>{' '}
+                  Answer it once in either panel — the other selects the matching option
+                  automatically. / એક જ પ્રશ્ન, બંને ભાષામાં — એક વાર જ જવાબ આપો.
+                </span>
+              </div>
+              <div className="mb-6 grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+                {renderQuestionPanel('primary')}
+                {renderQuestionPanel('alt')}
+              </div>
+            </>
+          ) : (
+            <div className="mb-6">
+              {renderQuestionPanel('primary')}
+              {bilingual && (
+                <p className="mt-2 text-xs text-amber-700">
+                  Gujarati version not available for this question — it is asked in English only.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Action bar */}
           <div className="flex flex-wrap items-center gap-3">
@@ -1660,6 +1864,7 @@ function QuizStep({
                 {isLast ? 'Finish' : 'Save & Next'} <ChevronRight className="h-4 w-4" />
               </button>
             </div>
+          </div>
           </div>
         </div>
 

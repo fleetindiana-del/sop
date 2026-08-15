@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState, createContext, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, Check, ClipboardList, Eye, Hash,
@@ -73,6 +73,20 @@ interface ListPayload {
   sops: SopExamRow[];
   departments?: string[];
 }
+
+export type SopExamSettingsApiPaths = {
+  /** GET/PATCH settings list endpoint */
+  settings: string;
+  /** GET employee meta for a SOP: receive sopCode, return full URL */
+  metaForSop: (sopCode: string) => string;
+};
+
+const DEFAULT_API_PATHS: SopExamSettingsApiPaths = {
+  settings: '/api/lms/admin/sop-exam-settings',
+  metaForSop: (sopCode) => `/api/lms/admin/meta?sopCode=${encodeURIComponent(sopCode)}`,
+};
+
+const SopExamApiContext = createContext<SopExamSettingsApiPaths>(DEFAULT_API_PATHS);
 
 type SortKey =
   | 'sopCode'
@@ -281,6 +295,7 @@ function SopEmployeeRulesModal({
   defaults: SopExamSettingsValues;
   onChange: (rules: SopEmployeeExamRule[]) => void;
 }) {
+  const api = useContext(SopExamApiContext);
   const [employees, setEmployees] = useState<EmployeeMeta[]>([]);
   const [metaLoading, setMetaLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -309,14 +324,14 @@ function SopEmployeeRulesModal({
       setMetaLoading(false);
       if (Date.now() - cached.cachedAt <= LMS_CLIENT_FRESH_MS) return;
     }
-    fetch(`/api/lms/admin/meta?sopCode=${encodeURIComponent(sopCode)}`, { cache: 'no-store' })
+    fetch(api.metaForSop(sopCode), { cache: 'no-store' })
       .then((r) => r.json())
       .then((d) => {
         setEmployees(d.employees ?? []);
         writeLmsClientCache(cacheField, d);
       })
       .finally(() => setMetaLoading(false));
-  }, [open, sopCode]);
+  }, [open, sopCode, api]);
 
   useEffect(() => {
     if (!open) return;
@@ -789,6 +804,7 @@ function EditPanel({
   onClose: () => void;
   onSaved: (updated: SopExamRow) => void;
 }) {
+  const api = useContext(SopExamApiContext);
   const defaults = normalizeSettings(globalDefaults);
   const initial = normalizeSettings(row.settings ?? row.effective, defaults);
   const [form, setForm] = useState<SopExamSettingsValues>(initial);
@@ -815,7 +831,7 @@ function EditPanel({
     setSaving(true);
     setError('');
     try {
-      const res = await fetch('/api/lms/admin/sop-exam-settings', {
+      const res = await fetch(api.settings, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sopCode: row.sopCode, ...form }),
@@ -843,7 +859,7 @@ function EditPanel({
     setResetting(true);
     setError('');
     try {
-      const res = await fetch('/api/lms/admin/sop-exam-settings', {
+      const res = await fetch(api.settings, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sopCode: row.sopCode, reset: true }),
@@ -1112,7 +1128,11 @@ function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
     : <ArrowDown className="ml-0.5 inline h-3 w-3 text-purple-700" />;
 }
 
-export function SopExamSettingsPanel() {
+export function SopExamSettingsPanel({
+  apiPaths = DEFAULT_API_PATHS,
+}: {
+  apiPaths?: SopExamSettingsApiPaths;
+} = {}) {
   const [globalDefaults, setGlobalDefaults] = useState<SopExamSettingsValues | null>(null);
   const [sops, setSops] = useState<SopExamRow[]>([]);
   const [dashboardDepartments, setDashboardDepartments] = useState<string[]>([]);
@@ -1143,7 +1163,7 @@ export function SopExamSettingsPanel() {
       }
     }
     try {
-      const res = await fetch('/api/lms/admin/sop-exam-settings', { cache: 'no-store' });
+      const res = await fetch(apiPaths.settings, { cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) { setError(json.error || 'Failed to load'); return; }
       setGlobalDefaults(normalizeSettings(json.globalDefaults));
@@ -1172,7 +1192,7 @@ export function SopExamSettingsPanel() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [apiPaths.settings]);
 
   useEffect(() => { void load(true); }, [load]);
 
@@ -1264,6 +1284,7 @@ export function SopExamSettingsPanel() {
   }
 
   return (
+    <SopExamApiContext.Provider value={apiPaths}>
     <div className="space-y-4">
       {error && (
         <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1488,5 +1509,6 @@ export function SopExamSettingsPanel() {
         )}
       </div>
     </div>
+    </SopExamApiContext.Provider>
   );
 }

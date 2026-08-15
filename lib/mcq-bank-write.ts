@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import MCQBank, { type IMCQ, type IMcqAnnexureUsage, type DifficultyLevel } from "@/models/MCQBank";
 import type { ISOP } from "@/models/SOP";
 import { enrichMcqRationale } from "@/lib/mcq-rationale";
@@ -73,6 +74,7 @@ export function toBankMcq(q: BankInputMcq, sopIdentifier: string): IMCQ {
     topic: q.topic,
   });
   return {
+    mcqId: randomUUID(),
     aiIcon: "✨",
     question: (q.question ?? "").trim(),
     difficulty,

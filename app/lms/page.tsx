@@ -7,8 +7,9 @@ import {
   GraduationCap, LogOut, Search, PlayCircle, BookOpen, Clock,
   CheckCircle2, AlertCircle, Loader2, RefreshCw,
   FileText, ClipboardList, TrendingUp, Award, Calendar,
-  ArrowDown, ArrowUp, ChevronsUpDown, Check, X, EyeOff,
+  ArrowDown, ArrowUp, ChevronsUpDown, Check, X, EyeOff, Users,
 } from 'lucide-react';
+import Link from 'next/link';
 import {
   clearLmsClientCache,
   lmsClientFields,
@@ -45,6 +46,9 @@ interface SopAssignment {
   examDate?: string;
   /** YYYY-MM-DD — document expiry from SOP registry/family. */
   expiryDate?: string;
+  /** True when a department trainer scheduled this exam for you directly. */
+  scheduledByTrainer?: boolean;
+  scheduledBy?: string;
 }
 
 interface Employee {
@@ -52,6 +56,8 @@ interface Employee {
   name: string;
   designation: string;
   department: string;
+  isTrainer?: boolean;
+  trainerDepartments?: string[];
 }
 
 interface CertRecord {
@@ -351,6 +357,9 @@ interface ResourceDef {
   guFlag: keyof SopAssetFlags;
   enStep: string;        // journey step id for the English variant
   guStep: string;        // journey step id for the Gujarati variant
+  /** Extra query for the Gujarati variant. The assessment is ONE step shown in the
+   *  learner's chosen language, so Gujarati is `?lang=gu` rather than its own step. */
+  guQuery?: string;
   primary?: boolean;     // emphasised styling for the assessment
 }
 
@@ -358,7 +367,7 @@ const RESOURCE_DEFS: ResourceDef[] = [
   { kind: 'video', label: 'Video',      Icon: PlayCircle,    enFlag: 'videoEn',  guFlag: 'videoGu',  enStep: 'videoEn',  guStep: 'videoGu' },
   { kind: 'ppt',   label: 'PPT',        Icon: FileText,      enFlag: 'slidesEn', guFlag: 'slidesGu', enStep: 'slidesEn', guStep: 'slidesGu' },
   { kind: 'sop',   label: 'SOP',        Icon: BookOpen,      enFlag: 'sop',      guFlag: 'sopGu',    enStep: 'sopPdf',   guStep: 'sopPdfGu' },
-  { kind: 'test',  label: 'Start Test', Icon: ClipboardList, enFlag: 'mcqEn',    guFlag: 'mcqGu',    enStep: 'quiz',     guStep: 'quizGu', primary: true },
+  { kind: 'test',  label: 'Start Test', Icon: ClipboardList, enFlag: 'mcqEn',    guFlag: 'mcqGu',    enStep: 'quiz',     guStep: 'quiz', guQuery: 'lang=gu', primary: true },
 ];
 
 function ResourceButtons({
@@ -426,7 +435,7 @@ function LanguagePicker({
   onClose,
 }: {
   def: ResourceDef;
-  onPick: (stepId: string) => void;
+  onPick: (stepId: string, query?: string) => void;
   onClose: () => void;
 }) {
   const Icon = def.Icon;
@@ -446,7 +455,7 @@ function LanguagePicker({
         <h3 className="text-base font-bold text-gray-800">Choose language</h3>
         <p className="mt-1 text-sm text-gray-500">
           {def.kind === 'test'
-            ? 'Dual SOP — complete either English or Gujarati. Passing one issues your certificate.'
+            ? 'Same questions in either language — pick the one you read most comfortably.'
             : `Select the language for ${what}.`}
         </p>
         <div className="mt-4 grid grid-cols-2 gap-2">
@@ -457,7 +466,7 @@ function LanguagePicker({
             English
           </button>
           <button
-            onClick={() => onPick(def.guStep)}
+            onClick={() => onPick(def.guStep, def.guQuery)}
             className="rounded-lg bg-purple-600 py-2.5 text-sm font-semibold text-white hover:bg-purple-700"
           >
             ગુજરાતી
@@ -489,7 +498,7 @@ function TrainingTable({
   progressMap: Map<string, ProgressRecord>;
   certMap: Map<string, CertRecord>;
   assetsMap: Record<string, SopAssetFlags>;
-  onOpenStep: (sopCode: string, stepId: string) => void;
+  onOpenStep: (sopCode: string, stepId: string, query?: string) => void;
   onCertificate: (sopCode: string) => void;
   onPrefetch?: (sopCode: string) => void;
   onIgnoreSop?: (a: SopAssignment) => void;
@@ -506,7 +515,11 @@ function TrainingTable({
     if (hasEn && hasGu) {
       setPicker({ sopCode, def });
     } else {
-      onOpenStep(sopCode, hasEn ? def.enStep : def.guStep);
+      onOpenStep(
+        sopCode,
+        hasEn ? def.enStep : def.guStep,
+        hasEn ? undefined : def.guQuery,
+      );
     }
   };
 
@@ -625,6 +638,12 @@ function TrainingTable({
                     {highlightExpiredDue && (
                       <p className="mt-0.5 text-[10px] font-semibold text-red-700">
                         Expired{assignment.expiryDate ? ` ${assignment.expiryDate}` : ''} — exam locked until renewed
+                      </p>
+                    )}
+                    {assignment.scheduledByTrainer && !isFullyComplete(progress) && (
+                      <p className="mt-0.5 text-[10px] font-semibold text-purple-700">
+                        Exam scheduled{assignment.scheduledBy ? ` by ${assignment.scheduledBy}` : ''}
+                        {assignment.examDate ? ` — complete by ${assignment.examDate}` : ''}
                       </p>
                     )}
                     {!docExpired && trainerLocked && !isFullyComplete(progress) && (
@@ -747,7 +766,7 @@ function TrainingTable({
     {picker && (
       <LanguagePicker
         def={picker.def}
-        onPick={(stepId) => { onOpenStep(picker.sopCode, stepId); setPicker(null); }}
+        onPick={(stepId, query) => { onOpenStep(picker.sopCode, stepId, query); setPicker(null); }}
         onClose={() => setPicker(null)}
       />
     )}
@@ -1049,8 +1068,8 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
   }, [router]);
 
   // Deep-link straight to a specific resource (video / PPT / SOP / assessment).
-  const handleOpenStep = useCallback((sopCode: string, stepId: string) => {
-    router.push(`/lms/journey/${sopCode}?step=${stepId}`);
+  const handleOpenStep = useCallback((sopCode: string, stepId: string, query?: string) => {
+    router.push(`/lms/journey/${sopCode}?step=${stepId}${query ? `&${query}` : ''}`);
   }, [router]);
 
   const handleCertificate = useCallback((sopCode: string) => {
@@ -1232,6 +1251,15 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            {employee.isTrainer && (
+              <Link
+                href="/lms/trainer"
+                className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                title="View training progress for employees in your departments"
+              >
+                <Users className="h-3.5 w-3.5" /> Trainer View
+              </Link>
+            )}
             <button
               type="button"
               onClick={() => setShowCalendar(true)}
@@ -1430,11 +1458,13 @@ export default function LmsPage() {
 
   useEffect(() => {
     const cached = readLmsClientCache<{ employee: Employee }>(lmsClientFields.employee);
-    if (cached?.value?.employee) {
-      setEmployee(cached.value.employee);
+    const cachedEmp = cached?.value?.employee;
+    if (cachedEmp) {
+      setEmployee(cachedEmp);
       setChecking(false);
-      if (Date.now() - cached.cachedAt <= LMS_CLIENT_FRESH_MS) return;
     }
+    // Always revalidate — login used to omit isTrainer, so a "fresh" cache can
+    // hide Trainer View until /me runs.
     fetch('/api/lms/auth/me')
       .then((r) => r.json())
       .then((d) => {

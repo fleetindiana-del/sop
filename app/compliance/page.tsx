@@ -16,6 +16,7 @@ import {
 } from '@/lib/annexureAuditDisplay';
 import dynamic from 'next/dynamic';
 import { exportComplianceReportToPdf } from '@/lib/complianceReportPdf';
+import { PendingRunRequests } from '@/components/compliance/PendingRunRequests';
 
 const FinalSopModal = dynamic(() => import('@/components/compliance/FinalSopModal'), { ssr: false });
 const SopSourcePreviewModal = dynamic(() => import('@/components/compliance/SopSourcePreviewModal'), { ssr: false });
@@ -317,27 +318,35 @@ function ChevronUpIcon() {
   return <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>;
 }
 
-function parseSectionParts(section?: string): number[] {
-  const m = (section || '').match(/\d+(\.\d+)*/);
-  return m ? m[0].split('.').map(Number) : [];
-}
-
 // Short label for a section-wise sub-heading, e.g. "4.11.4.1 - Sampling procedure..." -> "4.11.4.1".
 // Findings with no parseable section number are grouped under "General".
+// Prefers § markers so "L042 [§4.2 Title]" → "4.2" (not the line number).
 function sectionHeadingLabel(section?: string): string {
   const raw = (section || '').trim();
   const lower = raw.toLowerCase();
   if (!raw || lower === 'not found' || lower === 'n/a' || lower === 'general') return 'General';
-  const m = raw.match(/\d+(?:\.\d+)*/);
-  return m ? m[0] : raw;
+  const secMark = raw.match(/§\s*([A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)/);
+  if (secMark?.[1]) return secMark[1];
+  const withoutLineRefs = raw.replace(/\bL\d{3,}\b/gi, ' ');
+  const m = withoutLineRefs.match(/(\d+(?:\.\d+)*)/);
+  return m ? m[1] : raw;
 }
 
 // Orders findings by the SOP section they map to (e.g. "4.11.4.1 - Sampling procedure...")
 // so the report reads 1, 1.1, 1.2, 2, ... instead of jumping between sections. Findings
 // with no parseable section number (e.g. "N/A - Not Addressed") sort to the end.
 function compareSectionNumbers(a?: string, b?: string): number {
-  const pa = parseSectionParts(a);
-  const pb = parseSectionParts(b);
+  const parse = (section?: string): number[] => {
+    const id = sectionHeadingLabel(section);
+    if (!id || id === 'General') return [];
+    if (!/^\d/.test(id)) return [];
+    return id.split('.').map((p) => {
+      const n = Number(p);
+      return Number.isFinite(n) ? n : -1;
+    });
+  };
+  const pa = parse(a);
+  const pb = parse(b);
   if (pa.length === 0 || pb.length === 0) {
     if (pa.length !== pb.length) return pa.length === 0 ? 1 : -1;
     return (a || '').localeCompare(b || '');
@@ -372,6 +381,16 @@ function findingSeverityRank(f: ComplianceFinding): number {
     'analysis-failed': 4,
   };
   return f.riskLevel ? (riskOrder[f.riskLevel] ?? 4) : (levelOrder[f.complianceLevel] ?? 5);
+}
+
+/** Normalize issueSeverity / riskLevel to a filter key. */
+function findingSeverityKey(f: ComplianceFinding): 'critical' | 'major' | 'minor' | null {
+  const raw = String(f.issueSeverity || f.riskLevel || '').trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === 'critical' || raw.startsWith('critical')) return 'critical';
+  if (raw === 'major' || raw.startsWith('major')) return 'major';
+  if (raw === 'minor' || raw.startsWith('minor')) return 'minor';
+  return null;
 }
 
 function compareFindings(a: ComplianceFinding, b: ComplianceFinding, key: FindingsSortKey, dir: 'asc' | 'desc'): number {
@@ -782,6 +801,7 @@ export default function ComplianceEnginePage() {
     'all' | 'checked' | 'none' | 'not-checked' | 'linked-unread'
   >('all');
   const [filterStatus, setFilterStatus] = useState<'all' | 'compliant' | 'partial' | 'non-compliant' | 'not-applicable'>('all');
+  const [filterSeverity, setFilterSeverity] = useState<'all' | 'critical' | 'major' | 'minor'>('all');
   const [hideNotApplicable, setHideNotApplicable] = useState(true);
   const [hideFailedFindings, setHideFailedFindings] = useState(true);
   const [filterGuideline, setFilterGuideline] = useState('all');
@@ -806,7 +826,7 @@ export default function ComplianceEnginePage() {
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [collapsedFindingGroups, setCollapsedFindingGroups] = useState<Set<string>>(new Set());
   const [findingsGroupView, setFindingsGroupView] = useState<FindingsGroupView>('guideline');
-  const [findingsSortKey, setFindingsSortKey] = useState<FindingsSortKey>('severity');
+  const [findingsSortKey, setFindingsSortKey] = useState<FindingsSortKey>('section');
   const [findingsSortDir, setFindingsSortDir] = useState<'asc' | 'desc'>('asc');
   const [findingsSortOpen, setFindingsSortOpen] = useState(false);
   const findingsSortRef = useRef<HTMLDivElement | null>(null);
@@ -1344,6 +1364,28 @@ export default function ComplianceEnginePage() {
     setPreflightData({ checked: false, existingCount: 0, newCount: 0 });
   };
 
+  const urlHandledRef = useRef(false);
+  useEffect(() => {
+    if (urlHandledRef.current || sops.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const sopId = params.get('sopId');
+    const requestId = params.get('requestId');
+    if (!sopId && !requestId) return;
+    urlHandledRef.current = true;
+    if (sopId && sops.some((s) => s._id === sopId)) {
+      selectOnlySop(sopId);
+      const match = sops.find((s) => s._id === sopId);
+      if (match?.department) setFilterDepartment(match.department);
+    }
+    if (requestId) {
+      void fetch(`/api/compliance/run-requests/${requestId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'acknowledge' }),
+      });
+    }
+  }, [sops]);
+
   const setAllVisibleSopsSelected = (selected: boolean) => {
     setSelectedSopIds((prev) => {
       const next = new Set(prev);
@@ -1617,12 +1659,13 @@ export default function ComplianceEnginePage() {
       .map((f, i) => ({ f, i }))
       .filter(({ f }) => {
         if (filterStatus !== 'all' && f.complianceLevel !== filterStatus) return false;
+        if (filterSeverity !== 'all' && findingSeverityKey(f) !== filterSeverity) return false;
         if (filterGuideline !== 'all' && f.folderName !== filterGuideline) return false;
         if (hideNotApplicable && f.complianceLevel === 'not-applicable') return false;
         if (hideFailedFindings && f.complianceLevel === 'analysis-failed') return false;
         return true;
       });
-  }, [selectedReport, filterStatus, filterGuideline, hideNotApplicable, hideFailedFindings]);
+  }, [selectedReport, filterStatus, filterSeverity, filterGuideline, hideNotApplicable, hideFailedFindings]);
 
   const sortedFindings = useMemo(() => {
     return [...filteredFindings].sort((a, b) => compareFindings(a.f, b.f, findingsSortKey, findingsSortDir));
@@ -1706,8 +1749,7 @@ export default function ComplianceEnginePage() {
 
   const normaliseSectionKey = (f: ComplianceFinding) => {
     const raw = f.sopSectionAffected || 'General';
-    const m = String(raw).match(/(\d[\d.]*)/);
-    return m ? m[1] : String(raw).trim() || 'General';
+    return sectionHeadingLabel(String(raw));
   };
 
   const consolidatedSections = useMemo(() => {
@@ -1727,7 +1769,7 @@ export default function ComplianceEnginePage() {
       clauses: [...new Set(group.map(f => f.clauseNumber).filter(Boolean))],
       combinedAction: [...new Set(group.map(f => (f.suggestedAction ?? '').replace(/```[\s\S]*?```/g, '').replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean))].join(' '),
       combinedSuggestion: group.map(f => f.suggestedText ?? '').filter(Boolean).join('\n\n'),
-    })).sort((a, b) => { const na = parseFloat(a.sectionKey), nb = parseFloat(b.sectionKey); return !isNaN(na) && !isNaN(nb) ? na - nb : a.sectionKey.localeCompare(b.sectionKey); });
+    })).sort((a, b) => compareSectionNumbers(a.sectionKey, b.sectionKey));
   }, [selectedReport, selectedFindingIds]);
 
   const isActionableFix = (f: ComplianceFinding) =>
@@ -1782,6 +1824,23 @@ export default function ComplianceEnginePage() {
     const partial = selectedReport?.partialCount ?? 0;
     const nonCompliant = selectedReport?.nonCompliantCount ?? 0;
     return { compliant, partial, nonCompliant, total: compliant + partial + nonCompliant };
+  }, [selectedReport]);
+
+  const reportSeverityTotals = useMemo(() => {
+    const ac = selectedReport?.auditCompleteness;
+    if (ac && (ac.criticalFindings || ac.majorFindings || ac.minorFindings)) {
+      return {
+        critical: ac.criticalFindings ?? 0,
+        major: ac.majorFindings ?? 0,
+        minor: ac.minorFindings ?? 0,
+      };
+    }
+    const totals = { critical: 0, major: 0, minor: 0 };
+    for (const f of selectedReport?.findings ?? []) {
+      const key = findingSeverityKey(f);
+      if (key) totals[key] += 1;
+    }
+    return totals;
   }, [selectedReport]);
 
   const findingsLoaded = (selectedReport?.findings?.length ?? 0) > 0;
@@ -2175,6 +2234,13 @@ export default function ComplianceEnginePage() {
 
         {/* ── STEP 1: SOPs ── */}
         {currentStep === 'fetch-sops' && (
+          <>
+            <PendingRunRequests
+              onSelectSop={(sopId, department) => {
+                selectOnlySop(sopId);
+                if (department) setFilterDepartment(department);
+              }}
+            />
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
             <div className="flex items-center justify-between mb-8">
               <div>
@@ -2344,6 +2410,7 @@ export default function ComplianceEnginePage() {
               </button>
             </div>
           </div>
+          </>
         )}
 
         {/* ── STEP 2: GUIDELINES ── */}
@@ -2958,12 +3025,14 @@ export default function ComplianceEnginePage() {
                             onClick={() => {
                               handleSelectReport(report);
                               setFilterStatus('all');
+                              setFilterSeverity('all');
                             }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
                                 handleSelectReport(report);
                                 setFilterStatus('all');
+                                setFilterSeverity('all');
                               }
                             }}
                             className={`cursor-pointer transition-colors group ${
@@ -3354,6 +3423,27 @@ export default function ComplianceEnginePage() {
                           <span className="text-[9px] font-bold text-rose-400 ml-0.5">({statusPct(reportStatusTotals.nonCompliant)}%)</span>
                         </span>
                       </button>
+
+                      <div className="hidden sm:block h-5 w-px bg-gray-200 mx-0.5" />
+
+                      {([
+                        { key: 'critical' as const, label: 'Critical', count: reportSeverityTotals.critical, active: 'bg-red-100 border-red-400 ring-1 ring-red-300', idle: 'bg-red-50 border-red-200 hover:border-red-400', text: 'text-red-700' },
+                        { key: 'major' as const, label: 'Major', count: reportSeverityTotals.major, active: 'bg-orange-100 border-orange-400 ring-1 ring-orange-300', idle: 'bg-orange-50 border-orange-200 hover:border-orange-400', text: 'text-orange-700' },
+                        { key: 'minor' as const, label: 'Minor', count: reportSeverityTotals.minor, active: 'bg-yellow-100 border-yellow-400 ring-1 ring-yellow-300', idle: 'bg-yellow-50 border-yellow-200 hover:border-yellow-400', text: 'text-yellow-800' },
+                      ]).map((opt) => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setFilterSeverity(filterSeverity === opt.key ? 'all' : opt.key)}
+                          className={`flex items-center gap-1 px-1.5 py-0.5 rounded border transition-all ${
+                            filterSeverity === opt.key ? opt.active : opt.idle
+                          }`}
+                          title={`Show ${opt.label.toLowerCase()} severity findings`}
+                        >
+                          <span className={`text-[9px] font-bold uppercase ${opt.text}`}>{opt.label}</span>
+                          <span className={`text-sm font-black tabular-nums ${opt.text}`}>{opt.count}</span>
+                        </button>
+                      ))}
                     </div>
 
                     <div data-pdf-hide className="flex flex-wrap items-center gap-1.5 shrink-0">
@@ -3626,6 +3716,14 @@ export default function ComplianceEnginePage() {
                                 className="text-purple-600 font-medium hover:underline text-sm"
                               >
                                 Clear Status Filter
+                              </button>
+                            )}
+                            {filterSeverity !== 'all' && (
+                              <button
+                                onClick={() => setFilterSeverity('all')}
+                                className="text-purple-600 font-medium hover:underline text-sm"
+                              >
+                                Clear Severity Filter
                               </button>
                             )}
                             {filterGuideline !== 'all' && (

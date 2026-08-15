@@ -10,6 +10,11 @@ export interface IRecheckPointResult {
   note: string;
   /** Best-matching excerpt from the revised SOP for this requirement, regardless of status. */
   revisedExcerpt: string;
+  /**
+   * Section in the REVISED SOP where evidence / revisedExcerpt was found
+   * (may differ from finding.sopSectionAffected on the original gap).
+   */
+  revisedSopSection?: string;
   ignored: boolean;
   /** Addressed by an earlier run — carried forward verbatim, not re-audited this run. */
   carriedForward?: boolean;
@@ -72,6 +77,7 @@ const PointResultSchema = new Schema<IRecheckPointResult>(
     evidence: { type: String, default: "" },
     note: { type: String, default: "" },
     revisedExcerpt: { type: String, default: "" },
+    revisedSopSection: { type: String, default: "" },
     ignored: { type: Boolean, default: false },
     carriedForward: { type: Boolean, default: false },
     origin: { type: String, enum: ["report", "new-issue"], default: "report" },

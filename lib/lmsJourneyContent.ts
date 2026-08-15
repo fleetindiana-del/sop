@@ -60,8 +60,13 @@ export interface JourneyContent {
   sopPdfUrlGu: string | null;
   sopFileTypeGu: 'pdf' | 'docx';
   mcqCount: number;
-  /** Question count of the Gujarati MCQ bank, if one exists. */
+  /**
+   * Questions available in Gujarati — translations of the English masters, or a
+   * legacy standalone Gujarati bank for SOPs not translated yet.
+   */
   mcqCountGu: number;
+  /** Languages the single assessment can be taken in. */
+  quizLanguages: Array<'en' | 'gu'>;
 }
 
 function buildJourneyContent(
@@ -86,8 +91,13 @@ function buildJourneyContent(
   if (sopPdfUrlGu) availableStepIds.push('sopPdfGu');
   if (slidesEn.length > 0) availableStepIds.push('slidesEn');
   if (slidesGu.length > 0) availableStepIds.push('slidesGu');
-  if (mcqCount > 0) availableStepIds.push('quiz');
-  if (mcqCountGu > 0) availableStepIds.push('quizGu');
+  // One assessment, taken in whichever language the learner picks — English and
+  // Gujarati are two renderings of the same MCQs, not two separate exams. Legacy
+  // `quizGu` progress is still honoured on read, but no new quizGu step is offered.
+  const quizLanguages: Array<'en' | 'gu'> = [];
+  if (mcqCount > 0) quizLanguages.push('en');
+  if (mcqCountGu > 0) quizLanguages.push('gu');
+  if (quizLanguages.length > 0) availableStepIds.push('quiz');
 
   return {
     sop: sop
@@ -118,6 +128,7 @@ function buildJourneyContent(
         : 'pdf',
     mcqCount,
     mcqCountGu,
+    quizLanguages,
   };
 }
 
@@ -134,6 +145,13 @@ function sopMatchesCode(sop: SopLean, code: string): boolean {
   return id === codeUpper || baseId === codeUpper || id.startsWith(codeUpper);
 }
 
+type BankCountRow = {
+  sopIdentifier?: string;
+  usableQuestions?: number;
+  translatedGu?: number;
+  language?: string;
+};
+
 /**
  * Usable question count per language — must mirror `fetchQuestions` in
  * /api/lms/quiz exactly (same family regex, same isSimilar exclusion), or the
@@ -141,7 +159,7 @@ function sopMatchesCode(sop: SopLean, code: string): boolean {
  */
 function mcqCountForCode(
   code: string,
-  bankDocs: Array<{ sopIdentifier?: string; usableQuestions?: number; language?: string }>,
+  bankDocs: BankCountRow[],
   language: 'English' | 'Gujarati',
 ): number {
   const re = sopFamilyIdentifierRegex(code);
@@ -151,6 +169,22 @@ function mcqCountForCode(
     if (re.test(String(bank.sopIdentifier || ''))) total += bank.usableQuestions || 0;
   }
   return total;
+}
+
+/**
+ * Questions the Gujarati exam can actually serve, mirroring the quiz route's
+ * preference order: translations of the English masters first, and only when a
+ * family has none, its legacy standalone Gujarati bank.
+ */
+function gujaratiCountForCode(code: string, bankDocs: BankCountRow[]): number {
+  const re = sopFamilyIdentifierRegex(code);
+  let translated = 0;
+  for (const bank of bankDocs) {
+    if ((bank.language || 'English') !== 'English') continue;
+    if (re.test(String(bank.sopIdentifier || ''))) translated += bank.translatedGu || 0;
+  }
+  if (translated > 0) return translated;
+  return mcqCountForCode(code, bankDocs, 'Gujarati');
 }
 
 /** Resolve journey content for many SOP codes in two bulk DB queries. */
@@ -183,7 +217,7 @@ export async function getJourneyContentBatch(
       .lean<SopLean[]>(),
     // Count non-similar questions server-side so the (large) mcqs arrays never
     // cross the wire — one aggregate for every requested code.
-    MCQBank.aggregate<{ sopIdentifier?: string; usableQuestions?: number; language?: string }>([
+    MCQBank.aggregate<BankCountRow>([
       {
         $match: {
           isObsolete: { $ne: true },
@@ -204,6 +238,23 @@ export async function getJourneyContentBatch(
                 input: { $ifNull: ['$mcqs', []] },
                 as: 'q',
                 cond: { $ne: ['$$q.isSimilar', true] },
+              },
+            },
+          },
+          // Masters carrying a usable (non-stale) Gujarati translation. Mirrors
+          // the quiz route's translated-question match.
+          translatedGu: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ['$mcqs', []] },
+                as: 'q',
+                cond: {
+                  $and: [
+                    { $ne: ['$$q.isSimilar', true] },
+                    { $ne: [{ $ifNull: ['$$q.translations.gu', null] }, null] },
+                    { $ne: ['$$q.translations.gu.isStale', true] },
+                  ],
+                },
               },
             },
           },
@@ -234,7 +285,7 @@ export async function getJourneyContentBatch(
       best,
       bestGu,
       mcqCountForCode(code, bankDocs, 'English'),
-      mcqCountForCode(code, bankDocs, 'Gujarati'),
+      gujaratiCountForCode(code, bankDocs),
     );
     result.set(code, content);
     primeLmsServerCache(

@@ -12,6 +12,7 @@ import {
 import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTrainingIgnore';
 import { applyReschedulesToList, listTrainingReschedules } from '@/lib/lmsTrainingReschedule';
 import { formatCycleStart, getTrainingCycleStart } from '@/lib/lmsTrainingCycle';
+import { toLmsClientEmployee } from '@/lib/employeeTrainer';
 import Employee from '@/models/Employee';
 
 export const runtime = 'nodejs';
@@ -30,7 +31,13 @@ export async function GET() {
       async () => {
         await connectDB();
         const employee = await Employee.findById(payload.sub).lean<{
-          _id: unknown; name: string; designation: string; department: string; isActive: boolean;
+          _id: unknown;
+          name: string;
+          designation: string;
+          department: string;
+          isActive: boolean;
+          isTrainer?: boolean;
+          trainerDepartments?: string[];
         }>();
         if (!employee || !employee.isActive) {
           return null;
@@ -50,13 +57,9 @@ export async function GET() {
         });
 
         const cycle = getTrainingCycleStart();
+
         return {
-          employee: {
-            id: String(employee._id),
-            name: employee.name,
-            designation: employee.designation,
-            department: employee.department,
-          },
+          employee: toLmsClientEmployee(employee),
           assignments,
           trainingCycleStart: formatCycleStart(cycle),
         };

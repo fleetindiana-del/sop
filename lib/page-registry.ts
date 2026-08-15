@@ -81,6 +81,14 @@ export const APP_PAGES: AppPage[] = [
     restrictedByDefault: true,
   },
   {
+    key: "compliance-request",
+    label: "Request Compliance Run",
+    prefix: "/compliance/request",
+    group: "Compliance",
+    description: "Request a compliance check and view run status",
+    alwaysAllowed: true,
+  },
+  {
     key: "compliance",
     label: "Compliance",
     prefix: "/compliance",

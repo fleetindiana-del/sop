@@ -128,6 +128,8 @@ export interface FindingCardProps {
     currentSopText?: string;
     /** Gap the re-check newly identified in the revised SOP (shown in addition to the original gap). */
     newGap?: string;
+    /** Section in the revised SOP where currentSopText was found (may differ from original). */
+    revisedSection?: string;
   };
 }
 
@@ -165,8 +167,12 @@ function findingId(finding: FindingCardProps['finding'], index?: number): string
 
 function extractSectionNumber(section?: string): string {
   if (!section?.trim()) return '';
-  const m = section.match(/(\d+(?:\.\d+)*)/);
-  return m ? m[1] : section.trim();
+  // Prefer § marker so "L042 [§4.2 Title]" → "4.2", not the line number "042".
+  const secMark = section.match(/§\s*([A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)/);
+  if (secMark?.[1]) return secMark[1];
+  const withoutLineRefs = section.replace(/\bL\d{3,}\b/gi, ' ');
+  const m = withoutLineRefs.match(/(\d+(?:\.\d+)*)/);
+  return m ? m[1] : '';
 }
 
 function categoryBadge(category?: string): { label: string; className: string } | null {
@@ -373,15 +379,26 @@ export default function FindingCard({
   const gapText =
     finding.mismatchExplanation?.trim() || finding.highlightedIssue?.trim() || '';
   const recheckNewGap = recheckOverride?.newGap?.trim() || '';
-  const sectionRaw = finding.sopSectionAffected?.trim() || '';
-  const sectionNum = extractSectionNumber(sectionRaw);
+  const originalSectionRaw = finding.sopSectionAffected?.trim() || '';
+  // In re-check mode the § on "Current SOP (Revised)" must reflect where the revised
+  // excerpt actually lives — not the section named on the original finding.
+  const revisedSectionRaw = recheckOverride?.revisedSection?.trim() || '';
+  const sectionRaw = originalSectionRaw;
+  const sectionNum = extractSectionNumber(originalSectionRaw);
+  const revisedSectionNum =
+    extractSectionNumber(revisedSectionRaw) ||
+    extractSectionNumber(recheckOverride?.currentSopText) ||
+    '';
   const originalSopSnippet =
     cleanFindingText(finding.sopTextSnippet) ||
     (reportContext ? `${reportContext.sopIdentifier}_${reportContext.sopName}` : '');
   const sopSnippet = recheckOverride?.currentSopText?.trim() || originalSopSnippet;
   const previousSopText =
     recheckOverride?.currentSopText?.trim() && originalSopSnippet ? originalSopSnippet : '';
-  const displaySectionNum = sectionNum || (reportContext ? '1' : '');
+  // Never invent "§1" when we simply lack a section — that mislabels revised SOPs.
+  const displaySectionNum = recheckOverride
+    ? revisedSectionNum || sectionNum
+    : sectionNum;
 
   const guidelineSectionText = resolveGuidelineSectionText(finding, traceabilityMatrix);
   const clauseDisplay = extractGuidelineClauseDisplay({

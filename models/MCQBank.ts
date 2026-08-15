@@ -7,7 +7,37 @@ export interface IOptionVariant {
   isCorrect: boolean;
 }
 
+/** Language codes an MCQ can be translated into. The master text is always English. */
+export type McqTranslationLang = "gu";
+
+/**
+ * One language version of a master MCQ. This is NOT an independent question —
+ * `options` must stay in the SAME ORDER as the master's `options`, so the master's
+ * correct index carries over unchanged and scoring is identical in every language.
+ * `correctAnswer` is the translated text at that same index (mirroring how the
+ * master stores option TEXT rather than a letter).
+ */
+export interface IMcqTranslation {
+  question: string;
+  options: string[];
+  correctAnswer: string;
+  explanation: string;
+  /** Model/provider that produced the translation, e.g. "codex:gpt-5.4-mini". */
+  model: string;
+  translatedAt: Date;
+  /** Set when the English master changed after this translation was made. */
+  isStale?: boolean;
+  /** Set once a trainer/admin has confirmed the translation reads correctly. */
+  isVerified?: boolean;
+}
+
 export interface IMCQ {
+  /**
+   * Stable per-question id, assigned at write time. Translations, LMS question
+   * ids and review state key off this rather than array position, which shifts
+   * whenever a question is deleted or the bank is regenerated.
+   */
+  mcqId?: string;
   aiIcon: string;
   question: string;
   difficulty: DifficultyLevel;
@@ -24,6 +54,8 @@ export interface IMCQ {
   fromAnnexure?: boolean;
   /** True when this MCQ came from creative/scenario fill near the bank cap. */
   isCreative?: boolean;
+  /** Language versions of THIS question, keyed by language code (e.g. "gu"). */
+  translations?: Map<McqTranslationLang, IMcqTranslation> | Record<string, IMcqTranslation>;
 }
 
 /**
@@ -70,8 +102,27 @@ const OptionVariantSchema = new Schema<IOptionVariant>(
   { _id: false },
 );
 
+const McqTranslationSchema = new Schema<IMcqTranslation>(
+  {
+    question: { type: String, required: true },
+    options: {
+      type: [String],
+      required: true,
+      validate: { validator: (v: string[]) => v.length === 4, message: "Exactly 4 options required" },
+    },
+    correctAnswer: { type: String, required: true },
+    explanation: { type: String, default: "" },
+    model: { type: String, default: "" },
+    translatedAt: { type: Date, default: Date.now },
+    isStale: { type: Boolean, default: false },
+    isVerified: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
 const MCQSchema = new Schema<IMCQ>(
   {
+    mcqId: { type: String },
     aiIcon: { type: String, required: true },
     question: { type: String, required: true },
     difficulty: { type: String, enum: ["Easy", "Medium", "Hard"], required: true },
@@ -90,6 +141,7 @@ const MCQSchema = new Schema<IMCQ>(
     isSimilar: { type: Boolean, default: false },
     fromAnnexure: { type: Boolean, default: false },
     isCreative: { type: Boolean, default: false },
+    translations: { type: Map, of: McqTranslationSchema, default: undefined },
   },
   { _id: false },
 );
@@ -139,6 +191,7 @@ MCQBankSchema.pre("save", function () {
   if (this.mcqs) this.totalQuestions = this.mcqs.length;
 });
 
+MCQBankSchema.index({ "mcqs.mcqId": 1 });
 MCQBankSchema.index({ sopId: 1 });
 MCQBankSchema.index({ sopId: 1, language: 1 });
 MCQBankSchema.index({ sopIdentifier: 1 });

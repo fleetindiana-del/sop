@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
 import { createLmsToken, LMS_COOKIE } from '@/lib/lms-session';
 import { escapeRegex } from '@/lib/lms-credentials';
+import { toLmsClientEmployee } from '@/lib/employeeTrainer';
 import Employee from '@/models/Employee';
 
 export const runtime = 'nodejs';
@@ -43,12 +44,7 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({
-      employee: {
-        id: employee._id.toString(),
-        name: employee.name,
-        designation: employee.designation,
-        department: employee.department,
-      },
+      employee: toLmsClientEmployee(employee),
     });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });

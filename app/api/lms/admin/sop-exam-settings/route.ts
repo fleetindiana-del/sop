@@ -116,7 +116,7 @@ function payloadFromDoc(
   };
 }
 
-async function buildSopList() {
+export async function buildSopList() {
   await connectDB();
 
   const [globalDoc, sopSettings, banks, grouped, dashboardDepartments] = await Promise.all([

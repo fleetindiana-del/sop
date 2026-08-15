@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Bell,
   LogOut,
   Sparkles,
   Trash2,
@@ -10,6 +9,7 @@ import {
 import { signOut, useSession } from "next-auth/react";
 import type { DashboardStats } from "@/lib/types";
 import type { AppRole } from "@/lib/auth";
+import { NotificationBell } from "./NotificationBell";
 
 interface DashboardHeaderProps {
   stats: DashboardStats | null;
@@ -89,13 +89,7 @@ export function DashboardHeader({ stats, onExpiryFilter }: DashboardHeaderProps)
           </div>
 
           {/* Icon buttons */}
-          <button
-            type="button"
-            className="rounded p-1.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
-            aria-label="Notifications"
-          >
-            <Bell className="h-4 w-4" />
-          </button>
+          <NotificationBell />
           <button
             type="button"
             className="rounded p-1.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"

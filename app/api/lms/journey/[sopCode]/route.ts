@@ -29,6 +29,43 @@ export interface JourneyStep {
   lastTimestamp?: number;
   /** Formal exam attempt scores, e.g. [{ attempt: 1, score: 75 }, ...]. */
   attemptHistory?: Array<{ attempt: number; score: number; at?: string | Date }>;
+  /** Quiz steps only: languages this assessment can be taken in. */
+  languages?: Array<'en' | 'gu'>;
+}
+
+type QuizStepData = {
+  completed?: boolean;
+  passed?: boolean;
+  score?: number;
+  attempts?: number;
+  attemptHistory?: Array<{ attempt: number; score: number; at?: string | Date }>;
+};
+
+/**
+ * Fold legacy `quizGu` progress into the single `quiz` step.
+ *
+ * Before translations, English and Gujarati were separate exams with separate
+ * records and passing either one counted. Now there is one exam in two languages,
+ * so a learner who passed the old Gujarati assessment must stay passed. Attempts
+ * take the max rather than the sum — a migration should never push someone over
+ * an attempt limit for work they already did.
+ */
+function mergeQuizProgress(en: QuizStepData, gu: QuizStepData): QuizStepData {
+  const enRank = (en.passed ? 2 : 0) + (en.completed ? 1 : 0);
+  const guRank = (gu.passed ? 2 : 0) + (gu.completed ? 1 : 0);
+  const best = guRank > enRank || (guRank === enRank && (gu.score ?? 0) > (en.score ?? 0)) ? gu : en;
+  const history = [
+    ...(Array.isArray(en.attemptHistory) ? en.attemptHistory : []),
+    ...(Array.isArray(gu.attemptHistory) ? gu.attemptHistory : []),
+  ].sort((a, b) => new Date(a.at ?? 0).getTime() - new Date(b.at ?? 0).getTime());
+
+  return {
+    completed: en.completed || gu.completed,
+    passed: en.passed || gu.passed,
+    score: Math.max(en.score ?? 0, gu.score ?? 0),
+    attempts: Math.max(en.attempts ?? 0, gu.attempts ?? 0),
+    attemptHistory: history.length ? history : best.attemptHistory,
+  };
 }
 
 function buildJourneySteps(
@@ -85,36 +122,23 @@ function buildJourneySteps(
       completed: s.completed ?? false,
     });
   }
-  if (content.mcqCount > 0) {
-    const s = (stepData.quiz || {}) as {
-      completed?: boolean;
-      passed?: boolean;
-      score?: number;
-      attempts?: number;
-      attemptHistory?: Array<{ attempt: number; score: number; at?: string | Date }>;
-    };
+  // One assessment for the SOP; `languages` tells the learner UI which language
+  // versions of those same MCQs it may offer.
+  if (content.quizLanguages.length > 0) {
+    const s = mergeQuizProgress(
+      (stepData.quiz || {}) as QuizStepData,
+      (stepData.quizGu || {}) as QuizStepData,
+    );
     journeySteps.push({
-      id: 'quiz', type: 'quiz', label: 'Assessment', questionCount: content.mcqCount,
+      id: 'quiz',
+      type: 'quiz',
+      label: 'Assessment',
+      questionCount: content.mcqCount || content.mcqCountGu,
       completed: s.completed ?? false,
       percentage: s.score,
       attempts: s.attempts ?? 0,
       attemptHistory: Array.isArray(s.attemptHistory) ? s.attemptHistory : [],
-    });
-  }
-  if (content.mcqCountGu > 0) {
-    const s = (stepData.quizGu || {}) as {
-      completed?: boolean;
-      passed?: boolean;
-      score?: number;
-      attempts?: number;
-      attemptHistory?: Array<{ attempt: number; score: number; at?: string | Date }>;
-    };
-    journeySteps.push({
-      id: 'quizGu', type: 'quiz', label: 'Assessment (Gujarati)', questionCount: content.mcqCountGu,
-      completed: s.completed ?? false,
-      percentage: s.score,
-      attempts: s.attempts ?? 0,
-      attemptHistory: Array.isArray(s.attemptHistory) ? s.attemptHistory : [],
+      languages: content.quizLanguages,
     });
   }
 

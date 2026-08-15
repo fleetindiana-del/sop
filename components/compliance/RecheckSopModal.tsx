@@ -30,11 +30,59 @@ interface RunPoint {
   evidence: string;
   note: string;
   revisedExcerpt?: string;
+  /** Section in the revised SOP where evidence/excerpt was found. */
+  revisedSopSection?: string;
   ignored: boolean;
   /** Solved in an earlier run — kept as-is so progress never regresses. */
   carriedForward?: boolean;
   /** Raised as a new issue by an earlier re-check and tracked as a point from then on. */
   origin?: 'report' | 'new-issue';
+}
+
+/** Prefer § marker; strip L### line refs so they don't steal the first digit run. */
+function extractSectionId(ref?: string): string {
+  if (!ref?.trim()) return '';
+  const secMark = ref.match(/§\s*([A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)/);
+  if (secMark?.[1]) return secMark[1];
+  const withoutLineRefs = ref.replace(/\bL\d{3,}\b/gi, ' ');
+  const m = withoutLineRefs.match(/(\d+(?:\.\d+)*)/);
+  return m?.[1] ?? '';
+}
+
+function compareSectionIds(a?: string, b?: string): number {
+  const parse = (v?: string): number[] => {
+    const id = extractSectionId(v);
+    if (!id) return [];
+    return id.split('.').map((p) => {
+      const n = Number(p);
+      return Number.isFinite(n) ? n : -1;
+    });
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (pa.length === 0 || pb.length === 0) {
+    if (pa.length !== pb.length) return pa.length === 0 ? 1 : -1;
+    return (a || '').localeCompare(b || '');
+  }
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const va = pa[i] ?? -1;
+    const vb = pb[i] ?? -1;
+    if (va !== vb) return va - vb;
+  }
+  return (a || '').localeCompare(b || '');
+}
+
+/** Section used for display/sort: revised SOP location first, else original finding. */
+function pointSectionRef(point: RunPoint): string {
+  if (point.revisedSopSection?.trim()) return point.revisedSopSection.trim();
+  const revisedText =
+    point.status === 'addressed'
+      ? point.evidence || point.revisedExcerpt || ''
+      : point.revisedExcerpt || point.evidence || '';
+  const fromExcerpt = extractSectionId(revisedText);
+  if (fromExcerpt) return fromExcerpt;
+  return point.finding?.sopSectionAffected?.trim() || '';
 }
 
 interface RunIssue {
@@ -93,10 +141,35 @@ const severityStyle: Record<string, string> = {
 };
 
 type PointFilter = 'all' | 'solved' | 'open';
+type SeverityFilter = 'all' | 'critical' | 'major' | 'minor';
+type LevelFilter = 'all' | 'compliant' | 'partial' | 'non-compliant';
 
 function matchesPointFilter(point: RunPoint, filter: PointFilter): boolean {
   if (filter === 'all') return true;
   return filter === 'solved' ? point.status === 'addressed' : point.status === 'open';
+}
+
+function pointSeverityKey(point: RunPoint): SeverityFilter | null {
+  const raw = String(
+    point.finding?.issueSeverity || point.finding?.riskLevel || '',
+  )
+    .trim()
+    .toLowerCase();
+  if (!raw) return null;
+  if (raw === 'critical' || raw.startsWith('critical')) return 'critical';
+  if (raw === 'major' || raw.startsWith('major')) return 'major';
+  if (raw === 'minor' || raw.startsWith('minor')) return 'minor';
+  return null;
+}
+
+function matchesSeverityFilter(point: RunPoint, filter: SeverityFilter): boolean {
+  if (filter === 'all') return true;
+  return pointSeverityKey(point) === filter;
+}
+
+function matchesLevelFilter(point: RunPoint, filter: LevelFilter): boolean {
+  if (filter === 'all') return true;
+  return point.finding?.complianceLevel === filter;
 }
 
 function scoreColor(score: number): string {
@@ -181,6 +254,8 @@ function RunView({
   forceExpandCards = false,
   exportMeta,
   statusFilter = 'all',
+  severityFilter = 'all',
+  levelFilter = 'all',
 }: {
   run: RecheckRun;
   hideBanner?: boolean;
@@ -191,6 +266,8 @@ function RunView({
   exportMeta?: { sopIdentifier: string; sopName: string };
   /** Header filter — limits the prior points shown to solved / not solved. */
   statusFilter?: PointFilter;
+  severityFilter?: SeverityFilter;
+  levelFilter?: LevelFilter;
 }) {
   const [run, setRun] = useState<RecheckRun>(initial);
   useEffect(() => setRun(initial), [initial]);
@@ -232,9 +309,19 @@ function RunView({
   const showBanner = !hideBanner || forceExpandCards;
   const showChrome = !compact || forceExpandCards;
   // Keep the original index so ignore toggles still patch the right row.
+  // Default order: SOP section ascending (1, 1.3, 2, …).
   const visiblePoints = run.results
     .map((r, i) => ({ point: r, index: i }))
-    .filter(({ point }) => matchesPointFilter(point, statusFilter));
+    .filter(
+      ({ point }) =>
+        matchesPointFilter(point, statusFilter) &&
+        matchesSeverityFilter(point, severityFilter) &&
+        matchesLevelFilter(point, levelFilter),
+    )
+    .sort((a, b) => {
+      const bySection = compareSectionIds(pointSectionRef(a.point), pointSectionRef(b.point));
+      return bySection !== 0 ? bySection : a.index - b.index;
+    });
 
   return (
     <div className="space-y-4 select-text bg-white p-1">
@@ -385,7 +472,7 @@ function RunView({
           )}
           {visiblePoints.length === 0 && (
             <p className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-xs text-gray-500">
-              No {statusFilter === 'solved' ? 'solved' : 'unsolved'} points in this run.
+              No points match the current filters.
             </p>
           )}
           {visiblePoints.map(({ point: r, index: i }) => (
@@ -447,6 +534,7 @@ function RunView({
                 recheckOverride={{
                   currentSopText: r.status === 'addressed' ? r.evidence : r.revisedExcerpt || undefined,
                   newGap: r.status === 'open' ? r.note : '',
+                  revisedSection: pointSectionRef(r),
                 }}
               />
             </div>
@@ -525,6 +613,8 @@ export default function RecheckSopModal({
   const [historyError, setHistoryError] = useState('');
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const [pointFilter, setPointFilter] = useState<PointFilter>('all');
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
+  const [levelFilter, setLevelFilter] = useState<LevelFilter>('all');
   const [exportingPdf, setExportingPdf] = useState(false);
   const [copyingText, setCopyingText] = useState(false);
   const exportRootRef = useRef<HTMLDivElement | null>(null);
@@ -557,7 +647,8 @@ export default function RecheckSopModal({
       lines.push(
         `── Point ${i + 1}: ${r.status === 'addressed' ? 'SOLVED' : 'NOT SOLVED'}${r.carriedForward ? ' (carried forward)' : ''}${r.ignored ? ' (ignored)' : ''} ──`,
         [f.guidelineName, f.clauseNumber, f.clauseTitle].filter(Boolean).join(' · '),
-        f.sopSectionAffected ? `Section: ${f.sopSectionAffected}` : '',
+        f.sopSectionAffected ? `Original section: ${f.sopSectionAffected}` : '',
+        pointSectionRef(r) ? `Revised section: ${pointSectionRef(r)}` : '',
         f.guidelineRequirement ? `Guideline requirement:\n${f.guidelineRequirement}` : '',
         f.sopTextSnippet ? `Previous SOP text:\n${f.sopTextSnippet}` : '',
         (r.status === 'addressed' ? r.evidence : r.revisedExcerpt)
@@ -643,10 +734,36 @@ export default function RecheckSopModal({
     : 0;
   const notSolvedCount = exportableRun ? exportableRun.results.length - solvedCount : 0;
 
+  const severityCounts = exportableRun
+    ? exportableRun.results.reduce(
+        (acc, r) => {
+          const key = pointSeverityKey(r);
+          if (key) acc[key] += 1;
+          return acc;
+        },
+        { critical: 0, major: 0, minor: 0 },
+      )
+    : { critical: 0, major: 0, minor: 0 };
+
+  const levelCounts = exportableRun
+    ? exportableRun.results.reduce(
+        (acc, r) => {
+          const level = r.finding?.complianceLevel;
+          if (level === 'compliant' || level === 'partial' || level === 'non-compliant') {
+            acc[level] += 1;
+          }
+          return acc;
+        },
+        { compliant: 0, partial: 0, 'non-compliant': 0 },
+      )
+    : { compliant: 0, partial: 0, 'non-compliant': 0 };
+
   const reset = useCallback(() => {
     setFile(null);
     setAnnexures([]);
     setPointFilter('all');
+    setSeverityFilter('all');
+    setLevelFilter('all');
     setStatus('idle');
     setErrorMsg('');
     setActiveRun(null);
@@ -761,31 +878,87 @@ export default function RecheckSopModal({
             </div>
             {exportableRun && <VerdictPill run={exportableRun} />}
             {exportableRun && exportableRun.results.length > 0 && (
-              <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-0.5 shrink-0">
-                {([
-                  { key: 'all', label: 'All', count: exportableRun.results.length, active: 'bg-gray-800 text-white' },
-                  { key: 'solved', label: 'Solved', count: solvedCount, active: 'bg-emerald-600 text-white' },
-                  { key: 'open', label: 'Not solved', count: notSolvedCount, active: 'bg-amber-600 text-white' },
-                ] as const).map((opt) => (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    onClick={() => setPointFilter(opt.key)}
-                    className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold whitespace-nowrap transition-colors ${
-                      pointFilter === opt.key ? opt.active : 'text-gray-600 hover:bg-gray-100'
-                    }`}
-                    title={`Show ${opt.label.toLowerCase()} points`}
-                  >
-                    {opt.label}
-                    <span
-                      className={`rounded px-1 text-[10px] font-black ${
-                        pointFilter === opt.key ? 'bg-white/25' : 'bg-white border border-gray-200'
+              <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                  {([
+                    { key: 'all', label: 'All', count: exportableRun.results.length, active: 'bg-gray-800 text-white' },
+                    { key: 'solved', label: 'Solved', count: solvedCount, active: 'bg-emerald-600 text-white' },
+                    { key: 'open', label: 'Not solved', count: notSolvedCount, active: 'bg-amber-600 text-white' },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setPointFilter(opt.key)}
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold whitespace-nowrap transition-colors ${
+                        pointFilter === opt.key ? opt.active : 'text-gray-600 hover:bg-gray-100'
                       }`}
+                      title={`Show ${opt.label.toLowerCase()} points`}
                     >
-                      {opt.count}
-                    </span>
-                  </button>
-                ))}
+                      {opt.label}
+                      <span
+                        className={`rounded px-1 text-[10px] font-black ${
+                          pointFilter === opt.key ? 'bg-white/25' : 'bg-white border border-gray-200'
+                        }`}
+                      >
+                        {opt.count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                  {([
+                    { key: 'compliant' as const, label: 'Compliant', count: levelCounts.compliant, active: 'bg-emerald-600 text-white' },
+                    { key: 'partial' as const, label: 'Partial', count: levelCounts.partial, active: 'bg-amber-600 text-white' },
+                    { key: 'non-compliant' as const, label: 'Non-compliant', count: levelCounts['non-compliant'], active: 'bg-rose-600 text-white' },
+                  ]).map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setLevelFilter(levelFilter === opt.key ? 'all' : opt.key)}
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold whitespace-nowrap transition-colors ${
+                        levelFilter === opt.key ? opt.active : 'text-gray-600 hover:bg-gray-100'
+                      }`}
+                      title={`Filter by ${opt.label.toLowerCase()}`}
+                    >
+                      {opt.label}
+                      <span
+                        className={`rounded px-1 text-[10px] font-black ${
+                          levelFilter === opt.key ? 'bg-white/25' : 'bg-white border border-gray-200'
+                        }`}
+                      >
+                        {opt.count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                  {([
+                    { key: 'critical' as const, label: 'Critical', count: severityCounts.critical, active: 'bg-red-600 text-white' },
+                    { key: 'major' as const, label: 'Major', count: severityCounts.major, active: 'bg-orange-600 text-white' },
+                    { key: 'minor' as const, label: 'Minor', count: severityCounts.minor, active: 'bg-yellow-500 text-white' },
+                  ]).map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setSeverityFilter(severityFilter === opt.key ? 'all' : opt.key)}
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold whitespace-nowrap transition-colors ${
+                        severityFilter === opt.key ? opt.active : 'text-gray-600 hover:bg-gray-100'
+                      }`}
+                      title={`Filter by ${opt.label.toLowerCase()} severity`}
+                    >
+                      {opt.label}
+                      <span
+                        className={`rounded px-1 text-[10px] font-black ${
+                          severityFilter === opt.key ? 'bg-white/25' : 'bg-white border border-gray-200'
+                        }`}
+                      >
+                        {opt.count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -1019,6 +1192,8 @@ export default function RecheckSopModal({
                     forceExpandCards={exportingPdf}
                     exportMeta={{ sopIdentifier, sopName }}
                     statusFilter={pointFilter}
+                    severityFilter={severityFilter}
+                    levelFilter={levelFilter}
                   />
                 </div>
               )}
@@ -1058,6 +1233,8 @@ export default function RecheckSopModal({
                           type="button"
                           onClick={() => {
                             setPointFilter('all');
+                            setSeverityFilter('all');
+                            setLevelFilter('all');
                             setExpandedRun((cur) => (cur === r.id ? null : r.id));
                           }}
                           className="flex items-center gap-3 text-left min-w-0 flex-1"
@@ -1114,6 +1291,8 @@ export default function RecheckSopModal({
                             forceExpandCards={exportingPdf}
                             exportMeta={{ sopIdentifier, sopName }}
                             statusFilter={pointFilter}
+                            severityFilter={severityFilter}
+                            levelFilter={levelFilter}
                           />
                         </div>
                       )}

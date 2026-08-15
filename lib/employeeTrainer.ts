@@ -76,3 +76,30 @@ export function resolveTrainerDepartments(emp: {
   const selected = parseTrainerDepartments(emp.trainerDepartments, home);
   return selected.length > 0 ? selected : home ? [home] : [];
 }
+
+/** Learner-portal employee payload shared by LMS login and /me. */
+export function toLmsClientEmployee(emp: {
+  _id?: unknown;
+  id?: string;
+  name: string;
+  designation: string;
+  department: string;
+  isTrainer?: boolean;
+  trainerDepartments?: string[] | null;
+}) {
+  const isTrainer = emp.isTrainer === true;
+  return {
+    id: String(emp.id || emp._id || ''),
+    name: emp.name,
+    designation: emp.designation,
+    department: emp.department,
+    isTrainer,
+    trainerDepartments: isTrainer
+      ? resolveTrainerDepartments({
+          department: emp.department,
+          trainerDepartments: emp.trainerDepartments,
+          isTrainer: true,
+        })
+      : [],
+  };
+}

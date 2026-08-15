@@ -39,7 +39,8 @@ export async function POST(request: NextRequest) {
     const col = db.collection("mcqbanks");
     const existing = await col.findOne(
       { _id: new mongoose.Types.ObjectId(bankId) },
-      { projection: { sopIdentifier: 1, department: 1 } },
+      // `mcqs.translations` keeps array order, so index lookup below is aligned.
+      { projection: { sopIdentifier: 1, department: 1, "mcqs.translations": 1 } },
     );
     if (!existing) {
       return NextResponse.json({ error: "Bank not found" }, { status: 404 });
@@ -51,18 +52,26 @@ export async function POST(request: NextRequest) {
     );
     if (denied) return denied;
 
-    const result = await col.updateOne(
-      { _id: new mongoose.Types.ObjectId(bankId) },
-      {
-        $set: {
-          [`mcqs.${questionIndex}.question`]:     question.trim(),
-          [`mcqs.${questionIndex}.options`]:      options,
-          [`mcqs.${questionIndex}.correctAnswer`]: correctAnswer,
-          [`mcqs.${questionIndex}.explanation`]:  explanation ?? "",
-          updatedAt: new Date(),
-        },
-      },
-    );
+    // Editing the English master invalidates its translations — they were made
+    // from the old wording, so they stay readable but are flagged for re-translation
+    // and are no longer served to learners.
+    const $set: Record<string, unknown> = {
+      [`mcqs.${questionIndex}.question`]:      question.trim(),
+      [`mcqs.${questionIndex}.options`]:       options,
+      [`mcqs.${questionIndex}.correctAnswer`]: correctAnswer,
+      [`mcqs.${questionIndex}.explanation`]:   explanation ?? "",
+      updatedAt: new Date(),
+    };
+    const priorTranslations = (existing.mcqs?.[questionIndex]?.translations ?? {}) as Record<
+      string,
+      unknown
+    >;
+    for (const lang of Object.keys(priorTranslations)) {
+      $set[`mcqs.${questionIndex}.translations.${lang}.isStale`] = true;
+      $set[`mcqs.${questionIndex}.translations.${lang}.isVerified`] = false;
+    }
+
+    const result = await col.updateOne({ _id: new mongoose.Types.ObjectId(bankId) }, { $set });
 
     if (result.matchedCount === 0) {
       return NextResponse.json({ error: "Bank not found" }, { status: 404 });
