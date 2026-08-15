@@ -141,7 +141,9 @@ const severityStyle: Record<string, string> = {
 };
 
 type PointFilter = 'all' | 'solved' | 'open';
-type SeverityFilter = 'all' | 'critical' | 'major' | 'minor';
+/** A real severity a finding can carry. `'all'` is a filter choice, never a value. */
+type SeverityKey = 'critical' | 'major' | 'minor';
+type SeverityFilter = 'all' | SeverityKey;
 type LevelFilter = 'all' | 'compliant' | 'partial' | 'non-compliant';
 
 function matchesPointFilter(point: RunPoint, filter: PointFilter): boolean {
@@ -149,7 +151,7 @@ function matchesPointFilter(point: RunPoint, filter: PointFilter): boolean {
   return filter === 'solved' ? point.status === 'addressed' : point.status === 'open';
 }
 
-function pointSeverityKey(point: RunPoint): SeverityFilter | null {
+function pointSeverityKey(point: RunPoint): SeverityKey | null {
   const raw = String(
     point.finding?.issueSeverity || point.finding?.riskLevel || '',
   )
