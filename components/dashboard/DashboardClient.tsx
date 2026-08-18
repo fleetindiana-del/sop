@@ -36,6 +36,7 @@ import {
   MigrateBunnyModal,
   SopFolderUploadModal,
 } from "./BulkUploadModals";
+import { BulkUploadAllModal } from "./BulkUploadAllModal";
 import { PipelineDock, ToastNotification } from "./PipelineDock";
 import { AdminToolsModal, ComplianceModal, GuidelinesPanel } from "./ExtraModals";
 import GuidelinesComplianceWizard from "./GuidelinesComplianceWizard";
@@ -182,6 +183,8 @@ export function DashboardClient() {
     setBunnyMigrateOpen,
     videoUploadOpen,
     setVideoUploadOpen,
+    bulkAllUploadOpen,
+    setBulkAllUploadOpen,
     complianceOpen,
     setComplianceOpen,
     adminOpen,
@@ -642,6 +645,12 @@ export function DashboardClient() {
             open={videoUploadOpen}
             onClose={() => setVideoUploadOpen(false)}
             onSuccess={refresh}
+          />
+          <BulkUploadAllModal
+            open={bulkAllUploadOpen}
+            onClose={() => setBulkAllUploadOpen(false)}
+            onSuccess={refresh}
+            departmentList={departmentList}
           />
           <MigrateBunnyModal
             open={bunnyMigrateOpen}

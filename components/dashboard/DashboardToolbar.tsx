@@ -60,6 +60,7 @@ export function DashboardToolbar({
     setLocationUploadOpen,
     setBunnyMigrateOpen,
     setVideoUploadOpen,
+    setBulkAllUploadOpen,
     setAdminOpen,
     setFilter,
     filters,
@@ -162,6 +163,13 @@ export function DashboardToolbar({
               </Btn>
 
               <div className="absolute left-0 top-full z-30 hidden w-52 rounded-lg border border-slate-200 bg-white py-1 shadow-xl group-hover:block">
+                {/* Upload All — SOPs + annexures + PDFs */}
+                <DropdownItem
+                  icon={<FolderUp className="h-3.5 w-3.5 text-emerald-600" />}
+                  label="Upload All (SOP + Annexures)"
+                  onClick={() => setBulkAllUploadOpen(true)}
+                />
+                <div className="my-1 border-t border-slate-100" />
                 {/* Upload SOPs */}
                 <DropdownItem
                   icon={<FileUp className="h-3.5 w-3.5 text-orange-500" />}

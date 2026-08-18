@@ -15,6 +15,7 @@ import {
   extractIdentifierFromFilename,
   parseUploadPathMetadata,
   resolveDepartmentFromUpload,
+  preferNewestSopIdentifier,
   sopVersionFields,
   versionFromIdentifier,
 } from "@/lib/sop-utils";
@@ -141,16 +142,18 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
 
   const rawIdentifier =
     identifierInput ||
-    contentMeta.identifier ||
-    pathMeta.identifierFromPath ||
-    extractIdentifierFromFilename(pathMeta.fileName || fileName);
-  const identifier = normalizeSopIdentifierKey(rawIdentifier);
+    preferNewestSopIdentifier(
+      contentMeta.identifier,
+      pathMeta.identifierFromPath,
+      extractIdentifierFromFilename(pathMeta.fileName || fileName),
+    );
+  const identifier = normalizeSopIdentifierKey(rawIdentifier ?? "");
 
   const version =
     versionInput ||
-    contentMeta.version ||
     pathMeta.versionFromPath ||
     versionFromIdentifier(identifier) ||
+    contentMeta.version ||
     "1.0";
   const { sopBaseId, versionNum, version: resolvedVersion } = sopVersionFields(
     identifier,
@@ -549,14 +552,19 @@ export async function processSopUpload(formData: FormData) {
     }
   }
 
+  let headerFlagsChanged = false;
   for (const sopBaseId of touchedFamilies) {
     try {
       const family = await SOP.find({ sopBaseId, isObsolete: { $ne: true } });
-      if (family.length) await refreshFamilyPriorHeaderDateFlags(family);
+      if (family.length) {
+        const n = await refreshFamilyPriorHeaderDateFlags(family);
+        if (n > 0) headerFlagsChanged = true;
+      }
     } catch (e) {
       console.error(`[sop-upload] prior header date refresh error for ${sopBaseId}:`, e);
     }
   }
+  if (headerFlagsChanged) invalidateDashboardSopsCache();
 
   return NextResponse.json({ results });
 }

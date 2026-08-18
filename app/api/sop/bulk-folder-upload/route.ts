@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/withAuth";
 
 export const maxDuration = 300;
 
-const SKIP_PATTERN = /annexure|appendix|cover\s*page|index/i;
+const SKIP_PATTERN = /cover\s*page|^index$/i;
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);

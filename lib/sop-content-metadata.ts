@@ -4,6 +4,7 @@ import {
   extractSopCodeFromSegment,
   parseUploadPathMetadata,
   pickBestSopIdentifierFromText,
+  preferNewestSopIdentifier,
   sopVersionFields,
   versionFromIdentifier,
 } from "@/lib/sop-utils";
@@ -142,7 +143,9 @@ function parentIdentifierFromAnnexure(
 
 /**
  * Derive document identity from extracted text, filename, and relative path.
- * Content SOP NO. wins over path/filename when present.
+ * When filename/path and the document header name the same SOP family at
+ * different revisions, the newer revision wins (QAGE20-6.docx + header QAGE20-5
+ * → QAGE20-6). Content still wins when the codes are different families.
  */
 export function extractSopContentMetadata(opts: {
   content?: string;
@@ -173,7 +176,8 @@ export function extractSopContentMetadata(opts: {
     };
   }
 
-  const identifier = fromContent || fromPath || fromFile;
+  // Same family, newer revision wins (filename QAGE20-6 beats a stale header QAGE20-5).
+  const identifier = preferNewestSopIdentifier(fromContent, fromPath, fromFile);
   const department = content ? extractDepartmentFromContent(content) : undefined;
   if (!identifier) {
     const subjectMatchEmpty = content.match(

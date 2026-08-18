@@ -27,6 +27,7 @@ import {
 import { nameFromFilename } from "@/lib/sop-filename";
 import {
   normalizeSopIdentifierKey,
+  sopFamilyCodesMatch,
   sopFamilyKeyFromIdentifier,
   sopIdentifierMatchFilter,
 } from "@/lib/sopIdentifierNormalize";
@@ -845,7 +846,11 @@ function buildPriorVersions(group: ISOP[], currentVersion: string, language = "E
     const entry = uploaded.get(key) ?? { versionNum: num, version: recordVersion(record), lang };
     applyRecordFileLinks(record, entry);
     if (record.fileType === "docx") {
-      entry.headerDatesValid = record.headerDatesValid;
+      // True wins: a later unflagged DOCX must not wipe a validated slot.
+      if (record.headerDatesValid === true) entry.headerDatesValid = true;
+      else if (entry.headerDatesValid !== true && record.headerDatesValid === false) {
+        entry.headerDatesValid = false;
+      }
     }
     uploaded.set(key, entry);
   }
@@ -856,7 +861,10 @@ function buildPriorVersions(group: ISOP[], currentVersion: string, language = "E
   for (const { versionNum, version, lang, docx, pdf, headerDatesValid } of uploaded.values()) {
     if (!docx && !pdf) continue;
     const inPriorWindow = versionNum >= keptThreshold;
-    const docxDateError = inPriorWindow && Boolean(docx && headerDatesValid !== true);
+    // Only flag explicit failures. Undefined (legacy records that were green as
+    // the current version) must stay green when they become a prior after a new
+    // revision is uploaded — e.g. QAGE20-5 → prior of QAGE20-6.
+    const docxDateError = inPriorWindow && Boolean(docx && headerDatesValid === false);
     const entry: PriorVersionEntry = { version, language: lang, docx, pdf, docxDateError };
     if (inPriorWindow) prior.push(entry);
     else archived.push(entry);
@@ -1992,6 +2000,30 @@ export function sopVersionFields(identifier: string, storedVersion?: string | nu
     sopBaseId: baseIdentifierFromIdentifier(normalized),
     versionNum: versionNumber(version),
   };
+}
+
+/**
+ * When several codes name the same SOP family, keep the highest revision.
+ * QAGE20-5 (document header) + QAGE20-6 (filename) → QAGE20-6, so a bulk
+ * upload of the new revision becomes current and the previous record stays
+ * as the prior version instead of being overwritten.
+ */
+export function preferNewestSopIdentifier(
+  ...candidates: Array<string | undefined | null>
+): string | undefined {
+  const ids = candidates
+    .map((c) => (typeof c === "string" && c.trim() ? normalizeSopIdentifierKey(c) : ""))
+    .filter(Boolean);
+  if (!ids.length) return undefined;
+
+  let best = ids[0];
+  for (const id of ids) {
+    if (!sopFamilyCodesMatch(best, id)) continue;
+    const bestVer = versionNumber(versionFromIdentifier(best) ?? "0");
+    const nextVer = versionNumber(versionFromIdentifier(id) ?? "0");
+    if (nextVer > bestVer) best = id;
+  }
+  return best;
 }
 
 // Lines that are never the SOP title — skip them when scanning document text.

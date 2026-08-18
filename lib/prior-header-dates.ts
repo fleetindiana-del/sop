@@ -133,6 +133,22 @@ export async function refreshFamilyPriorHeaderDateFlags(family: ISOP[]) {
       full = await ensureDocxContent(full);
     }
 
+    // Leave the flag alone when we still have no real text — marking false
+    // would turn a previously-green current DOCX red the moment a newer
+    // revision is uploaded and this file becomes a prior version.
+    // If a previous run already wrote false for that reason, clear it.
+    if (isUnextractedDocxContent(full.content)) {
+      if (record.headerDatesValid === false) {
+        ops.push({
+          updateOne: {
+            filter: { _id: record._id },
+            update: { $unset: { headerDatesValid: "" }, $set: { updatedAt: now } },
+          },
+        });
+      }
+      continue;
+    }
+
     const valid = validatePriorDocxHeaderDates(full);
     if (record.headerDatesValid === valid) continue;
     ops.push({

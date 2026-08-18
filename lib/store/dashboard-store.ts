@@ -15,6 +15,7 @@ interface DashboardState {
   locationUploadOpen: boolean;
   bunnyMigrateOpen: boolean;
   videoUploadOpen: boolean;
+  bulkAllUploadOpen: boolean;
   complianceOpen: boolean;
   adminOpen: boolean;
   pipelineJobs: PipelineJob[];
@@ -32,6 +33,7 @@ interface DashboardState {
   setLocationUploadOpen: (open: boolean) => void;
   setBunnyMigrateOpen: (open: boolean) => void;
   setVideoUploadOpen: (open: boolean) => void;
+  setBulkAllUploadOpen: (open: boolean) => void;
   setComplianceOpen: (open: boolean) => void;
   setAdminOpen: (open: boolean) => void;
   addPipelineJob: (job: Omit<PipelineJob, "id" | "startedAt">) => void;
@@ -65,6 +67,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   locationUploadOpen: false,
   bunnyMigrateOpen: false,
   videoUploadOpen: false,
+  bulkAllUploadOpen: false,
   complianceOpen: false,
   adminOpen: false,
   pipelineJobs: [],
@@ -98,6 +101,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   setLocationUploadOpen: (open) => set({ locationUploadOpen: open }),
   setBunnyMigrateOpen: (open) => set({ bunnyMigrateOpen: open }),
   setVideoUploadOpen: (open) => set({ videoUploadOpen: open }),
+  setBulkAllUploadOpen: (open) => set({ bulkAllUploadOpen: open }),
   setComplianceOpen: (open) => set({ complianceOpen: open }),
   setAdminOpen: (open) => set({ adminOpen: open }),
 
