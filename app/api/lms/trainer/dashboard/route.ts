@@ -242,8 +242,9 @@ export async function GET(req: NextRequest) {
             employeeId: id,
             employeeDepartment: emp.department,
           }).filter((a) =>
-            deptMatchesTrainerScope(a.sopDepartment || emp.department, scopedDepts) ||
-            deptMatchesTrainerScope(emp.department, scopedDepts),
+            // Only SOPs in the trainer's departments (not every SOP on an
+            // in-scope employee's matrix from other departments).
+            deptMatchesTrainerScope(a.sopDepartment || emp.department, scopedDepts),
           );
 
           let completedSops = 0;
@@ -344,7 +345,8 @@ export async function GET(req: NextRequest) {
           };
         });
 
-        const monthExamCounts = Array(12).fill(0) as number[];
+        // SOP-wise month chips: the same exam assigned to many employees counts once.
+        const monthSops = Array.from({ length: 12 }, () => new Set<string>());
         let due = 0;
         let overdue = 0;
         let completed = 0;
@@ -359,7 +361,7 @@ export async function GET(req: NextRequest) {
             // them here would inflate every month chip with dormant history.
             if (s.hasExam && !preCycle) {
               for (const m of s.months) {
-                if (m >= 1 && m <= 12) monthExamCounts[m - 1]++;
+                if (m >= 1 && m <= 12) monthSops[m - 1].add(s.sopKey || s.sopCode);
               }
             }
             if (s.status === 'completed') {
@@ -383,7 +385,7 @@ export async function GET(req: NextRequest) {
           },
           trainingCycleStart: formatCycleStart(cycle),
           records,
-          monthExamCounts,
+          monthExamCounts: monthSops.map((set) => set.size),
           statusTotals: { due, overdue, completed, ignored, upcoming, notCompleted },
         };
       },

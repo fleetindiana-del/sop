@@ -21,8 +21,12 @@ export interface IScheduledExam extends Document {
   /** Base SOP identifier (version suffix stripped). */
   sopCode: string;
   sopName?: string;
-  /** Deadline the employee must complete the exam by (UTC date-only). */
+  /** Deadline the employee must complete the exam by (UTC date-only). Sitting 1. */
   scheduledDate: Date;
+  /** Makeup date for employees absent on sitting 1. */
+  scheduledDate2?: Date;
+  /** Makeup date for employees absent on sitting 2. */
+  scheduledDate3?: Date;
   /** Month/year the exam belongs to — derived from scheduledDate. */
   month: number;
   year: number;
@@ -43,6 +47,8 @@ const ScheduledExamSchema = new Schema<IScheduledExam>(
     sopCode: { type: String, required: true, uppercase: true, trim: true, index: true },
     sopName: { type: String, trim: true },
     scheduledDate: { type: Date, required: true, index: true },
+    scheduledDate2: { type: Date },
+    scheduledDate3: { type: Date },
     month: { type: Number, required: true, min: 1, max: 12 },
     year: { type: Number, required: true },
     status: {

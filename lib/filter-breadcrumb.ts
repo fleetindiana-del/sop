@@ -86,6 +86,10 @@ export function describeFilters(filters: SOPFilters): FilterBreadcrumb {
   push(lookup(LANGUAGE_LABELS, filters.language));
   push(lookup(FILE_TYPE_LABELS, filters.fileType));
   push(lookup(EXPIRY_LABELS, filters.expiry));
+  if (filters.complianceDone === "Yes") push("Compliance Done");
+  if (filters.complianceDone === "No") push("Compliance Not Done");
+  if (filters.complianceBypassed === "Yes") push("Bypassed");
+  if (filters.complianceBypassed === "No") push("Not Bypassed");
   push(lookup(MEDIA_LABELS, filters.media));
   push(lookup(VIDEO_TYPE_LABELS, filters.videoType));
 

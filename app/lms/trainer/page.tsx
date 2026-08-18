@@ -11,7 +11,7 @@ import {
   SopExamSettingsPanel,
   type SopExamSettingsApiPaths,
 } from '@/components/lms/SopExamSettingsPanel';
-import { TrainerMonthlyExams } from '@/components/lms/TrainerMonthlyExams';
+import { TrainerMonthlyExams, DeptFilterBtn } from '@/components/lms/TrainerMonthlyExams';
 import { TrainerRosterPanel } from '@/components/lms/TrainerRosterPanel';
 import { TrainerAttendancePanel } from '@/components/lms/TrainerAttendancePanel';
 
@@ -108,7 +108,8 @@ export default function LmsTrainerPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('monthly');
   const [dept, setDept] = useState('All');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [monthFilter, setMonthFilter] = useState<number | 'all'>('all');
+  /** Empty = all months. Matrix views can multi-select. */
+  const [monthFilter, setMonthFilter] = useState<number[]>([]);
   const [search, setSearch] = useState('');
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
   const [assignTarget, setAssignTarget] = useState<{
@@ -165,7 +166,7 @@ export default function LmsTrainerPage() {
     return records.filter((r) => {
       if (r.isTrainer) return false;
       if (dept !== 'All' && r.department !== dept) return false;
-      if (monthFilter !== 'all' && !r.sops.some((s) => s.months.includes(monthFilter))) return false;
+      if (monthFilter.length > 0 && !r.sops.some((s) => s.months.some((m) => monthFilter.includes(m)))) return false;
       if (statusFilter === 'pending' && r.notCompletedSops <= 0) return false;
       if (statusFilter === 'completed' && r.completedSops <= 0) return false;
       if (statusFilter === 'due' && r.dueSops <= 0) return false;
@@ -208,7 +209,7 @@ export default function LmsTrainerPage() {
       if (r.isTrainer) continue;
       if (dept !== 'All' && r.department !== dept) continue;
       for (const s of r.sops) {
-        if (monthFilter !== 'all' && !s.months.includes(monthFilter)) continue;
+        if (monthFilter.length > 0 && !s.months.some((m) => monthFilter.includes(m))) continue;
         if (statusFilter === 'completed' && s.status !== 'completed') continue;
         if (statusFilter === 'pending' && s.status === 'completed') continue;
         if (statusFilter === 'due' && (s.status === 'completed' || s.scheduleStatus !== 'due')) continue;
@@ -309,8 +310,8 @@ export default function LmsTrainerPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1920px] items-center justify-between px-3 py-3 sm:px-5">
-          <div className="flex items-center gap-3">
+        <div className="mx-auto flex w-full max-w-[1920px] items-center gap-3 px-3 py-2 sm:px-5">
+          <div className="flex shrink-0 items-center gap-3">
             <Link href="/lms" className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-800">
               <ArrowLeft className="h-3.5 w-3.5" /> My Training
             </Link>
@@ -325,11 +326,37 @@ export default function LmsTrainerPage() {
               )}
             </div>
           </div>
+          <div className="flex min-w-0 flex-1 justify-center">
+            <div className="flex flex-wrap justify-center rounded-lg border border-gray-200 bg-white p-0.5">
+              {([
+                { id: 'monthly', label: 'Monthly Exams', Icon: CalendarRange },
+                { id: 'employee', label: 'By Employee', Icon: Users },
+                { id: 'sop', label: 'By SOP', Icon: ClipboardList },
+                { id: 'roster', label: 'My Employees', Icon: UserCog },
+                { id: 'attendance', label: 'Attendance', Icon: UserCheck },
+                { id: 'exams', label: 'Exam Settings', Icon: Settings2 },
+              ] as const).map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => setViewMode(v.id)}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                    viewMode === v.id ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <v.Icon className="h-3.5 w-3.5" /> {v.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {depts.length > 1 && (
+            <DeptFilterBtn value={dept} onChange={setDept} departments={depts} />
+          )}
           <button
             type="button"
             onClick={() => void load(true)}
             disabled={loading}
-            className="rounded-lg border border-gray-200 p-1.5 text-gray-400 hover:bg-gray-50"
+            className="shrink-0 rounded-lg border border-gray-200 p-1.5 text-gray-400 hover:bg-gray-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -378,71 +405,51 @@ export default function LmsTrainerPage() {
             </div>
             )}
 
-            {/* View + filters */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex flex-wrap rounded-lg border border-gray-200 bg-white p-0.5">
-                {([
-                  { id: 'monthly', label: 'Monthly Exams', Icon: CalendarRange },
-                  { id: 'employee', label: 'By Employee', Icon: Users },
-                  { id: 'sop', label: 'By SOP', Icon: ClipboardList },
-                  { id: 'roster', label: 'My Employees', Icon: UserCog },
-                  { id: 'attendance', label: 'Attendance', Icon: UserCheck },
-                  { id: 'exams', label: 'Exam Settings', Icon: Settings2 },
-                ] as const).map((v) => (
-                  <button
-                    key={v.id}
-                    type="button"
-                    onClick={() => setViewMode(v.id)}
-                    className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                      viewMode === v.id ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-50'
-                    }`}
+            {isMatrixView && (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative min-w-52 flex-1 max-w-sm">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder={viewMode === 'employee' ? 'Search employee…' : 'Search SOP…'}
+                    className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-8 pr-8 text-xs focus:border-purple-300 focus:outline-none"
+                  />
+                  {search && (
+                    <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-600">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {depts.length <= 1 && (
+                <div className="relative">
+                  <select
+                    value={dept}
+                    onChange={(e) => setDept(e.target.value)}
+                    className="appearance-none rounded-lg border border-gray-200 bg-white py-2 pl-3 pr-7 text-xs font-medium text-gray-600"
                   >
-                    <v.Icon className="h-3.5 w-3.5" /> {v.label}
-                  </button>
-                ))}
+                    <option value="All">All departments</option>
+                    {depts.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                </div>
+                )}
               </div>
-
-              {isMatrixView && (
-                <>
-                  <div className="relative min-w-52 flex-1 max-w-sm">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-                    <input
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder={viewMode === 'employee' ? 'Search employee…' : 'Search SOP…'}
-                      className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-8 pr-8 text-xs focus:border-purple-300 focus:outline-none"
-                    />
-                    {search && (
-                      <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-600">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="relative">
-                    <select
-                      value={dept}
-                      onChange={(e) => setDept(e.target.value)}
-                      className="appearance-none rounded-lg border border-gray-200 bg-white py-2 pl-3 pr-7 text-xs font-medium text-gray-600"
-                    >
-                      <option value="All">All departments</option>
-                      {depts.map((d) => (
-                        <option key={d} value={d}>{d}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-                  </div>
-                </>
-              )}
-            </div>
+            )}
 
             {isMatrixView && (
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                  Unique SOP exams
+                </span>
                 <button
                   type="button"
-                  onClick={() => setMonthFilter('all')}
+                  onClick={() => setMonthFilter([])}
                   className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                    monthFilter === 'all' ? 'bg-purple-600 text-white' : 'border border-gray-200 bg-white text-gray-600'
+                    monthFilter.length === 0 ? 'bg-purple-600 text-white' : 'border border-gray-200 bg-white text-gray-600'
                   }`}
                 >
                   All months
@@ -451,9 +458,12 @@ export default function LmsTrainerPage() {
                   <button
                     key={m}
                     type="button"
-                    onClick={() => setMonthFilter((prev) => (prev === i + 1 ? 'all' : i + 1))}
+                    onClick={() => setMonthFilter((prev) => (
+                      prev.includes(i + 1) ? prev.filter((n) => n !== i + 1) : [...prev, i + 1].sort((a, b) => a - b)
+                    ))}
+                    title={`${data.monthExamCounts?.[i] ?? 0} unique SOP exam(s) in ${m} — click to multi-select`}
                     className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                      monthFilter === i + 1 ? 'bg-indigo-600 text-white' : 'border border-gray-200 bg-white text-gray-600'
+                      monthFilter.includes(i + 1) ? 'bg-indigo-600 text-white' : 'border border-gray-200 bg-white text-gray-600'
                     }`}
                   >
                     {m}
@@ -464,7 +474,11 @@ export default function LmsTrainerPage() {
             )}
 
             {viewMode === 'monthly' ? (
-              <TrainerMonthlyExams onUnauthorized={() => router.push('/lms')} />
+              <TrainerMonthlyExams
+                dept={dept}
+                onDeptChange={setDept}
+                onUnauthorized={() => router.push('/lms')}
+              />
             ) : viewMode === 'roster' ? (
               <TrainerRosterPanel onUnauthorized={() => router.push('/lms')} />
             ) : viewMode === 'attendance' ? (
@@ -504,7 +518,7 @@ export default function LmsTrainerPage() {
                         {filteredEmployees.map((emp) => {
                           const open = expandedEmp === emp.employeeId;
                           const visibleSops = emp.sops.filter((s) => {
-                            if (monthFilter !== 'all' && !s.months.includes(monthFilter)) return false;
+                            if (monthFilter.length > 0 && !s.months.some((m) => monthFilter.includes(m))) return false;
                             if (statusFilter === 'completed') return s.status === 'completed';
                             if (statusFilter === 'pending') return s.status !== 'completed';
                             if (statusFilter === 'due') return s.status !== 'completed' && s.scheduleStatus === 'due';

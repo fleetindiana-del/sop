@@ -26,6 +26,7 @@ import {
   examCompletionDate,
   examScore,
   isExamCompleted,
+  latestSittingIso,
   listScheduledExams,
   loadExamProgressMap,
   stripVersion,
@@ -34,6 +35,7 @@ import {
 } from '@/lib/lmsExamScheduling';
 import { isInvalidSopAssignmentCode } from '@/lib/sop-name-resolution';
 import { toDateOnlyIso } from '@/lib/trainingExamSchedule';
+import { countUniqueSops, countUniqueSopsByMonth } from '@/lib/lmsTrainerExamCounts';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,8 +51,19 @@ export interface MonthlyExamRow {
   sopNameGujarati?: string;
   month: number;
   year: number;
-  /** Deadline the employee must finish by, when one has been set. */
+  /** Deadline the employee must finish by, when one has been set. Sitting 1. */
   scheduledDate?: string;
+  /** Makeup date after an absence on sitting 1. */
+  scheduledDate2?: string;
+  /** Makeup date after an absence on sitting 2. */
+  scheduledDate3?: string;
+  /** ISO date of the current SOP document expiry, if known. */
+  expiryDate?: string;
+  /**
+   * When the trainer (or system) assigned this exam date — ScheduledExam.createdAt
+   * when the row came from a trainer schedule.
+   */
+  assignedAt?: string;
   status: ExamCompletionStatus;
   /** Cycle-relative schedule state (due / upcoming / ignored / overdue). */
   scheduleStatus: LmsScheduleStatus;
@@ -107,7 +120,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const body = await getOrBuildLmsCache(
-      `lms:trainer:monthly:v2:${trainer.employeeId}:${deptParam || 'all'}:${yearParam || 'all'}:${includeIgnored ? 'inc' : 'exc'}`,
+          `lms:trainer:monthly:v8:${trainer.employeeId}:${deptParam || 'all'}:${yearParam || 'all'}:${includeIgnored ? 'inc' : 'exc'}`,
       lmsServerTtl.adminEmployeeTraining,
       async () => {
         await connectDB();
@@ -197,10 +210,10 @@ export async function GET(req: NextRequest) {
           const assignments = applyReschedulesToList(notIgnored, rescheduleRules, {
             employeeId,
             employeeDepartment: emp.department,
-          }).filter(
-            (a) =>
-              deptMatchesTrainerScope(a.sopDepartment || emp.department, scopedDepts) ||
-              deptMatchesTrainerScope(emp.department, scopedDepts),
+          }).filter((a) =>
+            // Only SOPs that belong to the trainer's departments — not every SOP
+            // an in-scope employee happens to carry from another department.
+            deptMatchesTrainerScope(a.sopDepartment || emp.department, scopedDepts),
           );
 
           for (const a of assignments) {
@@ -225,16 +238,31 @@ export async function GET(req: NextRequest) {
             const isIgnored = !completed && scheduleStatus === 'ignored';
             if (isIgnored && !includeIgnored) continue;
 
+            // Sitting 1 is only a trainer-assigned exam date. Matrix/calendar
+            // placeholders (often the last day of the month) are not sittings.
+            const sitting1 = scheduled
+              ? toDateOnlyIso(new Date(scheduled.scheduledDate))
+              : a.scheduledByTrainer
+                ? a.examDate
+                : undefined;
+            const sitting2 = scheduled?.scheduledDate2
+              ? toDateOnlyIso(new Date(scheduled.scheduledDate2))
+              : undefined;
+            const sitting3 = scheduled?.scheduledDate3
+              ? toDateOnlyIso(new Date(scheduled.scheduledDate3))
+              : undefined;
+            const dueDate = latestSittingIso([sitting3, sitting2, sitting1]);
+
             let status: ExamCompletionStatus;
             let daysOverdue = 0;
             if (completed) {
               status = 'completed';
-            } else if (a.examDate) {
-              status = computeExamStatus(a.examDate, false, now);
+            } else if (dueDate) {
+              status = computeExamStatus(dueDate, false, now);
               if (status === 'overdue') {
                 daysOverdue = Math.max(
                   0,
-                  Math.round((today.getTime() - new Date(a.examDate).getTime()) / 86_400_000),
+                  Math.round((today.getTime() - new Date(dueDate).getTime()) / 86_400_000),
                 );
               }
             } else {
@@ -255,7 +283,13 @@ export async function GET(req: NextRequest) {
               sopNameGujarati: a.sopNameGujarati,
               month: a.month,
               year: a.year,
-              scheduledDate: a.examDate,
+              scheduledDate: sitting1,
+              scheduledDate2: sitting2,
+              scheduledDate3: sitting3,
+              expiryDate: a.expiryDate,
+              assignedAt: scheduled?.createdAt
+                ? toDateOnlyIso(new Date(scheduled.createdAt))
+                : undefined,
               status,
               scheduleStatus: scheduleStatus === 'missed' ? 'overdue' : scheduleStatus,
               isIgnored,
@@ -283,27 +317,32 @@ export async function GET(req: NextRequest) {
           return a.sopCode.localeCompare(b.sopCode);
         });
 
+        // Month tiles are SOP-wise: 4 August exams × 20 employees = 4, not 80.
+        const uniqueByMonth = countUniqueSopsByMonth(rows);
+        const uniqueYear = countUniqueSops(rows);
         const monthCounts = EMPTY_MONTH_COUNTS();
-        const totals = {
-          total: 0, completed: 0, pending: 0, overdue: 0, ignored: 0, scheduled: 0,
-        };
-        for (const r of rows) {
-          const bucket = monthCounts[r.month - 1];
-          // Ignored exams are tallied on their own so a month tile only ever
-          // counts exams the employee is actually expected to sit that month.
-          if (r.isIgnored) {
-            if (bucket) bucket.ignored++;
-            totals.ignored++;
-            continue;
-          }
-          if (bucket) {
-            bucket.total++;
-            bucket[r.status]++;
-          }
-          totals.total++;
-          totals[r.status]++;
-          if (r.source === 'trainer') totals.scheduled++;
+        for (let i = 0; i < 12; i++) {
+          const u = uniqueByMonth[i];
+          monthCounts[i] = {
+            total: u.total,
+            completed: u.completed,
+            pending: u.remaining,
+            overdue: u.overdue,
+            ignored: u.ignored,
+          };
         }
+        let scheduled = 0;
+        for (const r of rows) {
+          if (!r.isIgnored && r.source === 'trainer') scheduled++;
+        }
+        const totals = {
+          total: uniqueYear.total,
+          completed: uniqueYear.completed,
+          pending: uniqueYear.remaining,
+          overdue: uniqueYear.overdue,
+          ignored: uniqueYear.ignored,
+          scheduled,
+        };
 
         const examMap = new Map<string, string>();
         for (const r of rows) examMap.set(r.sopCode, r.sopName);

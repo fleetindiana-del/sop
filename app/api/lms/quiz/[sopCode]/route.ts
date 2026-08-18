@@ -193,7 +193,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     await connectDB();
 
     const employee = await Employee.findById(payload.sub)
-      .select('department designation isTrainer trainerDepartments')
+      .select('name department designation isTrainer trainerDepartments')
       .lean();
 
     const resolved = await resolveExamSettingsForSop(sopCode, {
@@ -248,6 +248,39 @@ export async function GET(req: NextRequest, { params }: Params) {
             settings: toLearnerQuizSettings(resolved),
             trainerPending: true,
             trainerGateCode: gate.code,
+          },
+          { status: 403 },
+        );
+      }
+
+      const { getExamAttendanceEligibility } = await import('@/lib/lmsAttendanceGate');
+      let examDate: string | null = null;
+      if (employee?.name && employee?.department) {
+        const { getEmployeeAssignmentsMap } = await import('@/lib/employeeAssignments');
+        const assignmentsMap = await getEmployeeAssignmentsMap();
+        const key = `${employee.department}||${employee.name}`.trim().toLowerCase();
+        const familyRe = sopFamilyIdentifierRegex(sopCode);
+        const hit = (assignmentsMap.get(key) || []).find(
+          (a) => familyRe.test(a.sopCode)
+            || (baseIdentifierFromIdentifier(a.sopCode) || a.sopCode).toUpperCase() === family,
+        );
+        examDate = hit?.examDate || null;
+      }
+      const attendanceGate = await getExamAttendanceEligibility({
+        employeeId: payload.sub,
+        department: employee?.department,
+        isTrainer: employee?.isTrainer === true,
+        trainerDepartments: employee?.trainerDepartments,
+        sopCode,
+        examDate,
+      });
+      if (!attendanceGate.allowed) {
+        return NextResponse.json(
+          {
+            error: attendanceGate.reason || 'Exam unlocks after your trainer marks attendance.',
+            settings: toLearnerQuizSettings(resolved),
+            attendanceRequired: true,
+            attendanceGateCode: attendanceGate.code,
           },
           { status: 403 },
         );

@@ -103,12 +103,15 @@ const HEADERS = [
   "Effective Date",
   "Guideline Ref.",
   "Uploaded",
+  "Compliance Done",
+  "Score",
+  "Bypassed",
   "Prior Versions",
 ] as const;
 
 /** Column widths (in characters) matched to the headers above. */
 const COL_WIDTHS = [
-  4, 14, 36, 30, 16, 18, 10, 9, 28, 11, 11, 11, 11, 11, 22, 7, 7, 14, 18, 14, 16, 14, 30,
+  4, 14, 36, 30, 16, 18, 10, 9, 28, 11, 11, 11, 11, 11, 22, 7, 7, 14, 18, 14, 16, 14, 16, 8, 10, 30,
 ];
 
 function buildRow(sop: RegistrySOP, sr: number): (string | number)[] {
@@ -141,6 +144,9 @@ function buildRow(sop: RegistrySOP, sr: number): (string | number)[] {
     formatDate(sop.effectiveDate),
     sop.guidelineReference ?? "",
     formatDate(sop.uploadedAt),
+    sop.complianceDone ? "Yes" : "No",
+    sop.complianceAnalyzed ? `${Math.round(sop.complianceScore * 10)}%` : "—",
+    sop.complianceBypassed ? "Yes" : "No",
     priorVersionsSummary(sop),
   ];
 }

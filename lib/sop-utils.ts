@@ -370,11 +370,17 @@ export function pdfRequiredForLang(sop: RegistrySOP, lang: "en" | "gu"): boolean
 /** Ensure legacy/cached registry rows have `fileSlots` and `annexures` before UI use. */
 export function normalizeRegistrySop(sop: RegistrySOP): RegistrySOP {
   const withSlots = sop.fileSlots?.docx && sop.fileSlots?.pdf ? sop : { ...sop, fileSlots: getFileSlots(sop) };
-  if (withSlots.annexures && withSlots.requiredAnnexures !== undefined) return withSlots;
-  return {
+  const withCompliance = {
     ...withSlots,
-    annexures: withSlots.annexures ?? [],
-    requiredAnnexures: withSlots.requiredAnnexures ?? [],
+    complianceAnalyzed: withSlots.complianceAnalyzed ?? false,
+    complianceDone: withSlots.complianceDone ?? false,
+    complianceBypassed: withSlots.complianceBypassed ?? false,
+  };
+  if (withCompliance.annexures && withCompliance.requiredAnnexures !== undefined) return withCompliance;
+  return {
+    ...withCompliance,
+    annexures: withCompliance.annexures ?? [],
+    requiredAnnexures: withCompliance.requiredAnnexures ?? [],
   };
 }
 
@@ -732,6 +738,9 @@ export function groupSOPRecords(records: ISOP[]): RegistrySOP[] {
       uploadedAt,
       complianceStatus: primary.complianceStatus ?? "pending",
       complianceScore: complianceScoreFromStatus(primary.complianceStatus),
+      complianceAnalyzed: false,
+      complianceDone: false,
+      complianceBypassed: false,
       pipelineStatus: primary.pipelineStatus ?? "idle",
       isObsolete: group.every((r) => r.isObsolete),
       isNew: differenceInDays(new Date(), new Date(primary.createdAt)) <= 14,
@@ -990,6 +999,18 @@ export function applyFilters(items: RegistrySOP[], filters: SOPFilters): Registr
     });
   }
 
+  if (filters.complianceDone === "Yes") {
+    result = result.filter((s) => s.complianceDone);
+  } else if (filters.complianceDone === "No") {
+    result = result.filter((s) => !s.complianceDone);
+  }
+
+  if (filters.complianceBypassed === "Yes") {
+    result = result.filter((s) => s.complianceBypassed);
+  } else if (filters.complianceBypassed === "No") {
+    result = result.filter((s) => !s.complianceBypassed);
+  }
+
   if (filters.fileType) {
     // Version-section lang pills reuse fileType labels; versionStatus handles those.
     const versionLangFileType =
@@ -1228,7 +1249,14 @@ function sortRegistry(
       case "language":
         return compare(a.language, b.language);
       case "complianceScore":
-        return compare(a.complianceScore, b.complianceScore);
+        return compare(
+          a.complianceAnalyzed ? a.complianceScore : -1,
+          b.complianceAnalyzed ? b.complianceScore : -1,
+        );
+      case "complianceDone":
+        return compare(Number(Boolean(a.complianceDone)), Number(Boolean(b.complianceDone)));
+      case "complianceBypassed":
+        return compare(Number(Boolean(a.complianceBypassed)), Number(Boolean(b.complianceBypassed)));
       case "uploadedAt":
         return compare(a.uploadedAt, b.uploadedAt);
       default:
@@ -1444,6 +1472,8 @@ export function parseFiltersFromSearchParams(params: URLSearchParams): SOPFilter
     media: params.get("media") ?? undefined,
     videoType: params.get("videoType") ?? undefined,
     expiry: params.get("expiry") ?? undefined,
+    complianceDone: params.get("complianceDone") ?? undefined,
+    complianceBypassed: params.get("complianceBypassed") ?? undefined,
     versionStatus: params.get("versionStatus") ?? undefined,
     versionDate: params.get("versionDate") ?? undefined,
     annexureStatus: params.get("annexureStatus") ?? undefined,

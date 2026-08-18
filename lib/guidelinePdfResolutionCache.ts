@@ -10,7 +10,7 @@ export function pdfResolutionCacheKey(input: {
   index?: number;
 }): string {
   const id = input.gapId || input._id || String(input.index ?? '');
-  return [input.guidelineId, id, input.clauseNumber?.trim()].filter(Boolean).join(':');
+  return [input.guidelineId, id, input.clauseNumber?.trim(), 'v2'].filter(Boolean).join(':');
 }
 
 export function getCachedPdfResolution(

@@ -860,6 +860,7 @@ function QuizStep({
         error?: string;
         trainerPending?: boolean;
         sopExpired?: boolean;
+        attendanceRequired?: boolean;
         bilingual?: boolean;
       };
 
@@ -867,7 +868,9 @@ function QuizStep({
         setSettings(data.settings ?? null);
         setError(
           data.error
-          || (data.trainerPending
+          || (data.attendanceRequired
+            ? 'Test unlocks after your trainer assigns an exam date and marks you present.'
+            : data.trainerPending
             ? 'Exam unlocks after your department trainer completes training for this SOP.'
             : data.sopExpired
               ? 'This SOP has expired. The exam is locked until the document is renewed.'
@@ -889,15 +892,20 @@ function QuizStep({
             error?: string;
             trainerPending?: boolean;
             sopExpired?: boolean;
+            attendanceRequired?: boolean;
             bilingual?: boolean;
           };
           if (!examRes.ok || !examData.questions?.length) {
             setSettings(examData.settings ?? data.settings ?? null);
             setError(
               examData.error
-              || (examData.trainerPending
+              || (examData.attendanceRequired
+                ? 'Test unlocks after your trainer assigns an exam date and marks you present.'
+                : examData.trainerPending
                 ? 'Exam unlocks after your department trainer completes training for this SOP.'
-                : 'No questions available.'),
+                : examData.sopExpired
+                  ? 'This SOP has expired. The exam is locked until the document is renewed.'
+                  : 'No questions available.'),
             );
             setPhase('review');
             return;

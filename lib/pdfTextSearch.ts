@@ -79,8 +79,9 @@ function stripWordPunct(word: string): string {
 
 /** First assessable clause when AI merged multiple requirements into one string. */
 export function primaryRequirementClause(text: string): string {
+  if (isGuidelineBoilerplate(text)) return "";
   const t = (compactRequirementText(text, 400) || text).replace(/\s+/g, " ").trim();
-  if (!t) return "";
+  if (!t || isGuidelineBoilerplate(t)) return "";
 
   const splitters = [
     /,\s*with\s+[a-z]/i,

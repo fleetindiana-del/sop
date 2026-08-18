@@ -701,7 +701,43 @@ export async function POST(request: NextRequest) {
 
     if (sopUpdated) invalidateDashboardSopsCache();
 
-    // Persist this run as history.
+    // Persist this run as history — points ordered by original SOP section.
+    const sectionSortKey = (section?: unknown): number[] => {
+      const raw = String(section || "").trim();
+      if (!raw || /^(not found|n\/a|general)$/i.test(raw)) return [];
+      const secMark = raw.match(/§\s*([A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)/);
+      const id =
+        secMark?.[1]
+        || raw.replace(/\bL\d{3,}\b/gi, " ").match(/(\d+(?:\.\d+)*)/)?.[1]
+        || "";
+      if (!id || !/^\d/.test(id)) return [];
+      return id.split(".").map((p) => {
+        const n = Number(p);
+        return Number.isFinite(n) ? n : -1;
+      });
+    };
+    const compareByOriginalSection = (
+      a: (typeof results)[number],
+      b: (typeof results)[number],
+    ): number => {
+      const pa = sectionSortKey(a.finding?.sopSectionAffected);
+      const pb = sectionSortKey(b.finding?.sopSectionAffected);
+      if (pa.length === 0 || pb.length === 0) {
+        if (pa.length !== pb.length) return pa.length === 0 ? 1 : -1;
+      } else {
+        const len = Math.max(pa.length, pb.length);
+        for (let i = 0; i < len; i++) {
+          const va = pa[i] ?? -1;
+          const vb = pb[i] ?? -1;
+          if (va !== vb) return va - vb;
+        }
+      }
+      return String(a.finding?.sopSectionAffected || "").localeCompare(
+        String(b.finding?.sopSectionAffected || ""),
+      );
+    };
+    results.sort(compareByOriginalSection);
+
     const run = await RecheckRun.create({
       reportId: report._id,
       sopId: report.sopId,

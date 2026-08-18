@@ -61,8 +61,20 @@ const BOILERPLATE_SIGNAL_RE = [
 const HEADING_ONLY_RE =
   /^(?:SCHEDULE|Schedule|CHAPTER|Chapter|Part|PART|Section|SECTION|Annex|ANNEX|GUIDELINE|Guideline)[\s\-–.:]*[A-Z0-9][\s\-–.:A-Z0-9]*$/i;
 
+/** TOC dotted leaders: "2 Time Limits ........" / "Time Limits ….." */
+const TOC_DOTTED_LEADER_RE = /\.{4,}|…{2,}|\u2026{2,}|(?:\.\s*){5,}/;
+
 export const REQUIREMENT_VERB_RE =
   /\b(shall|must|should|ensure|adequate|required|manufacturer|premises|procedure|validation|documentation|comply|maintain|establish|control|monitoring|hygiene|sanitation|equipment|personnel|appropriate|responsible|defined|implemented|reviewed|approved)\b/i;
+
+/** True when text is a table-of-contents entry, not assessable requirement body. */
+export function isTableOfContentsLine(text: string): boolean {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (!t) return true;
+  // Dotted leaders are definitive TOC chrome (e.g. "2 Time Limits ........")
+  if (TOC_DOTTED_LEADER_RE.test(t)) return true;
+  return false;
+}
 
 function signalCount(text: string): number {
   let n = 0;
@@ -77,6 +89,7 @@ function signalCount(text: string): number {
 export function isGuidelineBoilerplate(text: string): boolean {
   const t = text.replace(/\s+/g, " ").trim();
   if (t.length < 12) return true;
+  if (isTableOfContentsLine(t)) return true;
   if (BOILERPLATE_START_RE.test(t)) return true;
   if (signalCount(t) >= 2) return true;
   // Long run-on blocks mixing cover page + chapter header (common in EudraLex PDFs)
@@ -109,6 +122,24 @@ function escapeRegex(value: string): string {
 /** Normalize whitespace for substring checks. */
 export function normalizeGuidelineText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+/** Split into sentences without breaking on section/decimal numbers (6.41, 8.20). */
+export function splitGuidelineSentences(text: string): string[] {
+  const placeholders: string[] = [];
+  const protectedText = text.replace(/\b\d+\.\d+(?:\.\d+)*\b/g, (m) => {
+    const key = `__NUM${placeholders.length}__`;
+    placeholders.push(m);
+    return key;
+  });
+  const raw = protectedText.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [protectedText];
+  return raw
+    .map((s) =>
+      normalizeGuidelineText(
+        s.replace(/__NUM(\d+)__/g, (_, i) => placeholders[Number(i)] ?? ""),
+      ),
+    )
+    .filter(Boolean);
 }
 
 /** True when `text` appears verbatim inside the stored guideline clause blob. */
@@ -159,7 +190,7 @@ export function compactRequirementText(text: string, maxLen = 260): string {
   const t = normalizeGuidelineText(text);
   if (!t || isGuidelineBoilerplate(t)) return "";
 
-  const sentences = t.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [t];
+  const sentences = splitGuidelineSentences(t);
 
   for (const raw of sentences) {
     const sent = normalizeGuidelineText(raw);
@@ -180,22 +211,141 @@ export function compactRequirementText(text: string, maxLen = 260): string {
   return truncateAtWordBoundary(t, maxLen);
 }
 
+/** Score a candidate offset as a real clause body start (not TOC / cover). */
+function scoreClauseSectionStart(text: string, idx: number): number {
+  const head = text.slice(idx, idx + 100).split(/\n/)[0] || "";
+  if (isTableOfContentsLine(head)) return -100;
+  const window = text.slice(idx, idx + 600);
+  let score = 0;
+  if (REQUIREMENT_VERB_RE.test(window)) score += 12;
+  // ICH-style numbered paragraphs under the heading (8.20, 8.21)
+  if (/\b\d+\.\d{2,}\b/.test(window)) score += 8;
+  // Prefer later hits — TOC entries usually appear before the real section body
+  score += Math.min(8, Math.floor(idx / 1500));
+  if (window.length < 40) score -= 5;
+  return score;
+}
+
+/**
+ * Locate the start of a numbered guideline section in full document text.
+ * Prefers the real body over TOC dotted-leader entries.
+ */
+export function findClauseSectionStart(
+  text: string,
+  clauseNumber?: string,
+  clauseTitle?: string,
+): number {
+  const num = clauseNumber?.replace(/[^\d.]/g, "") ?? "";
+  if (!num || text.length < 20) return -1;
+
+  const hits: number[] = [];
+  const patterns = [
+    new RegExp(`(?:^|\\n)\\s*${escapeRegex(num)}(?!\\d)\\s+[A-Za-z(]`, "gm"),
+    new RegExp(`(?:^|\\n)\\s*${escapeRegex(num)}\\.\\d+\\s+[A-Za-z(]`, "gm"),
+    new RegExp(`(?:^|\\n)\\s*${escapeRegex(num)}\\.\\s+[A-Z][A-Za-z]`, "gm"),
+  ];
+  if (clauseTitle?.trim() && !isHeadingOnlyTitle(clauseTitle) && !isTableOfContentsLine(clauseTitle)) {
+    const title = escapeRegex(clauseTitle.trim().slice(0, 48));
+    patterns.push(
+      new RegExp(`(?:^|\\n)\\s*${escapeRegex(num)}(?!\\d)\\s*[.:\\-–]?\\s*${title}`, "gim"),
+    );
+  }
+
+  for (const re of patterns) {
+    let m: RegExpExecArray | null;
+    const local = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+    while ((m = local.exec(text)) !== null) {
+      if (m.index === undefined) continue;
+      // (^|\n) + \s* can consume multiple newlines — land on the first non-space char
+      const lead = m[0].match(/^\s*/)?.[0].length ?? 0;
+      hits.push(m.index + lead);
+    }
+  }
+
+  const unique = [...new Set(hits.filter((i) => i >= 0 && i < text.length))];
+  if (!unique.length) return -1;
+
+  let best = unique[0];
+  let bestScore = scoreClauseSectionStart(text, best);
+  for (const idx of unique.slice(1)) {
+    const s = scoreClauseSectionStart(text, idx);
+    if (s > bestScore) {
+      bestScore = s;
+      best = idx;
+    }
+  }
+  return bestScore >= 0 ? best : -1;
+}
+
+/** End offset of section `num` — next peer/higher heading, or a bounded window. */
+export function findClauseSectionEnd(text: string, start: number, clauseNumber: string): number {
+  const num = clauseNumber.replace(/[^\d.]/g, "");
+  if (!num || start < 0) return text.length;
+
+  const parts = num.split(".");
+  const major = parts[0];
+  const minor = parts.length > 1 ? Number.parseInt(parts[1], 10) : Number.NaN;
+  const after = text.slice(start + Math.min(12, Math.max(1, num.length)));
+
+  const tryMatch = (re: RegExp): number | null => {
+    const m = after.match(re);
+    if (m?.index === undefined) return null;
+    return start + Math.min(12, Math.max(1, num.length)) + m.index;
+  };
+
+  if (!Number.isNaN(minor)) {
+    const nextMinor = tryMatch(
+      new RegExp(`(?:^|\\n)\\s*${escapeRegex(major)}\\.${minor + 1}(?!\\d)\\b`, "m"),
+    );
+    if (nextMinor != null) return nextMinor;
+  }
+
+  const nextMajorNum = Number.parseInt(major, 10) + 1;
+  if (!Number.isNaN(nextMajorNum)) {
+    const nextMajor = tryMatch(
+      new RegExp(`(?:^|\\n)\\s*${nextMajorNum}(?:\\.0)?(?!\\d)\\s+[A-Z]`, "m"),
+    );
+    if (nextMajor != null) return nextMajor;
+  }
+
+  return Math.min(text.length, start + 2800);
+}
+
+/**
+ * Extract only the cited guideline section from a full document blob.
+ * Falls back to boilerplate stripping when the heading cannot be located.
+ */
+export function sliceGuidelineSection(
+  text: string,
+  clauseNumber?: string,
+  clauseTitle?: string,
+): string {
+  const trimmed = text.trim();
+  if (trimmed.length < 20) return trimmed;
+
+  const start = findClauseSectionStart(trimmed, clauseNumber, clauseTitle);
+  if (start >= 0 && clauseNumber?.trim()) {
+    const end = findClauseSectionEnd(trimmed, start, clauseNumber);
+    const slice = trimmed.slice(start, Math.max(end, start + 40)).trim();
+    if (slice.length >= 40 && !isTableOfContentsLine(slice.slice(0, 120))) {
+      return slice;
+    }
+  }
+
+  return stripGuidelineBoilerplate(trimmed, clauseNumber);
+}
+
 /** Find where numbered assessable content begins (after cover pages). */
 export function findGuidelineContentStart(text: string, clauseNumber?: string): number {
   const num = clauseNumber?.replace(/[^\d.]/g, "") ?? "";
-  const candidates: number[] = [];
 
+  // When a clause is cited, jump to that section — never Math.min with early intro hits.
   if (num) {
-    const patterns = [
-      new RegExp(`(?:^|\\n)\\s*${escapeRegex(num)}\\.\\d+\\s+[A-Za-z(]`, "m"),
-      new RegExp(`(?:^|\\n)\\s*${escapeRegex(num)}\\.\\s+[A-Z][A-Za-z]`, "m"),
-      new RegExp(`(?:^|\\n)\\s*${escapeRegex(num)}\\s+[A-Z][A-Za-z]`, "m"),
-    ];
-    for (const re of patterns) {
-      const m = text.match(re);
-      if (m?.index !== undefined) candidates.push(m.index);
-    }
+    const clauseStart = findClauseSectionStart(text, num);
+    if (clauseStart >= 0) return clauseStart;
   }
+
+  const candidates: number[] = [];
 
   const subsection = text.match(/(?:^|\n)\s*\d+\.\d+\s+[A-Za-z(]/m);
   if (subsection?.index !== undefined) candidates.push(subsection.index);
@@ -264,7 +414,7 @@ export function stripGuidelineBoilerplate(clauseText: string, clauseNumber?: str
   }
   body = lines.slice(lineStart).join("\n").trim();
 
-  const sentences = body.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [body];
+  const sentences = splitGuidelineSentences(body);
   for (let i = 0; i < sentences.length; i++) {
     const s = normalizeGuidelineText(sentences[i]);
     if (s.length >= 28 && substantiveScore(s) >= 4) {

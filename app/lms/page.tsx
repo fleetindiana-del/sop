@@ -6,8 +6,9 @@ import { useRouter } from 'next/navigation';
 import {
   GraduationCap, LogOut, Search, PlayCircle, BookOpen, Clock,
   CheckCircle2, AlertCircle, Loader2, RefreshCw,
-  FileText, ClipboardList, TrendingUp, Award, Calendar,
+  FileText, ClipboardList, Award, Calendar,
   ArrowDown, ArrowUp, ChevronsUpDown, Check, X, EyeOff, Users,
+  UserCheck,
 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -22,12 +23,24 @@ import { getDeptLabelClasses, normalizeDepartment } from '@/lib/department-color
 import {
   classifyScheduleStatus,
   isOverdueInCycle,
+  localDateOnlyIso,
   type LmsScheduleStatus,
 } from '@/lib/lmsTrainingCycle';
 import type { SopAssetFlags } from '@/app/api/lms/assets/route';
+import type { TrainerBulkBridge, TrainerTableData } from '@/components/lms/TrainerLmsSchedulePanel';
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 const LearnerTrainingCalendar = dynamic(
   () => import('@/components/lms/LearnerTrainingCalendar'),
+  { ssr: false },
+);
+
+const TrainerLmsSchedulePanel = dynamic(
+  () => import('@/components/lms/TrainerLmsSchedulePanel').then((m) => m.TrainerLmsSchedulePanel),
   { ssr: false },
 );
 
@@ -44,6 +57,8 @@ interface SopAssignment {
   trainingType: 'induction' | 'training';
   status?: string;
   examDate?: string;
+  /** When the exam/training was assigned (YYYY-MM-DD). */
+  assignedAt?: string;
   /** YYYY-MM-DD — document expiry from SOP registry/family. */
   expiryDate?: string;
   /** True when a department trainer scheduled this exam for you directly. */
@@ -98,6 +113,25 @@ function formatDueMonth(a: SopAssignment): string {
   return d.toLocaleString('en-US', { month: 'long' });
 }
 
+/** Short month for dense table cells (e.g. "Aug"). */
+function formatDueMonthShort(a: SopAssignment): string {
+  const d = new Date(a.year, a.month - 1, 1);
+  return d.toLocaleString('en-US', { month: 'short' });
+}
+
+/** Compact assigned date for table (e.g. "16 Aug" or "—"). */
+function formatAssignedShort(value: string): string {
+  if (!value || value === '—') return '—';
+  const iso = value.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const d = new Date(`${iso}T12:00:00`);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleString('en-US', { day: 'numeric', month: 'short' });
+    }
+  }
+  return value.length > 8 ? value.slice(0, 8) : value;
+}
+
 interface DashboardCache {
   assignments: SopAssignment[];
   progress: ProgressRecord[];
@@ -108,6 +142,45 @@ interface DashboardCache {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 type ScheduleStatus = LmsScheduleStatus;
+
+/** Prefer assignment examDate; else earliest pending employee sitting date (trainer view). */
+function effectiveExamDate(
+  a: SopAssignment,
+  employeesByCode?: Record<string, Array<{ status: string; scheduledDate?: string }>>,
+): string | undefined {
+  const own = String(a.examDate || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(own)) return own;
+  if (!employeesByCode) return undefined;
+  const key = a.sopCode.trim().toUpperCase();
+  let emps = employeesByCode[key];
+  if (!emps?.length) {
+    const hit = Object.entries(employeesByCode).find(([code]) =>
+      progressLookupKey(code) === progressLookupKey(key)
+      || stripVersion(code) === stripVersion(key),
+    );
+    if (hit?.[1]) emps = hit[1];
+  }
+  if (!emps?.length) return undefined;
+  const pendingDates = emps
+    .filter((e) => e.status !== 'completed' && e.scheduledDate)
+    .map((e) => String(e.scheduledDate).slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  if (pendingDates.length) return pendingDates[0];
+  const anyDates = emps
+    .map((e) => String(e.scheduledDate || '').slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  return anyDates[0];
+}
+
+function withEffectiveExamDate(
+  a: SopAssignment,
+  employeesByCode?: Record<string, Array<{ status: string; scheduledDate?: string }>>,
+): SopAssignment {
+  const examDate = effectiveExamDate(a, employeesByCode);
+  return examDate && examDate !== a.examDate ? { ...a, examDate } : a;
+}
 
 function scheduleStatus(a: SopAssignment, completed = false): ScheduleStatus {
   const status = classifyScheduleStatus(a, { completed });
@@ -242,14 +315,14 @@ function nextSort(prev: SortState, key: SortKey): SortState {
   return { key, dir: ascKeys.includes(key) ? 'asc' : 'desc' };
 }
 
-function ProgressBar({ pct, color = 'purple' }: { pct: number; color?: string }) {
+function ProgressBar({ pct, color = 'purple', className = '' }: { pct: number; color?: string; className?: string }) {
   const bg =
     color === 'green' ? 'bg-green-500'
     : color === 'amber' ? 'bg-amber-500'
     : color === 'sky' ? 'bg-sky-500'
     : 'bg-purple-500';
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+    <div className={`h-1.5 w-full overflow-hidden rounded-full bg-gray-100 ${className}`}>
       <div className={`h-full rounded-full transition-all duration-500 ${bg}`} style={{ width: `${pct}%` }} />
     </div>
   );
@@ -263,7 +336,7 @@ function StatusIcon({
   schedule: ScheduleStatus;
 }) {
   return (
-    <div className={`mx-auto flex h-7 w-7 items-center justify-center rounded-md ${
+    <div className={`mx-auto flex h-6 w-6 items-center justify-center rounded ${
       status === 'completed' ? 'bg-green-50'
         : status === 'in_progress' ? 'bg-purple-50'
         : schedule === 'overdue' ? 'bg-red-50'
@@ -287,27 +360,28 @@ function StatusIcon({
 }
 
 function SortHeader({
-  label, sortKey, sort, onSort, align = 'left',
+  label, sortKey, sort, onSort, align = 'left', className = '',
 }: {
   label: string;
   sortKey: SortKey;
   sort: SortState;
   onSort: (key: SortKey) => void;
   align?: 'left' | 'right' | 'center';
+  className?: string;
 }) {
   const active = sort.key === sortKey;
   return (
     <th
       onClick={() => onSort(sortKey)}
-      className={`cursor-pointer select-none px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition hover:text-gray-700 ${
+      className={`cursor-pointer select-none px-1 py-1.5 text-[10px] font-semibold uppercase tracking-wide transition hover:text-gray-700 ${
         active ? 'text-gray-700' : 'text-gray-500'
-      } ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}`}
+      } ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'} ${className}`}
     >
       <span className={`inline-flex items-center gap-0.5 ${align === 'right' ? 'w-full justify-end' : align === 'center' ? 'w-full justify-center' : ''}`}>
-        {label}
+        <span className="truncate">{label}</span>
         {active
-          ? (sort.dir === 'asc' ? <ArrowUp className="h-2.5 w-2.5 shrink-0" /> : <ArrowDown className="h-2.5 w-2.5 shrink-0" />)
-          : <ChevronsUpDown className="h-2.5 w-2.5 shrink-0 opacity-30" />}
+          ? (sort.dir === 'asc' ? <ArrowUp className="h-3 w-3 shrink-0" /> : <ArrowDown className="h-3 w-3 shrink-0" />)
+          : <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-30" />}
       </span>
     </th>
   );
@@ -315,12 +389,10 @@ function SortHeader({
 
 function TrainingNameCell({ assignment }: { assignment: SopAssignment }) {
   const { english, gujarati } = displayTrainingName(assignment);
+  const tip = gujarati ? `${english}\n${gujarati}` : english;
   return (
     <div className="min-w-0">
-      <p className="truncate font-medium text-gray-800" title={english}>{english}</p>
-      {gujarati && (
-        <p className="truncate text-[11px] font-medium text-indigo-700" title={gujarati}>{gujarati}</p>
-      )}
+      <p className="truncate text-xs font-medium leading-snug text-gray-800" title={tip}>{english}</p>
     </div>
   );
 }
@@ -329,7 +401,7 @@ function DepartmentCell({ department }: { department?: string }) {
   const dept = department?.trim() ? normalizeDepartment(department) : '—';
   const labelCls = department?.trim() ? getDeptLabelClasses(dept) : 'bg-gray-100 text-gray-500';
   return (
-    <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${labelCls}`} title={dept}>
+    <span className={`block max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-semibold ${labelCls}`} title={dept}>
       {dept}
     </span>
   );
@@ -339,11 +411,11 @@ function trainingStatusLabel(
   status: ProgressRecord['status'],
   schedule: ScheduleStatus,
 ): string {
-  if (status === 'completed') return 'Completed';
-  if (status === 'in_progress') return 'In Progress';
-  if (schedule === 'upcoming') return 'Upcoming';
-  if (schedule === 'overdue') return 'Overdue';
-  if (schedule === 'ignored') return 'Ignored';
+  if (status === 'completed') return 'Done';
+  if (status === 'in_progress') return 'Active';
+  if (schedule === 'upcoming') return 'Soon';
+  if (schedule === 'overdue') return 'Late';
+  if (schedule === 'ignored') return 'Skip';
   return 'Due';
 }
 
@@ -375,11 +447,14 @@ function ResourceButtons({
   examLocked,
   lockReason,
   onSelect,
+  compact,
 }: {
   asset: SopAssetFlags;
   examLocked?: boolean;
   lockReason?: string;
   onSelect: (def: ResourceDef) => void;
+  /** Icon-only buttons to keep the action column narrow. */
+  compact?: boolean;
 }) {
   // The assessment button always shows so learners can see the exam exists (and
   // why it is unavailable); other resources only when the file exists.
@@ -389,7 +464,7 @@ function ResourceButtons({
   if (items.length === 0) return null;
 
   return (
-    <div className="flex flex-nowrap items-center justify-end gap-1">
+    <div className="flex flex-wrap items-center justify-end gap-0.5">
       {items.map((d) => {
         const Icon = d.Icon;
         const both = asset[d.enFlag] && asset[d.guFlag];
@@ -399,6 +474,14 @@ function ResourceButtons({
           ? noMcq
             ? 'Test not available yet — no MCQs prepared for this SOP'
             : (lockReason || 'Exam locked')
+          : both
+            ? `${d.label} — choose English or Gujarati`
+            : d.label;
+        const shortLabel =
+          d.kind === 'test' ? 'Test'
+          : d.kind === 'sop' ? 'SOP'
+          : d.kind === 'ppt' ? 'PPT'
+          : d.kind === 'video' ? 'Video'
           : d.label;
         return (
           <button
@@ -406,7 +489,9 @@ function ResourceButtons({
             onClick={() => { if (!locked) onSelect(d); }}
             disabled={locked}
             title={title}
-            className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-semibold transition ${
+            className={`inline-flex items-center gap-0.5 rounded border font-semibold transition ${
+              compact ? 'px-1 py-0.5 text-[9px] leading-none' : 'px-1.5 py-0.5 text-[10px]'
+            } ${
               locked
                 ? noMcq
                   ? 'cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
@@ -416,10 +501,12 @@ function ResourceButtons({
                 : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
             }`}
           >
-            <Icon className="h-3 w-3" />
-            {d.label}
+            <Icon className="h-3 w-3 shrink-0" />
+            {compact ? shortLabel : d.label}
             {both && !locked && (
-              <span className="rounded bg-indigo-50 px-0.5 text-[8px] font-bold text-indigo-500">EN/ગુજ</span>
+              <span className={`rounded bg-indigo-50 font-bold text-indigo-500 ${
+                compact ? 'px-0.5 text-[7px]' : 'px-0.5 text-[8px]'
+              }`}>EN/ગુજ</span>
             )}
           </button>
         );
@@ -493,6 +580,9 @@ function TrainingTable({
   onPrefetch,
   onIgnoreSop,
   ignoringKey,
+  trainerExtras,
+  selection,
+  isTrainer,
 }: {
   rows: SopAssignment[];
   progressMap: Map<string, ProgressRecord>;
@@ -503,6 +593,30 @@ function TrainingTable({
   onPrefetch?: (sopCode: string) => void;
   onIgnoreSop?: (a: SopAssignment) => void;
   ignoringKey?: string | null;
+  /** Trainer dept employees / MCQ meta — shown as table columns when present. */
+  trainerExtras?: {
+    employeesByCode: Record<string, Array<{
+      employeeId: string;
+      employeeName: string;
+      department: string;
+      status: string;
+      assignedAt?: string;
+      scheduledDate?: string;
+    }>>;
+    assignedAtByCode: Record<string, string>;
+    onOpenEmployees: (sopCode: string, sopName: string) => void;
+    scheduledTodayByCode?: Record<string, boolean>;
+    onOpenAttendance?: (sopCode: string, sopName: string) => void;
+    mcqByCode?: Record<string, { questionCount: number; lmsApproved: boolean }>;
+  };
+  /** Designated trainers may start the exam without attendance or a sitting date. */
+  isTrainer?: boolean;
+  /** Trainer schedule/assign — select SOPs in this same My Trainings table. */
+  selection?: {
+    selected: Set<string>;
+    onToggle: (sopCode: string) => void;
+    onToggleAll: (sopCodes: string[], select: boolean) => void;
+  };
 }) {
   const [sort, setSort] = useState<SortState>({ key: 'sopCode', dir: 'asc' });
   const [picker, setPicker] = useState<{ sopCode: string; def: ResourceDef } | null>(null);
@@ -567,25 +681,99 @@ function TrainingTable({
       return cmp * dir;
     });
     return list;
-  }, [rows, progressMap, sort]);
+  }, [rows, progressMap, sort, assetsMap]);
+
+  const visibleSopCodes = useMemo(
+    () => sortedRows.map((r) => r.sopCode.trim().toUpperCase()),
+    [sortedRows],
+  );
+  const allVisibleSelected = Boolean(
+    selection
+    && visibleSopCodes.length > 0
+    && visibleSopCodes.every((c) => selection.selected.has(c)),
+  );
+  const someVisibleSelected = Boolean(
+    selection
+    && visibleSopCodes.some((c) => selection.selected.has(c)),
+  );
 
   return (
     <>
     <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[1080px] border-collapse text-sm">
+      <div className="w-full">
+        <table className="w-full table-fixed border-collapse text-xs leading-snug">
+          <colgroup>
+            <col className="w-7" />
+            <col className="w-[4.75rem]" />
+            <col className="w-[11.5rem]" />
+            <col className="w-[4.5rem]" />
+            <col className="w-10" />
+            <col className="w-[3.75rem]" />
+            <col className="w-8" />
+            <col className="w-11" />
+            <col className="w-12" />
+            {trainerExtras ? (
+              <>
+                <col className="w-10" />
+                <col className="w-10" />
+                <col className="w-10" />
+                <col className="w-10" />
+                <col className="w-[9.5rem]" />
+              </>
+            ) : null}
+            {!selection ? <col className="w-16" /> : null}
+            <col className="w-[11rem]" />
+          </colgroup>
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
-              <th className="w-9 px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-gray-500" />
-              <SortHeader label="SOP Code" sortKey="sopCode" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
-              <SortHeader label="Training Name" sortKey="sopName" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
+              <th className="px-1 py-1.5 text-center">
+                {selection ? (
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected;
+                    }}
+                    onChange={() => selection.onToggleAll(visibleSopCodes, !allVisibleSelected)}
+                    className="h-3.5 w-3.5 rounded border-gray-300"
+                    title={allVisibleSelected ? 'Clear selection' : 'Select all'}
+                    aria-label={allVisibleSelected ? 'Clear selection' : 'Select all'}
+                  />
+                ) : null}
+              </th>
+              <SortHeader label="Code" sortKey="sopCode" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
+              <SortHeader label="Training" sortKey="sopName" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
               <SortHeader label="Dept" sortKey="department" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
-              <SortHeader label="Type" sortKey="type" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
+              <SortHeader label="Type" sortKey="type" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="center" />
               <SortHeader label="Status" sortKey="status" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
-              <SortHeader label="Approved" sortKey="approved" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
+              <SortHeader label="OK" sortKey="approved" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="center" />
               <SortHeader label="Due" sortKey="due" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
-              <SortHeader label="Progress" sortKey="progress" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
-              <th className="whitespace-nowrap px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-gray-500">Action</th>
+              <th className="truncate px-1 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-gray-500" title="Scheduled exam date">
+                Sched
+              </th>
+              {trainerExtras ? (
+                <>
+                  <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500" title="Total employees">
+                    Tot
+                  </th>
+                  <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-emerald-700" title="Completed">
+                    Done
+                  </th>
+                  <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-red-700" title="Not taken">
+                    Pend
+                  </th>
+                  <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-sky-700" title="Scheduled later">
+                    Later
+                  </th>
+                  <th className="truncate px-1 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                    Emps
+                  </th>
+                </>
+              ) : null}
+              {!selection ? (
+                <SortHeader label="%" sortKey="progress" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="right" />
+              ) : null}
+              <th className="px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-gray-500">Act</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -598,15 +786,89 @@ function TrainingTable({
               const showCertificate = isFullyComplete(progress) && Boolean(cert);
               const asset = assetsMap[assignment.sopCode];
               const docExpired = isSopDocumentExpired(assignment) || asset?.sopExpired === true;
-              const notApproved = asset?.lmsApproved === false;
-              const trainerLocked = asset?.trainerUnlocked === false;
-              // Exams lock when the SOP document is expired, or when the department
-              // trainer has not yet completed training for this SOP.
-              const examLocked = docExpired || trainerLocked;
+              const codeKey = assignment.sopCode.trim().toUpperCase();
+              const mcqMeta = trainerExtras?.mcqByCode?.[codeKey];
+              const mcqCreated = mcqMeta ? mcqMeta.questionCount > 0 : Boolean(asset?.mcqEn || asset?.mcqGu);
+              const mcqApproved = mcqMeta
+                ? mcqMeta.lmsApproved
+                : asset?.lmsApproved !== false && mcqCreated;
+              const notApproved = !mcqApproved;
+              const trainerExempt = isTrainer === true;
+              const trainerLocked = !trainerExempt && asset?.trainerUnlocked === false;
+              const hasExamDate = /^\d{4}-\d{2}-\d{2}$/.test(
+                String(assignment.examDate || '').trim().slice(0, 10),
+              );
+              // Fail closed once asset flags have loaded: missing date or not marked present.
+              // Trainers skip this — they must be able to sit the exam first.
+              const attendanceLocked = !trainerExempt && Boolean(asset) && asset.attendanceUnlocked !== true;
+              const selected = selection?.selected.has(codeKey) ?? false;
+              const empList = (() => {
+                const direct = trainerExtras?.employeesByCode[codeKey];
+                if (direct?.length) return direct;
+                if (!trainerExtras) return [];
+                const hit = Object.entries(trainerExtras.employeesByCode).find(([code]) =>
+                  progressLookupKey(code) === progressLookupKey(codeKey)
+                  || stripVersion(code) === stripVersion(codeKey),
+                );
+                return hit?.[1] ?? [];
+              })();
+              const sortedEmps = [...empList].sort((a, b) => {
+                const rank = (s: string) => (s === 'completed' ? 1 : 0);
+                const byStatus = rank(a.status) - rank(b.status);
+                if (byStatus !== 0) return byStatus;
+                return a.employeeName.localeCompare(b.employeeName);
+              });
+              const previewEmps = sortedEmps.slice(0, 1);
+              const moreCount = Math.max(0, sortedEmps.length - previewEmps.length);
+              const todayIso = localDateOnlyIso();
+              const empStats = (() => {
+                let completed = 0;
+                let notTaken = 0;
+                let later = 0;
+                for (const e of empList) {
+                  if (e.status === 'completed') {
+                    completed++;
+                    continue;
+                  }
+                  const when = String(e.scheduledDate || '').slice(0, 10);
+                  if (/^\d{4}-\d{2}-\d{2}$/.test(when) && when > todayIso) later++;
+                  else notTaken++;
+                }
+                return { total: empList.length, completed, notTaken, later };
+              })();
+              const scheduledExamDisplay = (() => {
+                const fromAssignment = String(assignment.examDate || '').trim().slice(0, 10);
+                if (/^\d{4}-\d{2}-\d{2}$/.test(fromAssignment)) return fromAssignment;
+                const dates = empList
+                  .map((e) => String(e.scheduledDate || '').slice(0, 10))
+                  .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+                  .sort();
+                if (dates.length) return dates[0];
+                return '—';
+              })();
+              const scheduledExamTitle = (() => {
+                if (scheduledExamDisplay === '—') return 'No exam date scheduled';
+                const all = [
+                  ...new Set(
+                    empList
+                      .map((e) => String(e.scheduledDate || '').slice(0, 10))
+                      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+                  ),
+                ].sort();
+                if (all.length > 1) return `Exam dates: ${all.join(', ')}`;
+                return `Exam scheduled ${scheduledExamDisplay}`;
+              })();
+              // Exams lock when the SOP is expired, the department trainer has not
+              // completed it, no sitting date is assigned, or attendance is missing.
+              const examLocked = docExpired || trainerLocked || attendanceLocked;
               const lockReason = docExpired
                 ? 'SOP expired — renew the document before taking the exam'
                 : trainerLocked
                   ? 'Exam unlocks after your department trainer completes training for this SOP'
+                  : attendanceLocked
+                    ? hasExamDate
+                      ? 'Test unlocks after your trainer marks you present for this exam'
+                      : 'Test unlocks after your trainer assigns an exam date'
                   : undefined;
               const highlightExpiredDue =
                 docExpired && !isFullyComplete(progress) && (schedule === 'due' || schedule === 'overdue');
@@ -616,7 +878,10 @@ function TrainingTable({
                   key={`${assignment.sopCode}-${assignment.month}-${assignment.year}`}
                   onMouseEnter={() => onPrefetch?.(assignment.sopCode)}
                   onFocus={() => onPrefetch?.(assignment.sopCode)}
-                  className={`transition hover:bg-gray-50/80 ${
+                  onClick={selection ? () => selection.onToggle(codeKey) : undefined}
+                  className={`transition hover:bg-gray-50/80 ${selection ? 'cursor-pointer' : ''} ${
+                    selected ? 'bg-indigo-50/80' : ''
+                  } ${
                     highlightExpiredDue
                       ? 'bg-red-100/80 ring-1 ring-inset ring-red-200'
                       : status !== 'completed' && status !== 'in_progress'
@@ -627,55 +892,61 @@ function TrainingTable({
                       : ''
                   }`}
                 >
-                  <td className="px-2 py-1.5">
-                    <StatusIcon status={status} schedule={schedule} />
+                  <td className="px-1 py-1.5" onClick={(e) => selection && e.stopPropagation()}>
+                    {selection ? (
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => selection.onToggle(codeKey)}
+                        className="mx-auto block h-3.5 w-3.5 rounded border-gray-300"
+                      />
+                    ) : (
+                      <StatusIcon status={status} schedule={schedule} />
+                    )}
                   </td>
-                  <td className="whitespace-nowrap px-2 py-1.5 font-mono text-xs font-bold text-gray-700">
+                  <td className="truncate px-1 py-1.5 font-mono text-xs font-bold text-gray-700" title={assignment.sopCode}>
                     {assignment.sopCode}
                   </td>
-                  <td className="max-w-[220px] px-2 py-1.5">
+                  <td className="max-w-0 px-1 py-1.5">
                     <TrainingNameCell assignment={assignment} />
                     {highlightExpiredDue && (
-                      <p className="mt-0.5 text-[10px] font-semibold text-red-700">
-                        Expired{assignment.expiryDate ? ` ${assignment.expiryDate}` : ''} — exam locked until renewed
+                      <p className="mt-0.5 truncate text-[10px] font-semibold text-red-700" title="Expired — exam locked until renewed">
+                        Expired — locked
                       </p>
                     )}
                     {assignment.scheduledByTrainer && !isFullyComplete(progress) && (
-                      <p className="mt-0.5 text-[10px] font-semibold text-purple-700">
-                        Exam scheduled{assignment.scheduledBy ? ` by ${assignment.scheduledBy}` : ''}
-                        {assignment.examDate ? ` — complete by ${assignment.examDate}` : ''}
+                      <p className="mt-0.5 truncate text-[10px] font-semibold text-purple-700" title={assignment.examDate ? `Exam scheduled — complete by ${assignment.examDate}` : 'Exam scheduled'}>
+                        Scheduled{assignment.examDate ? ` · ${assignment.examDate}` : ''}
                       </p>
                     )}
                     {!docExpired && trainerLocked && !isFullyComplete(progress) && (
-                      <p className="mt-0.5 text-[10px] font-semibold text-amber-700">
-                        Waiting for department trainer to complete this SOP
+                      <p className="mt-0.5 truncate text-[10px] font-semibold text-amber-700" title="Waiting for department trainer">
+                        Trainer pending
                       </p>
                     )}
-                    {progress?.lastAccessedAt && status === 'in_progress' && (
-                      <p className="mt-0.5 truncate text-[10px] text-gray-400">
-                        Last opened {new Date(progress.lastAccessedAt).toLocaleDateString()}
-                      </p>
-                    )}
-                    {isFullyComplete(progress) && progress?.completedAt && (
-                      <p className="mt-0.5 truncate text-[10px] text-gray-400">
-                        Completed {new Date(progress.completedAt).toLocaleDateString()}
+                    {!docExpired && !trainerLocked && attendanceLocked && !isFullyComplete(progress) && (
+                      <p
+                        className="mt-0.5 truncate text-[10px] font-semibold text-amber-700"
+                        title={lockReason}
+                      >
+                        {hasExamDate ? 'Attendance pending' : 'Date pending'}
                       </p>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-2 py-1.5">
+                  <td className="max-w-0 truncate px-1 py-1.5">
                     <DepartmentCell department={assignment.sopDepartment} />
                   </td>
-                  <td className="whitespace-nowrap px-2 py-1.5">
+                  <td className="px-1 py-1.5 text-center">
                     <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
                       assignment.trainingType === 'induction'
                         ? 'bg-orange-100 text-orange-700'
                         : 'bg-sky-100 text-sky-700'
-                    }`}>
-                      {assignment.trainingType === 'induction' ? 'Induction' : 'Training'}
+                    }`} title={assignment.trainingType === 'induction' ? 'Induction' : 'Training'}>
+                      {assignment.trainingType === 'induction' ? 'Ind' : 'Trn'}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-2 py-1.5">
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                  <td className="px-1 py-1.5">
+                    <span className={`block truncate rounded px-1.5 py-0.5 text-[10px] font-semibold ${
                       isFullyComplete(progress)
                         ? 'bg-green-100 text-green-700'
                         : status === 'in_progress'
@@ -691,41 +962,191 @@ function TrainingTable({
                       {trainingStatusLabel(isFullyComplete(progress) ? 'completed' : status, schedule)}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-2 py-1.5 text-center">
-                    {notApproved ? (
-                      <span className="inline-flex items-center justify-center text-red-600" title="Not Approved">
+                  <td className="px-1 py-1.5 text-center" onClick={(e) => selection && e.stopPropagation()}>
+                    {!mcqCreated ? (
+                      <Link
+                        href={`/mcq-bank?search=${encodeURIComponent(assignment.sopCode)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="MCQs not created — open MCQ bank"
+                        className="inline-flex items-center justify-center text-gray-400 hover:text-indigo-600"
+                      >
+                        <X className="h-4 w-4 stroke-[2.5]" aria-label="Not created" />
+                      </Link>
+                    ) : notApproved ? (
+                      <Link
+                        href={`/mcq-bank?search=${encodeURIComponent(assignment.sopCode)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Not approved — open MCQ bank"
+                        className="inline-flex items-center justify-center text-red-600 hover:text-indigo-600"
+                      >
                         <X className="h-4 w-4 stroke-[2.5]" aria-label="Not Approved" />
-                      </span>
+                      </Link>
                     ) : (
                       <span className="inline-flex items-center justify-center text-green-600" title="Approved">
                         <Check className="h-4 w-4 stroke-[2.5]" aria-label="Approved" />
                       </span>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-2 py-1.5">
-                    <span className={`text-xs ${schedule === 'upcoming' ? 'text-gray-400' : 'text-gray-500'}`}>
-                      {formatDueMonth(assignment)}
+                  <td className="truncate px-1 py-1.5" title={formatDueMonth(assignment)}>
+                    <span className={`text-xs ${schedule === 'upcoming' ? 'text-gray-400' : 'text-gray-600'}`}>
+                      {formatDueMonthShort(assignment)}
                     </span>
                   </td>
-                  <td className="px-2 py-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <ProgressBar
-                        pct={pct}
-                        color={
-                          isFullyComplete(progress) ? 'green'
-                            : schedule === 'overdue' ? 'amber'
-                            : schedule === 'due' ? 'amber'
-                            : schedule === 'upcoming' ? 'sky'
-                            : 'purple'
-                        }
-                      />
-                      <span className="w-8 shrink-0 text-right text-[10px] font-semibold text-gray-400">{pct}%</span>
-                    </div>
+                  <td className="truncate px-1 py-1.5 text-xs font-semibold text-gray-700" title={scheduledExamTitle}>
+                    {formatAssignedShort(scheduledExamDisplay)}
                   </td>
-                  <td className="px-2 py-1.5 text-right">
-                    <div className="flex flex-nowrap items-center justify-end gap-1">
+                  {trainerExtras ? (
+                    <>
+                      <td className="px-1 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          title="Total employees"
+                          onClick={() => trainerExtras.onOpenEmployees(
+                            assignment.sopCode,
+                            displayTrainingName(assignment).english,
+                          )}
+                          className="inline-flex min-w-[1.5rem] items-center justify-center rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-xs font-bold tabular-nums text-gray-800 hover:bg-gray-100"
+                        >
+                          {empStats.total}
+                        </button>
+                      </td>
+                      <td className="px-1 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          title="Completed exam"
+                          onClick={() => trainerExtras.onOpenEmployees(
+                            assignment.sopCode,
+                            displayTrainingName(assignment).english,
+                          )}
+                          className="inline-flex min-w-[1.5rem] items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-xs font-bold tabular-nums text-emerald-800 hover:bg-emerald-100"
+                        >
+                          {empStats.completed}
+                        </button>
+                      </td>
+                      <td className="px-1 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          title="Exam not taken (due / overdue)"
+                          onClick={() => trainerExtras.onOpenEmployees(
+                            assignment.sopCode,
+                            displayTrainingName(assignment).english,
+                          )}
+                          className="inline-flex min-w-[1.5rem] items-center justify-center rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-xs font-bold tabular-nums text-red-800 hover:bg-red-100"
+                        >
+                          {empStats.notTaken}
+                        </button>
+                      </td>
+                      <td className="px-1 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          title="Rescheduled / scheduled for later"
+                          onClick={() => trainerExtras.onOpenEmployees(
+                            assignment.sopCode,
+                            displayTrainingName(assignment).english,
+                          )}
+                          className="inline-flex min-w-[1.5rem] items-center justify-center rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-xs font-bold tabular-nums text-sky-800 hover:bg-sky-100"
+                        >
+                          {empStats.later}
+                        </button>
+                      </td>
+                      <td className="max-w-0 px-1 py-1.5" onClick={(e) => e.stopPropagation()}>
+                        {sortedEmps.length === 0 ? (
+                          <span className="text-xs text-gray-400">—</span>
+                        ) : (
+                          <button
+                            type="button"
+                            title="View all employees"
+                            onClick={() => trainerExtras.onOpenEmployees(
+                              assignment.sopCode,
+                              displayTrainingName(assignment).english,
+                            )}
+                            className="flex min-w-0 max-w-full items-center gap-1 text-left"
+                          >
+                            {previewEmps.map((e) => {
+                              const done = e.status === 'completed';
+                              const when = String(e.scheduledDate || '').slice(0, 10);
+                              const later = !done && /^\d{4}-\d{2}-\d{2}$/.test(when) && when > todayIso;
+                              return (
+                                <span
+                                  key={e.employeeId}
+                                  title={
+                                    done
+                                      ? `${e.employeeName} — completed`
+                                      : later
+                                        ? `${e.employeeName} — later (${when})`
+                                        : e.status === 'overdue'
+                                          ? `${e.employeeName} — delayed`
+                                          : `${e.employeeName} — not taken`
+                                  }
+                                  className={`inline-block max-w-[6.5rem] truncate rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${
+                                    done
+                                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                                      : later
+                                        ? 'border-sky-300 bg-sky-50 text-sky-800'
+                                        : 'border-red-300 bg-red-50 text-red-800'
+                                  }`}
+                                >
+                                  {e.employeeName}
+                                </span>
+                              );
+                            })}
+                            {moreCount > 0 ? (
+                              <span className="shrink-0 rounded-md border border-gray-300 bg-gray-50 px-1.5 py-0.5 text-[11px] font-semibold text-gray-600">
+                                +{moreCount}
+                              </span>
+                            ) : null}
+                          </button>
+                        )}
+                      </td>
+                    </>
+                  ) : null}
+                  {!selection ? (
+                    <td className="px-1 py-1.5">
+                      <div className="flex items-center gap-1">
+                        <ProgressBar
+                          className="h-1.5 min-w-0"
+                          pct={pct}
+                          color={
+                            isFullyComplete(progress) ? 'green'
+                              : schedule === 'overdue' ? 'amber'
+                              : schedule === 'due' ? 'amber'
+                              : schedule === 'upcoming' ? 'sky'
+                              : 'purple'
+                          }
+                        />
+                        <span className="w-7 shrink-0 text-right text-[11px] font-semibold text-gray-500">{pct}%</span>
+                      </div>
+                    </td>
+                  ) : null}
+                  <td className="px-1 py-1.5 text-right" onClick={(e) => selection && e.stopPropagation()}>
+                    {selection ? (
+                      <span className="text-[10px] font-semibold text-gray-400">
+                        {selected ? '✓' : '·'}
+                      </span>
+                    ) : (
+                    <div className="flex flex-wrap items-center justify-end gap-0.5">
+                      {(
+                        trainerExtras?.scheduledTodayByCode?.[codeKey]
+                        || (assignment.examDate || '').slice(0, 10) === localDateOnlyIso()
+                      ) && trainerExtras?.onOpenAttendance ? (
+                        <button
+                          type="button"
+                          onClick={() => trainerExtras.onOpenAttendance?.(
+                            assignment.sopCode,
+                            displayTrainingName(assignment).english,
+                          )}
+                          className="inline-flex items-center gap-0.5 rounded border border-teal-300 bg-teal-50 px-1 py-0.5 text-[9px] font-semibold leading-none text-teal-800 transition hover:bg-teal-100"
+                          title="Mark attendance for today’s exam sitting"
+                        >
+                          <UserCheck className="h-3 w-3 shrink-0" />
+                          Attend
+                        </button>
+                      ) : null}
                       {assetsMap[assignment.sopCode] && (
                         <ResourceButtons
+                          compact
                           asset={assetsMap[assignment.sopCode]}
                           examLocked={examLocked}
                           lockReason={lockReason}
@@ -735,10 +1156,10 @@ function TrainingTable({
                       {showCertificate && (
                         <button
                           onClick={() => onCertificate(cert!.sopCode)}
-                          className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100"
+                          className="inline-flex items-center gap-0.5 rounded border border-amber-200 bg-amber-50 px-1 py-0.5 text-[9px] font-semibold leading-none text-amber-700 transition hover:bg-amber-100"
                           title="View certificate"
                         >
-                          <Award className="h-3.5 w-3.5" />
+                          <Award className="h-3 w-3 shrink-0" />
                           Cert
                         </button>
                       )}
@@ -747,14 +1168,15 @@ function TrainingTable({
                           type="button"
                           onClick={() => onIgnoreSop(assignment)}
                           disabled={ignoringKey === `${assignment.sopCode}-${assignment.month}-${assignment.year}`}
-                          className="inline-flex items-center gap-0.5 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                          className="inline-flex items-center gap-0.5 rounded border border-gray-200 bg-white px-1 py-0.5 text-[9px] font-semibold leading-none text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50"
                           title="Ignore this SOP for the department (rollout)"
                         >
-                          <EyeOff className="h-3 w-3" />
+                          <EyeOff className="h-3 w-3 shrink-0" />
                           Ignore
                         </button>
                       )}
                     </div>
+                    )}
                   </td>
                 </tr>
               );
@@ -839,63 +1261,6 @@ function ContinueLearning({
         })}
       </div>
     </section>
-  );
-}
-
-// ─── Stats row ────────────────────────────────────────────────────────────────
-
-function StatsRow({
-  assignments,
-  progressMap,
-  activeFilter,
-  onStatClick,
-}: {
-  assignments: SopAssignment[];
-  progressMap: Map<string, ProgressRecord>;
-  activeFilter: FilterTab;
-  onStatClick: (filter: FilterTab) => void;
-}) {
-  const total      = assignments.length;
-  const completed  = assignments.filter((a) => isFullyComplete(getProgress(progressMap, a.sopCode))).length;
-  const inProgress = assignments.filter((a) => isActivelyInProgress(getProgress(progressMap, a.sopCode))).length;
-  const overdue    = assignments.filter((a) => isOverdue(a) && !isFullyComplete(getProgress(progressMap, a.sopCode))).length;
-  const ignored    = assignments.filter((a) => isIgnored(a) && !isFullyComplete(getProgress(progressMap, a.sopCode))).length;
-
-  const stats: { label: string; value: number; filter: FilterTab; Icon: typeof FileText; color: string; bg: string; ring: string }[] = [
-    { label: 'Total Assigned', value: total,      filter: 'all',         Icon: FileText,      color: 'text-gray-600',   bg: 'bg-gray-50',    ring: 'ring-gray-400' },
-    { label: 'In Progress',    value: inProgress,  filter: 'in_progress', Icon: TrendingUp,    color: 'text-purple-600', bg: 'bg-purple-50', ring: 'ring-purple-400' },
-    { label: 'Completed',      value: completed,   filter: 'completed',   Icon: CheckCircle2,  color: 'text-green-600',  bg: 'bg-green-50',  ring: 'ring-green-400' },
-    { label: 'Overdue',        value: overdue,     filter: 'overdue',     Icon: AlertCircle,   color: 'text-red-600',    bg: 'bg-red-50',    ring: 'ring-red-400' },
-    { label: 'Ignored',        value: ignored,     filter: 'ignored',     Icon: EyeOff,        color: 'text-gray-500',   bg: 'bg-gray-50',   ring: 'ring-gray-400' },
-  ];
-
-  return (
-    <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-      {stats.map(({ label, value, filter: tab, Icon, color, bg, ring }) => {
-        const active = activeFilter === tab;
-        return (
-          <button
-            key={label}
-            type="button"
-            onClick={() => onStatClick(tab)}
-            aria-pressed={active}
-            className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition hover:shadow-sm ${bg} ${
-              active
-                ? `border-transparent ring-2 ${ring}`
-                : 'border-gray-200 hover:border-gray-300'
-            }`}
-          >
-            <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${bg} ring-1 ring-inset ring-gray-200`}>
-              <Icon className={`h-4 w-4 ${color}`} />
-            </div>
-            <div>
-              <p className="text-xl font-bold leading-none text-gray-800">{value}</p>
-              <p className="mt-0.5 text-[10px] text-gray-500">{label}</p>
-            </div>
-          </button>
-        );
-      })}
-    </div>
   );
 }
 
@@ -1003,18 +1368,13 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
   const [loading,  setLoading]  = useState(true);
   const [search,   setSearch]   = useState('');
   const [filter,   setFilter]   = useState<FilterTab>('all');
+  const [monthFilter, setMonthFilter] = useState<number | 'all'>(() => new Date().getMonth() + 1);
   const [showCalendar, setShowCalendar] = useState(false);
   const [ignoringKey, setIgnoringKey] = useState<string | null>(null);
   const [ignoreMonthBusy, setIgnoreMonthBusy] = useState(false);
+  const [trainerBulk, setTrainerBulk] = useState<TrainerBulkBridge | null>(null);
+  const [trainerData, setTrainerData] = useState<TrainerTableData | null>(null);
   const trainingsRef = useRef<HTMLElement>(null);
-
-  const handleStatClick = useCallback((tab: FilterTab) => {
-    setFilter(tab);
-    // Defer scroll so the filtered list has painted before we jump.
-    requestAnimationFrame(() => {
-      trainingsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }, []);
 
   const load = useCallback(async (force = false) => {
     const dashField = lmsClientFields.dashboard(employee.id);
@@ -1177,8 +1537,21 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
     return m;
   }, [certificates]);
 
+  const monthScopedAssignments = useMemo(() => {
+    const employeesByCode = trainerData
+      ? Object.fromEntries(
+        trainerData.uniqueSops.map((s) => [s.sopCode, s.employees]),
+      )
+      : undefined;
+    const y = new Date().getFullYear();
+    const base = monthFilter === 'all'
+      ? assignments
+      : assignments.filter((a) => a.month === monthFilter && a.year === y);
+    return base.map((a) => withEffectiveExamDate(a, employeesByCode));
+  }, [assignments, monthFilter, trainerData]);
+
   const filtered = useMemo(() => {
-    let list = assignments;
+    let list = monthScopedAssignments;
     if (filter === 'in_progress')  list = list.filter((a) => isActivelyInProgress(getProgress(progressMap, a.sopCode)));
     if (filter === 'completed')    list = list.filter((a) => isFullyComplete(getProgress(progressMap, a.sopCode)));
     if (filter === 'due')          list = list.filter((a) => {
@@ -1209,7 +1582,123 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
       });
     }
     return list;
-  }, [assignments, progressMap, filter, search]);
+  }, [monthScopedAssignments, progressMap, filter, search]);
+
+  /** When scheduling/assigning, or when a schedule-status filter is active, show trainer dept SOPs. */
+  const trainerSelectRows = useMemo((): SopAssignment[] => {
+    const sops = trainerBulk?.uniqueSops
+      ?? trainerData?.scheduleFilteredSops
+      ?? null;
+    if (!sops) return [];
+    const dueMonth = trainerBulk
+      ? (trainerBulk.month === 'all' ? new Date().getMonth() + 1 : trainerBulk.month)
+      : (monthFilter === 'all' ? new Date().getMonth() + 1 : monthFilter);
+    const dueYear = trainerBulk?.year ?? new Date().getFullYear();
+    return sops.map((sop) => {
+      const examDates = sop.employees
+        .map((e) => String(e.scheduledDate || '').slice(0, 10))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+        .sort();
+      return {
+        sopCode: sop.sopCode,
+        sopName: sop.sopName,
+        sopDepartment: sop.employees[0]?.department || '',
+        month: dueMonth,
+        monthName: MONTH_NAMES[dueMonth - 1] || '',
+        year: dueYear,
+        trainingType: 'training' as const,
+        assignedAt: sop.assignedAt,
+        examDate: examDates[0],
+      };
+    });
+  }, [trainerBulk, trainerData, monthFilter]);
+
+  const trainerTableRows = useMemo(() => {
+    const useTrainerList = Boolean(trainerBulk || trainerData?.scheduleFilteredSops);
+    let list = useTrainerList ? trainerSelectRows : filtered;
+    if (search.trim()) {
+      const term = search.trim().toLowerCase();
+      list = list.filter((a) =>
+        a.sopCode.toLowerCase().includes(term)
+        || (a.sopName || '').toLowerCase().includes(term)
+        || (a.sopDepartment || '').toLowerCase().includes(term),
+      );
+    }
+    return list;
+  }, [trainerBulk, trainerData, trainerSelectRows, filtered, search]);
+
+  const trainerExtras = useMemo(() => {
+    if (!trainerData) return undefined;
+    const employeesByCode: Record<string, Array<{
+      employeeId: string;
+      employeeName: string;
+      department: string;
+      status: string;
+      assignedAt?: string;
+      scheduledDate?: string;
+    }>> = {};
+    const assignedAtByCode: Record<string, string> = {};
+    for (const sop of trainerData.uniqueSops) {
+      employeesByCode[sop.sopCode] = sop.employees;
+      if (sop.assignedAt) assignedAtByCode[sop.sopCode] = sop.assignedAt;
+    }
+    return {
+      employeesByCode,
+      assignedAtByCode,
+      onOpenEmployees: trainerData.onOpenEmployees,
+      scheduledTodayByCode: trainerData.scheduledTodayByCode,
+      onOpenAttendance: trainerData.onOpenAttendance,
+      mcqByCode: trainerData.examCatalog,
+    };
+  }, [trainerData]);
+
+  const trainerSelection = useMemo(() => {
+    if (!trainerBulk) return undefined;
+    return {
+      selected: trainerBulk.selectedSopCodes,
+      onToggle: trainerBulk.onToggle,
+      onToggleAll: trainerBulk.onToggleAll,
+    };
+  }, [trainerBulk]);
+
+  const handleTrainerBulkBridge = useCallback((bridge: TrainerBulkBridge | null) => {
+    setTrainerBulk((prev) => {
+      if (!bridge) return prev ? null : prev;
+      if (
+        prev
+        && prev.mode === bridge.mode
+        && prev.selectedSopCodes === bridge.selectedSopCodes
+        && prev.onToggle === bridge.onToggle
+        && prev.onToggleAll === bridge.onToggleAll
+        && prev.uniqueSops === bridge.uniqueSops
+        && prev.examCatalog === bridge.examCatalog
+        && prev.month === bridge.month
+        && prev.year === bridge.year
+      ) {
+        return prev;
+      }
+      return bridge;
+    });
+  }, []);
+
+  const handleTrainerData = useCallback((data: TrainerTableData | null) => {
+    setTrainerData((prev) => {
+      if (!data) return prev ? null : prev;
+      if (
+        prev
+        && prev.uniqueSops === data.uniqueSops
+        && prev.examCatalog === data.examCatalog
+        && prev.onOpenEmployees === data.onOpenEmployees
+        && prev.scheduledTodayByCode === data.scheduledTodayByCode
+        && prev.onOpenAttendance === data.onOpenAttendance
+        && prev.scheduleFilteredSops === data.scheduleFilteredSops
+        && prev.scheduleFilterLabel === data.scheduleFilterLabel
+      ) {
+        return prev;
+      }
+      return data;
+    });
+  }, []);
 
   const earnedCertificates = useMemo(
     () => certificates.filter((c) => isFullyComplete(getProgress(progressMap, c.sopCode))),
@@ -1217,30 +1706,30 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
   );
 
   const tabCounts = useMemo(() => ({
-    all:         assignments.length,
-    in_progress: assignments.filter((a) => isActivelyInProgress(getProgress(progressMap, a.sopCode))).length,
-    completed:   assignments.filter((a) => isFullyComplete(getProgress(progressMap, a.sopCode))).length,
-    due:         assignments.filter((a) => {
+    all:         monthScopedAssignments.length,
+    in_progress: monthScopedAssignments.filter((a) => isActivelyInProgress(getProgress(progressMap, a.sopCode))).length,
+    completed:   monthScopedAssignments.filter((a) => isFullyComplete(getProgress(progressMap, a.sopCode))).length,
+    due:         monthScopedAssignments.filter((a) => {
       const st = getProgress(progressMap, a.sopCode)?.status;
       return scheduleStatus(a) === 'due' && st !== 'completed' && st !== 'in_progress';
     }).length,
-    upcoming:    assignments.filter((a) => {
+    upcoming:    monthScopedAssignments.filter((a) => {
       const st = getProgress(progressMap, a.sopCode)?.status;
       return scheduleStatus(a) === 'upcoming' && st !== 'completed';
     }).length,
-    overdue:     assignments.filter((a) => {
+    overdue:     monthScopedAssignments.filter((a) => {
       return scheduleStatus(a) === 'overdue' && !isFullyComplete(getProgress(progressMap, a.sopCode));
     }).length,
-    ignored:     assignments.filter((a) => {
+    ignored:     monthScopedAssignments.filter((a) => {
       return scheduleStatus(a) === 'ignored' && !isFullyComplete(getProgress(progressMap, a.sopCode));
     }).length,
-  }), [assignments, progressMap]);
+  }), [monthScopedAssignments, progressMap]);
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-screen-2xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full items-center justify-between px-2 py-2.5 sm:px-3 lg:px-4">
           <div className="flex items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-600">
               <GraduationCap className="h-4 w-4 text-white" />
@@ -1284,23 +1773,24 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-screen-2xl px-3 py-4 sm:px-5 lg:px-6">
+      <main className="mx-auto w-full px-2 py-3 sm:px-3 lg:px-4">
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
           </div>
         ) : (
           <>
-            {/* Stats */}
-            <StatsRow
-              assignments={assignments}
-              progressMap={progressMap}
-              activeFilter={filter}
-              onStatClick={handleStatClick}
-            />
+            {employee.isTrainer && (
+              <TrainerLmsSchedulePanel
+                onBulkBridge={handleTrainerBulkBridge}
+                onTrainerData={handleTrainerData}
+                onAttendanceSaved={() => void load(true)}
+                monthFilter={monthFilter}
+              />
+            )}
 
             {/* Continue learning */}
-            <ContinueLearning assignments={assignments} progressMap={progressMap} onOpen={handleOpen} onPrefetch={prefetchJourney} />
+            <ContinueLearning assignments={monthScopedAssignments} progressMap={progressMap} onOpen={handleOpen} onPrefetch={prefetchJourney} />
 
             {/* Certificates — only for fully completed (100%) trainings */}
             {earnedCertificates.length > 0 && (
@@ -1340,19 +1830,26 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
             <section ref={trainingsRef} className="scroll-mt-16">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="flex items-center gap-1.5 text-xs font-bold text-gray-800">
-                  <ClipboardList className="h-3.5 w-3.5 text-purple-600" /> My Trainings
+                  <ClipboardList className="h-3.5 w-3.5 text-purple-600" />
+                  {trainerBulk
+                    ? (trainerBulk.mode === 'assign-exam' ? 'Assign Exam — select SOPs' : 'Schedule Training — select SOPs')
+                    : trainerData?.scheduleFilterLabel
+                      ? `My Trainings · ${trainerData.scheduleFilterLabel}`
+                      : 'My Trainings'}
                 </h2>
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleIgnoreMonth}
-                    disabled={ignoreMonthBusy || assignments.length === 0}
-                    className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                    title="Ignore all SOPs for a selected month across your department"
-                  >
-                    <EyeOff className="h-3.5 w-3.5" />
-                    {ignoreMonthBusy ? 'Ignoring…' : 'Ignore month'}
-                  </button>
+                  {!trainerBulk && (
+                    <button
+                      type="button"
+                      onClick={handleIgnoreMonth}
+                      disabled={ignoreMonthBusy || assignments.length === 0}
+                      className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                      title="Ignore all SOPs for a selected month across your department"
+                    >
+                      <EyeOff className="h-3.5 w-3.5" />
+                      {ignoreMonthBusy ? 'Ignoring…' : 'Ignore month'}
+                    </button>
+                  )}
                   <div className="relative w-full max-w-xs sm:w-56">
                     <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
                     <input
@@ -1365,62 +1862,111 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
                 </div>
               </div>
 
-              {/* Filter tabs */}
-              <div className="mb-2.5 flex flex-wrap gap-1">
-                {(['all', 'in_progress', 'due', 'upcoming', 'completed', 'overdue', 'ignored'] as FilterTab[]).map((tab) => (
+              {/* Month + status filters — one row */}
+              {!trainerBulk && (
+                <div className="mb-2.5 flex flex-wrap items-center gap-1">
                   <button
-                    key={tab}
-                    onClick={() => setFilter(tab)}
-                    className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
-                      filter === tab
-                        ? tab === 'overdue'
-                          ? 'bg-red-600 text-white'
-                          : tab === 'ignored'
-                          ? 'bg-gray-600 text-white'
-                          : tab === 'completed'
-                          ? 'bg-green-600 text-white'
-                          : tab === 'due'
-                          ? 'bg-amber-600 text-white'
-                          : tab === 'upcoming'
-                          ? 'bg-sky-600 text-white'
-                          : 'bg-purple-600 text-white'
+                    type="button"
+                    onClick={() => setMonthFilter('all')}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
+                      monthFilter === 'all'
+                        ? 'bg-purple-600 text-white'
                         : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
                     }`}
                   >
-                    {statusLabel(tab)}
-                    <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
-                      filter === tab ? 'bg-white/20' : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {tabCounts[tab]}
-                    </span>
+                    All months
                   </button>
-                ))}
-              </div>
+                  {MONTH_NAMES.map((name, i) => {
+                    const month = i + 1;
+                    const isCurrent = month === new Date().getMonth() + 1;
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => setMonthFilter(month)}
+                        className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
+                          monthFilter === month
+                            ? 'bg-indigo-600 text-white'
+                            : isCurrent
+                              ? 'border border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100'
+                              : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        {name.slice(0, 3)}
+                      </button>
+                    );
+                  })}
+                  <span className="mx-1 hidden h-4 w-px bg-gray-200 sm:inline-block" aria-hidden />
+                  {(['all', 'in_progress', 'due', 'upcoming', 'completed', 'overdue', 'ignored'] as FilterTab[]).map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setFilter(tab)}
+                      className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
+                        filter === tab
+                          ? tab === 'overdue'
+                            ? 'bg-red-600 text-white'
+                            : tab === 'ignored'
+                            ? 'bg-gray-600 text-white'
+                            : tab === 'completed'
+                            ? 'bg-green-600 text-white'
+                            : tab === 'due'
+                            ? 'bg-amber-600 text-white'
+                            : tab === 'upcoming'
+                            ? 'bg-sky-600 text-white'
+                            : 'bg-purple-600 text-white'
+                          : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      {statusLabel(tab)}
+                      <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                        filter === tab ? 'bg-white/20' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {tabCounts[tab]}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-              {/* Training list */}
-              {filtered.length === 0 ? (
+              {/* Training list — same table; selection mode when scheduling */}
+              {trainerTableRows.length === 0 ? (
                 <div className="rounded-xl border border-gray-200 bg-white py-16 text-center">
                   <BookOpen className="mx-auto mb-3 h-10 w-10 text-gray-200" />
                   <p className="text-sm font-medium text-gray-500">
-                    {search ? `No trainings match "${search}"` : `No ${filter !== 'all' ? statusLabel(filter).toLowerCase() : ''} trainings`}
+                    {search
+                      ? `No trainings match "${search}"`
+                      : trainerBulk
+                        ? 'No SOPs for the selected month'
+                        : trainerData?.scheduleFilterLabel
+                          ? `No SOPs match “${trainerData.scheduleFilterLabel}”`
+                        : filter === 'due' && (tabCounts.overdue > 0 || tabCounts.upcoming > 0)
+                          ? `No exams due today${tabCounts.overdue > 0 ? ` · ${tabCounts.overdue} overdue` : ''}${tabCounts.upcoming > 0 ? ` · ${tabCounts.upcoming} upcoming` : ''}`
+                        : `No ${filter !== 'all' ? statusLabel(filter).toLowerCase() : ''} trainings`}
                   </p>
                 </div>
               ) : (
                 <TrainingTable
-                  rows={filtered}
+                  rows={trainerTableRows}
                   progressMap={progressMap}
                   certMap={certMap}
                   assetsMap={assetsMap}
                   onOpenStep={handleOpenStep}
                   onCertificate={handleCertificate}
                   onPrefetch={prefetchJourney}
-                  onIgnoreSop={handleIgnoreSop}
+                  onIgnoreSop={trainerBulk ? undefined : handleIgnoreSop}
                   ignoringKey={ignoringKey}
+                  trainerExtras={trainerExtras}
+                  isTrainer={employee.isTrainer === true}
+                  selection={trainerSelection}
                 />
               )}
 
               <div className="mt-3 text-center text-xs text-gray-400">
-                {filtered.length} of {assignments.length} training{assignments.length !== 1 ? 's' : ''}
+                {trainerBulk
+                  ? `${trainerTableRows.length} SOP${trainerTableRows.length !== 1 ? 's' : ''} · ${trainerBulk.selectedSopCodes.size} selected`
+                  : `${filtered.length} of ${monthScopedAssignments.length} training${monthScopedAssignments.length !== 1 ? 's' : ''}${
+                      monthFilter === 'all' ? '' : ` · ${MONTH_NAMES[monthFilter - 1]}`
+                    }`}
               </div>
             </section>
 

@@ -9,6 +9,7 @@ import {
 } from "@/lib/sop-utils";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { loadGroupedRegistry } from "@/lib/dashboardRegistrySource";
+import { attachRegistryCompliance } from "@/lib/registry-compliance-server";
 import { filterByAssignedDepartments, requireAuth } from "@/lib/withAuth";
 
 export const dynamic = "force-dynamic";
@@ -20,10 +21,12 @@ export async function GET(request: NextRequest) {
   try {
     const role = auth.session.user.role;
     const userDepartment = auth.session.user.department;
-    const grouped = filterByAssignedDepartments(
-      role,
-      userDepartment,
-      await loadGroupedRegistry(),
+    const grouped = await attachRegistryCompliance(
+      filterByAssignedDepartments(
+        role,
+        userDepartment,
+        await loadGroupedRegistry(),
+      ),
     );
 
     // `all=1` returns the entire grouped registry (active + obsolete) unfiltered so

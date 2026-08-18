@@ -34,6 +34,7 @@ import {
   isOfficePreviewAvailable,
 } from "@/lib/file-urls";
 import { docxRequiredForLang, formatUploaded, pdfRequiredForLang } from "@/lib/sop-utils";
+import { compliancePercent } from "@/lib/registry-compliance";
 import { annexureRomanFromLabel } from "@/lib/sop-annexure-requirements";
 import { displaySopCode, displaySopTitle } from "@/lib/sop-display";
 import { describeFilters } from "@/lib/filter-breadcrumb";
@@ -48,6 +49,25 @@ import { BrandlessVideoPlayer } from "@/components/shared/BrandlessVideoPlayer";
 
 const registryTdBase = "px-1 py-1 align-middle overflow-hidden max-w-0";
 const registrySopNoTd = "px-1 py-1 align-middle whitespace-nowrap";
+
+/** Expand + data columns; +1 when the Actions column is shown. */
+function registryColCount(canMutate: boolean) {
+  return canMutate ? 18 : 17;
+}
+
+function YesNoPill({ yes, yesLabel = "Yes", noLabel = "No" }: { yes: boolean; yesLabel?: string; noLabel?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center justify-center rounded px-1 py-px text-[8px] font-semibold leading-none ${
+        yes
+          ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
+          : "border border-red-200 bg-red-50 text-red-700"
+      }`}
+    >
+      {yes ? yesLabel : noLabel}
+    </span>
+  );
+}
 
 /* ─── Media (video / slide) preview modal ────────────────────────────── */
 function isVideoUrl(url: string): boolean {
@@ -560,18 +580,19 @@ export function SOPRegistryTable({
               <col style={{ width: "1.5%" }} />
               <col style={{ width: "2%" }} />
               <col style={{ width: "7%" }} />
-              <col style={{ width: "2.5%" }} />
-              <col style={{ width: canMutate ? "12%" : "14%" }} />
-              <col style={{ width: "3.5%" }} />
+              <col style={{ width: canMutate ? "16%" : "18%" }} />
               <col style={{ width: "4.5%" }} />
-              <col style={{ width: canMutate ? "19%" : "20%" }} />
+              <col style={{ width: canMutate ? "10%" : "11%" }} />
               <col style={{ width: "3.5%" }} />
               <col style={{ width: "3.5%" }} />
-              <col style={{ width: "7.5%" }} />
+              <col style={{ width: "6.5%" }} />
               <col style={{ width: "5%" }} />
               <col style={{ width: "6.5%" }} />
               <col style={{ width: "6%" }} />
               <col style={{ width: "6%" }} />
+              <col style={{ width: "4%" }} />
+              <col style={{ width: "4%" }} />
+              <col style={{ width: "4%" }} />
               <col style={{ width: "6.5%" }} />
               {canMutate && <col style={{ width: "3.5%" }} />}
             </colgroup>
@@ -584,24 +605,10 @@ export function SOPRegistryTable({
                     SOP No <SortIcon field="identifier" />
                   </button>
                 </th>
-                <th className={`${thBase} text-center`}>
-                  <button type="button" className={sortBtn} onClick={() => onSort("version")}>
-                    Ver <SortIcon field="version" />
-                  </button>
-                </th>
                 <th className={thBase}>
                   <button type="button" className={sortBtn} onClick={() => onSort("name")}>
                     SOP Name <SortIcon field="name" />
                   </button>
-                </th>
-                <th className={thBase}>
-                  <div className="flex flex-col items-center gap-0.5">
-                    <span className="text-[8px] font-bold text-gray-500 uppercase tracking-widest leading-none">Guideline</span>
-                    <button type="button" className={`${sortBtn} justify-center py-0.5`} onClick={() => onSort("guidelineReference")} title="Guideline reference">
-                      <Sparkles className="h-3 w-3 text-orange-500 shrink-0" />
-                      <SortIcon field="guidelineReference" />
-                    </button>
-                  </div>
                 </th>
                 <th className={thBase}>
                   <button type="button" className={sortBtn} onClick={() => onSort("location")}>
@@ -701,6 +708,43 @@ export function SOPRegistryTable({
                     Uploaded <SortIcon field="uploadedAt" />
                   </button>
                 </th>
+                <th className={thBase} title="Compliance is done when the score is 80% or more">
+                  <div className="flex flex-col gap-px">
+                    <button type="button" className={sortBtn} onClick={() => onSort("complianceDone")}>
+                      Compliance Done <SortIcon field="complianceDone" />
+                    </button>
+                    <select
+                      className={selBase}
+                      value={filters.complianceDone ?? ""}
+                      onChange={(e) => setFilter({ complianceDone: e.target.value || undefined })}
+                    >
+                      <option value="">All</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </div>
+                </th>
+                <th className={thBase} title="Compliance score — click to open the report">
+                  <button type="button" className={sortBtn} onClick={() => onSort("complianceScore")}>
+                    Score <SortIcon field="complianceScore" />
+                  </button>
+                </th>
+                <th className={thBase} title="New version uploaded without running compliance">
+                  <div className="flex flex-col gap-px">
+                    <button type="button" className={sortBtn} onClick={() => onSort("complianceBypassed")}>
+                      Bypassed <SortIcon field="complianceBypassed" />
+                    </button>
+                    <select
+                      className={selBase}
+                      value={filters.complianceBypassed ?? ""}
+                      onChange={(e) => setFilter({ complianceBypassed: e.target.value || undefined })}
+                    >
+                      <option value="">All</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </div>
+                </th>
                 <th className={thBase}>
                   <div className="flex flex-col gap-px">
                     <button type="button" className={sortBtn} onClick={() => onSort("expiryDate")}>
@@ -726,13 +770,13 @@ export function SOPRegistryTable({
             <tbody className="text-[10px] text-gray-700">
               {loading ? (
                 <tr>
-                  <td colSpan={canMutate ? 17 : 16} className="py-12 text-center text-slate-400">
+                  <td colSpan={registryColCount(canMutate)} className="py-12 text-center text-slate-400">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin" />
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={canMutate ? 17 : 16} className="py-12 text-center text-gray-500">
+                  <td colSpan={registryColCount(canMutate)} className="py-12 text-center text-gray-500">
                     <div className="flex flex-col items-center gap-1">
                       <FileText className="h-5 w-5 text-gray-300" />
                       <p className="text-xs">
@@ -806,7 +850,7 @@ const SOPRow = memo(function SOPRow({
   /* Expiry badge */
   const expiryNode = (() => {
     if (!sop.expiryDate) {
-      return <span className="inline-block rounded border border-gray-200 bg-gray-50 px-1 py-0.5 text-[8px] font-semibold text-gray-400">No Date</span>;
+      return <span className="inline-flex items-center justify-center rounded border border-gray-200 bg-gray-50 px-1 py-px text-[8px] font-semibold leading-none text-gray-400">No Date</span>;
     }
     const diffDays = Math.floor((new Date(sop.expiryDate).getTime() - Date.now()) / 86400000);
     const absDays = Math.abs(diffDays);
@@ -834,7 +878,7 @@ const SOPRow = memo(function SOPRow({
     }
     return (
       <span
-        className={`inline-block w-full max-w-full rounded border px-1 py-0.5 text-[8px] font-semibold leading-snug line-clamp-2 ${colorClass}`}
+        className={`inline-flex max-w-full items-center justify-center truncate rounded border px-1 py-px text-[8px] font-semibold leading-none ${colorClass}`}
         title={`Expiry: ${new Date(sop.expiryDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })} — ${label}`}
       >
         {label}
@@ -870,11 +914,6 @@ const SOPRow = memo(function SOPRow({
           {displaySopCode(sop.identifier)}
         </td>
 
-        {/* Ver */}
-        <td className={`${registryTdBase} text-center`}>
-          <span className="text-[11px] font-bold text-gray-800 tabular-nums">{sop.version}</span>
-        </td>
-
         {/* SOP Name */}
         <td className={`${registryTdBase} font-medium text-gray-800`}>
           <div className="flex min-w-0 flex-col gap-0 leading-tight">
@@ -893,13 +932,6 @@ const SOPRow = memo(function SOPRow({
               </span>
             )}
           </div>
-        </td>
-
-        {/* Guideline */}
-        <td className={`${registryTdBase} text-center`}>
-          <span className="inline-block max-w-full truncate rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 tabular-nums">
-            {sop.guidelineReference ?? <span className="text-gray-300">—</span>}
-          </span>
         </td>
 
         {/* Location */}
@@ -976,8 +1008,53 @@ const SOPRow = memo(function SOPRow({
           })()}
         </td>
 
+        {/* Compliance Done */}
+        <td className={`${registryTdBase} text-center`}>
+          <YesNoPill yes={Boolean(sop.complianceDone)} />
+        </td>
+
+        {/* Score */}
+        <td className={`${registryTdBase} text-center`}>
+          {sop.complianceAnalyzed ? (
+            sop.complianceReportId ? (
+              <a
+                href={`/compliance/report/${sop.complianceReportId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-bold text-purple-700 hover:underline tabular-nums"
+                title={`${sop.complianceScore.toFixed(1)}/10 — open compliance report`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {compliancePercent(sop.complianceScore)}%
+              </a>
+            ) : (
+              <span
+                className="font-bold text-gray-800 tabular-nums"
+                title={`${sop.complianceScore.toFixed(1)}/10`}
+              >
+                {compliancePercent(sop.complianceScore)}%
+              </span>
+            )
+          ) : (
+            <span className="text-gray-300">—</span>
+          )}
+        </td>
+
+        {/* Bypassed */}
+        <td className={`${registryTdBase} text-center`}>
+          {sop.complianceBypassed ? (
+            <span className="inline-flex items-center justify-center rounded border border-amber-200 bg-amber-50 px-1 py-px text-[8px] font-semibold leading-none text-amber-800">
+              Yes
+            </span>
+          ) : (
+            <span className="inline-flex items-center justify-center rounded border border-gray-200 bg-gray-50 px-1 py-px text-[8px] font-semibold leading-none text-gray-400">
+              No
+            </span>
+          )}
+        </td>
+
         {/* Expiry */}
-        <td className={registryTdBase}>{expiryNode}</td>
+        <td className={`${registryTdBase} text-center`}>{expiryNode}</td>
 
         {/* Actions */}
         {canMutate && (
@@ -1043,7 +1120,7 @@ const SOPRow = memo(function SOPRow({
       {/* Expanded detail row */}
       {expanded && (
         <tr className="bg-gray-50 border-b border-gray-200">
-          <td colSpan={canMutate ? 17 : 16} className="px-4 py-3">
+          <td colSpan={registryColCount(canMutate)} className="px-4 py-3">
             <SOPDetailPanel
               sop={sop}
               expiryNode={expiryNode}
@@ -1273,7 +1350,24 @@ function SOPDetailPanel({
           <div className="flex items-center gap-1.5">
             <Users className="h-3 w-3 shrink-0 text-gray-500" />
             <span className="font-semibold text-gray-600">Compliance:</span>
-            <span className="font-bold text-gray-800">{sop.complianceScore}/10 ({sop.complianceStatus})</span>
+            <span className="font-bold text-gray-800">
+              {sop.complianceAnalyzed
+                ? `${compliancePercent(sop.complianceScore)}% (${sop.complianceDone ? "Done" : "Not done"})`
+                : sop.complianceBypassed
+                  ? "Bypassed"
+                  : "Not run"}
+            </span>
+            {sop.complianceReportId && (
+              <a
+                href={`/compliance/report/${sop.complianceReportId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-bold text-purple-700 hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Open report
+              </a>
+            )}
           </div>
 
           {canMutate && (

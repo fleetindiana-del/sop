@@ -502,6 +502,9 @@ export function DashboardClient() {
       "Language",
       "Expiry",
       "Uploaded",
+      "Compliance Done",
+      "Score",
+      "Bypassed",
     ];
     const rows = items.map((s) =>
       [
@@ -513,6 +516,9 @@ export function DashboardClient() {
         s.language,
         s.expiryDate ?? "",
         s.uploadedAt,
+        s.complianceDone ? "Yes" : "No",
+        s.complianceAnalyzed ? `${Math.round(s.complianceScore * 10)}%` : "",
+        s.complianceBypassed ? "Yes" : "No",
       ].join(","),
     );
     const csv = [headers.join(","), ...rows].join("\n");

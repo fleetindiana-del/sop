@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  devIndicators: false,
   serverExternalPackages: ["pdf-parse", "pdfjs-dist"],
   // Keep SOP binary trees out of serverless NFT traces (they are runtime disk/CDN assets).
   outputFileTracingExcludes: {

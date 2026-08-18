@@ -35,6 +35,8 @@ export type ScheduledExamLean = {
   sopCode: string;
   sopName?: string;
   scheduledDate: Date;
+  scheduledDate2?: Date;
+  scheduledDate3?: Date;
   month: number;
   year: number;
   status: string;
@@ -56,6 +58,17 @@ export function empAssignmentKey(department: string, name: string): string {
 /** Start of "today" in UTC, so date-only deadlines compare consistently. */
 export function utcToday(now = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+export function latestSittingIso(dates: Array<Date | string | undefined | null>): string | undefined {
+  const iso = dates
+    .map((d) => {
+      if (!d) return '';
+      return d instanceof Date ? toDateOnlyIso(d) : String(d).slice(0, 10);
+    })
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  return iso[iso.length - 1];
 }
 
 export function computeExamStatus(
@@ -173,6 +186,8 @@ export interface ScheduledExamView {
   sopCode: string;
   sopName: string;
   scheduledDate: string;
+  scheduledDate2?: string;
+  scheduledDate3?: string;
   month: number;
   year: number;
   status: ExamCompletionStatus;
@@ -191,8 +206,10 @@ export function buildScheduledExamView(
   now = new Date(),
 ): ScheduledExamView {
   const completed = isExamCompleted(progress);
-  const status = computeExamStatus(doc.scheduledDate, completed, now);
-  const due = new Date(doc.scheduledDate);
+  const dueIso = latestSittingIso([doc.scheduledDate3, doc.scheduledDate2, doc.scheduledDate])
+    || toDateOnlyIso(new Date(doc.scheduledDate));
+  const status = computeExamStatus(dueIso, completed, now);
+  const due = new Date(dueIso);
   const dueDay = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
   const daysOverdue =
     status === 'overdue'
@@ -208,6 +225,8 @@ export function buildScheduledExamView(
     sopCode: doc.sopCode,
     sopName: doc.sopName || doc.sopCode,
     scheduledDate: toDateOnlyIso(new Date(doc.scheduledDate)),
+    scheduledDate2: doc.scheduledDate2 ? toDateOnlyIso(new Date(doc.scheduledDate2)) : undefined,
+    scheduledDate3: doc.scheduledDate3 ? toDateOnlyIso(new Date(doc.scheduledDate3)) : undefined,
     month: doc.month,
     year: doc.year,
     status,
@@ -254,6 +273,8 @@ export function serializeScheduledExam(doc: IScheduledExam | ScheduledExamLean) 
     sopCode: doc.sopCode,
     sopName: doc.sopName || doc.sopCode,
     scheduledDate: toDateOnlyIso(new Date(doc.scheduledDate)),
+    scheduledDate2: doc.scheduledDate2 ? toDateOnlyIso(new Date(doc.scheduledDate2)) : undefined,
+    scheduledDate3: doc.scheduledDate3 ? toDateOnlyIso(new Date(doc.scheduledDate3)) : undefined,
     month: doc.month,
     year: doc.year,
     status: doc.status,

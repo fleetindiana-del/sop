@@ -1,9 +1,23 @@
 import TrainingMatrixUpload from '@/models/TrainingMatrixUpload';
 import TrainingMatrixRecord from '@/models/TrainingMatrixRecord';
 import type { ITrainingExamSchedule } from '@/models/TrainingExamSchedule';
-import { MONTH_NAMES, DEPT_COLORS } from '@/lib/trainingExamScheduleShared';
+import {
+  MONTH_NAMES,
+  DEPT_COLORS,
+  toDateOnlyIso,
+  parseDateOnly,
+  monthOfDate,
+  yearOfDate,
+} from '@/lib/trainingExamScheduleShared';
 
-export { MONTH_NAMES, DEPT_COLORS } from '@/lib/trainingExamScheduleShared';
+export {
+  MONTH_NAMES,
+  DEPT_COLORS,
+  toDateOnlyIso,
+  parseDateOnly,
+  monthOfDate,
+  yearOfDate,
+};
 
 export function stripVersion(code: string): string {
   return String(code || '')
@@ -35,31 +49,6 @@ export function parseScheduleMonthNumbers(monthVal: string): number[] {
     .split(',')
     .map((part) => MONTH_NAME_TO_NUM[part.trim().toLowerCase()])
     .filter((n): n is number => typeof n === 'number' && n >= 1 && n <= 12);
-}
-
-export function toDateOnlyIso(d: Date): string {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-export function parseDateOnly(iso: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '').trim());
-  if (!m) return null;
-  const y = Number(m[1]);
-  const mo = Number(m[2]);
-  const d = Number(m[3]);
-  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-  return new Date(Date.UTC(y, mo - 1, d));
-}
-
-export function monthOfDate(d: Date): number {
-  return d.getUTCMonth() + 1;
-}
-
-export function yearOfDate(d: Date): number {
-  return d.getUTCFullYear();
 }
 
 export type MonthRequirement = {

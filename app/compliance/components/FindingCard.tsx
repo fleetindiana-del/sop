@@ -401,6 +401,7 @@ export default function FindingCard({
     : sectionNum;
 
   const guidelineSectionText = resolveGuidelineSectionText(finding, traceabilityMatrix);
+  const impactGapForSource = [gapText, recheckNewGap].filter(Boolean).join('\n') || gapText;
   const clauseDisplay = extractGuidelineClauseDisplay({
     clauseNumber: finding.clauseNumber,
     clauseTitle: finding.clauseTitle,
@@ -413,15 +414,21 @@ export default function FindingCard({
     sopTextSnippet: sopSnippet || finding.sopTextSnippet,
     evidenceFound: evidenceFound,
     complianceLevel: finding.complianceLevel,
-    impactGap: gapText,
+    impactGap: impactGapForSource,
     mismatchExplanation: finding.mismatchExplanation,
     highlightedIssue: finding.highlightedIssue,
   });
-  const displayRequirement =
-    clauseDisplay.fullPoint?.trim() ||
-    finding.guidelineRequirement?.trim() ||
-    finding.clauseText?.trim() ||
-    '';
+  const displayRequirement = (() => {
+    for (const c of [
+      clauseDisplay.fullPoint,
+      finding.guidelineRequirement,
+      finding.clauseText,
+    ]) {
+      const t = c?.trim();
+      if (t && !isGuidelineBoilerplate(t)) return t;
+    }
+    return '';
+  })();
 
   const impactText =
     finding.impactAnalysis?.trim() ||
@@ -471,8 +478,25 @@ export default function FindingCard({
   );
 
   const pdfSearchAnchors = useMemo(
-    () => [gapText, sopSnippet, displayRequirement, clauseDisplay.fullPoint].filter(Boolean),
-    [gapText, sopSnippet, displayRequirement, clauseDisplay.fullPoint],
+    () =>
+      [
+        gapText,
+        recheckNewGap,
+        finding.clauseTitle,
+        finding.clauseNumber ? `${finding.clauseNumber} ${finding.clauseTitle || ''}`.trim() : '',
+        sopSnippet,
+        displayRequirement,
+        clauseDisplay.fullPoint,
+      ].filter(Boolean),
+    [
+      gapText,
+      recheckNewGap,
+      finding.clauseTitle,
+      finding.clauseNumber,
+      sopSnippet,
+      displayRequirement,
+      clauseDisplay.fullPoint,
+    ],
   );
 
   const clauseFallbackPoint = (() => {
@@ -947,22 +971,24 @@ export default function FindingCard({
                 </h4>
                 <BulletList text={impactText} />
                 {finding.guidelineId && (() => {
-                  const pageFragment = finding.pageNumber?.trim() ? `#page=${finding.pageNumber.trim()}` : '';
-                  const href = `/api/guidelines/upload?serve=${finding.guidelineId}${pageFragment}`;
                   const label = [
                     finding.pdfName || finding.folderName || finding.guidelineName,
                     finding.clauseNumber ? `§${finding.clauseNumber}` : '',
                   ].filter(Boolean).join(' · ');
                   return (
-                    <a
-                      href={href}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      type="button"
+                      data-pdf-hide
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setGuidelinePdfOpen(true);
+                      }}
                       className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-orange-300 bg-white text-[10px] font-bold text-orange-800 hover:bg-orange-50 shrink-0"
+                      title="Open guideline at this requirement"
                     >
                       <ExternalLink className="h-3 w-3 shrink-0" />
                       {label || 'Source'}
-                    </a>
+                    </button>
                   );
                 })()}
               </div>
@@ -1108,7 +1134,29 @@ export default function FindingCard({
                         ? 'Guideline requirement'
                         : 'Assessed requirement'}
                     </p>
-                    <p className="text-xs font-medium text-gray-900 leading-snug mt-0.5 flex-1 border-l-2 border-indigo-400 pl-1.5 bg-white/60 rounded-r whitespace-pre-wrap">
+                    <p
+                      role={finding.guidelineId ? 'button' : undefined}
+                      tabIndex={finding.guidelineId ? 0 : undefined}
+                      onClick={(e) => {
+                        if (!finding.guidelineId) return;
+                        e.stopPropagation();
+                        setGuidelinePdfOpen(true);
+                      }}
+                      onKeyDown={(e) => {
+                        if (!finding.guidelineId) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setGuidelinePdfOpen(true);
+                        }
+                      }}
+                      className={`text-xs font-medium text-gray-900 leading-snug mt-0.5 flex-1 border-l-2 border-indigo-400 pl-1.5 bg-white/60 rounded-r whitespace-pre-wrap ${
+                        finding.guidelineId
+                          ? 'cursor-pointer hover:bg-indigo-50/80 hover:border-indigo-500'
+                          : ''
+                      }`}
+                      title={finding.guidelineId ? 'Open guideline at this point' : undefined}
+                    >
                       {displayGuidelinePoint}
                     </p>
                     <div data-pdf-hide className="flex flex-wrap items-center gap-1 mt-1 shrink-0">

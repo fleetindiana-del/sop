@@ -7,7 +7,9 @@ import {
   isHeadingOnlyTitle,
   isTextInGuideline,
   normalizeGuidelineText,
-  stripGuidelineBoilerplate,
+  REQUIREMENT_VERB_RE,
+  sliceGuidelineSection,
+  splitGuidelineSentences,
   substantiveScore,
 } from "@/lib/guidelineBoilerplate";
 
@@ -70,8 +72,7 @@ function splitIntoUnits(text: string): string[] {
   for (const para of text.split(/\n+/)) {
     const trimmed = normalizeGuidelineText(para);
     if (!trimmed || isGuidelineBoilerplate(trimmed)) continue;
-    const sentences = trimmed.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [trimmed];
-    for (const s of sentences) add(s);
+    for (const s of splitGuidelineSentences(trimmed)) add(s);
     if (trimmed.length >= 40 && trimmed.length <= 320) add(trimmed);
   }
 
@@ -85,13 +86,13 @@ function findVerbatimInClause(
 ): { line: string; lineNumber: string } | null {
   if (!requirement || requirement.length < 12) return null;
 
-  const body = stripGuidelineBoilerplate(clauseText, clauseNumber);
+  const body = sliceGuidelineSection(clauseText, clauseNumber);
   const clauseFlat = normalizeGuidelineText(body);
   const reqFlat = normalizeGuidelineText(requirement);
 
   const tryMatch = (needle: string): { line: string; lineNumber: string } | null => {
     if (needle.length < 18 || isGuidelineBoilerplate(needle)) return null;
-    if (!isTextInGuideline(needle, clauseText)) return null;
+    if (!isTextInGuideline(needle, clauseText) && !isTextInGuideline(needle, body)) return null;
     const idx = clauseFlat.toLowerCase().indexOf(needle.toLowerCase());
     const searchIn = idx >= 0 ? body : clauseText;
     const flat = normalizeGuidelineText(searchIn);
@@ -138,7 +139,7 @@ function pickByAnchorOverlap(
   const filtered = anchors.map((a) => a.trim()).filter((a) => a.length >= 12 && !isGuidelineBoilerplate(a));
   if (!filtered.length) return null;
 
-  const body = stripGuidelineBoilerplate(clauseText, clauseNumber);
+  const body = sliceGuidelineSection(clauseText, clauseNumber);
   const units = splitIntoUnits(body);
   if (!units.length) return null;
 
@@ -146,7 +147,7 @@ function pickByAnchorOverlap(
   let bestScore = -1;
 
   for (const unit of units) {
-    if (!isTextInGuideline(unit, clauseText)) continue;
+    if (!isTextInGuideline(unit, clauseText) && !isTextInGuideline(unit, body)) continue;
     let score = substantiveScore(unit);
     for (const anchor of filtered) {
       score += anchorOverlapScore(unit, anchor) * 10;
@@ -176,7 +177,7 @@ function pickFromClauseBody(
   clauseNumber?: string,
   minScore = 1,
 ): { line: string; lineNumber: string } | null {
-  const body = stripGuidelineBoilerplate(clauseText, clauseNumber);
+  const body = sliceGuidelineSection(clauseText, clauseNumber);
   const units = splitIntoUnits(body);
   if (!units.length) return null;
 
@@ -212,7 +213,7 @@ function toCompactPoint(
   requirement?: string,
   clauseNumber?: string,
 ): string {
-  const body = clauseText ? stripGuidelineBoilerplate(clauseText, clauseNumber) : "";
+  const body = clauseText ? sliceGuidelineSection(clauseText, clauseNumber) : "";
   const candidates = [
     compactRequirementText(shortLine),
     requirement ? compactRequirementText(requirement) : "",
@@ -241,14 +242,21 @@ function derivePdfSearchPhrase(
 }
 
 function collectImpactAnchors(input: GuidelineSourceInput, requirement: string): string[] {
+  const title = input.clauseTitle?.trim() || "";
+  const clauseRef =
+    input.clauseNumber?.trim() && title
+      ? `${input.clauseNumber.trim()} ${title}`
+      : title || input.clauseNumber?.trim() || "";
   return [
     requirement,
+    clauseRef,
+    title,
     input.impactGap,
     input.mismatchExplanation,
     input.highlightedIssue,
     input.sopTextSnippet,
     input.evidenceFound,
-  ].filter((s): s is string => !!s?.trim() && s.trim().length >= 12 && !isGuidelineBoilerplate(s));
+  ].filter((s): s is string => !!s?.trim() && s.trim().length >= 4 && !isGuidelineBoilerplate(s));
 }
 
 function pickLocatedLine(
@@ -257,7 +265,7 @@ function pickLocatedLine(
   clauseTitle: string,
   requirement?: string,
 ): { line: string; lineNumber: string } | null {
-  const body = stripGuidelineBoilerplate(clauseText, clauseNumber);
+  const body = sliceGuidelineSection(clauseText, clauseNumber);
   const located = locateGuidelineSource({
     rawText: body,
     clauseText: body,
@@ -312,19 +320,29 @@ export function resolveGuidelineRequirementForFinding(
 ): string {
   const clauseText = input.clauseText?.trim() || "";
   let rawReq = input.guidelineRequirement?.trim() || "";
+  const sectionBody =
+    clauseText.length >= 15 ? sliceGuidelineSection(clauseText, input.clauseNumber) : "";
 
   if (rawReq && clauseText.length >= 15 && !textSupportedByBody(clauseText, rawReq)) {
+    rawReq = "";
+  }
+  // Drop stored requirements that live outside the cited section (wrong early intro hits)
+  if (rawReq && sectionBody.length >= 40 && !textSupportedByBody(sectionBody, rawReq)) {
     rawReq = "";
   }
 
   const anchors = [
     rawReq,
+    input.clauseTitle?.trim()
+      ? `${input.clauseNumber?.trim() || ""} ${input.clauseTitle.trim()}`.trim()
+      : "",
+    input.clauseTitle,
     input.sopTextSnippet,
     input.evidenceFound,
     input.impactGap,
     input.mismatchExplanation,
     input.highlightedIssue,
-  ].filter((s): s is string => !!s?.trim() && s.trim().length >= 12);
+  ].filter((s): s is string => !!s?.trim() && s.trim().length >= 4 && !isGuidelineBoilerplate(s));
 
   if (clauseText.length >= 15 && anchors.length) {
     const docPhrase = resolveDocPhraseInDocument(clauseText, anchors, input.clauseNumber);
@@ -336,7 +354,8 @@ export function resolveGuidelineRequirementForFinding(
   if (
     rawReq.length >= 40 &&
     !isGuidelineBoilerplate(rawReq) &&
-    (!clauseText || isTextInGuideline(rawReq, clauseText))
+    (!clauseText || isTextInGuideline(rawReq, clauseText)) &&
+    (!sectionBody || textSupportedByBody(sectionBody, rawReq))
   ) {
     return finalizeRequirementText(compactRequirementText(rawReq) || rawReq.slice(0, 260));
   }
@@ -357,9 +376,15 @@ export function resolveGuidelineRequirementForFinding(
       return finalizeRequirementText(toCompactPoint(bodyPick.line, clauseText, rawReq, input.clauseNumber));
     }
 
-    const body = stripGuidelineBoilerplate(clauseText, input.clauseNumber);
-    const units = splitIntoUnits(body);
-    if (units[0]) return finalizeRequirementText(compactRequirementText(units[0]) || units[0].slice(0, 260));
+    // Cited section was located — use its first assessable sentence, not early-doc intro text
+    if (sectionBody.length >= 40) {
+      const units = splitIntoUnits(sectionBody);
+      const preferred =
+        units.find((u) => substantiveScore(u) >= 5 && REQUIREMENT_VERB_RE.test(u)) || units[0];
+      if (preferred) {
+        return finalizeRequirementText(compactRequirementText(preferred) || preferred.slice(0, 260));
+      }
+    }
   }
 
   return finalizeRequirementText(compactRequirementText(rawReq) || compactRequirementText(clauseText) || rawReq.slice(0, 260));
@@ -412,7 +437,7 @@ export function extractGuidelineClauseDisplay(input: GuidelineSourceInput): Guid
   if (clauseText.length >= 15 && impactAnchors.length) {
     const docPhrase = resolveDocPhraseInDocument(clauseText, impactAnchors, sectionNum);
     if (docPhrase?.searchPhrase && docPhrase.fullPoint) {
-      const body = stripGuidelineBoilerplate(clauseText, sectionNum);
+      const body = sliceGuidelineSection(clauseText, sectionNum);
       const idx = normalizeGuidelineText(body)
         .toLowerCase()
         .indexOf(normalizeGuidelineText(docPhrase.matchedUnit).slice(0, 40).toLowerCase());

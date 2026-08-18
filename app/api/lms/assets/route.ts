@@ -14,6 +14,7 @@ import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
 import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTrainingIgnore';
 import { getMcqApprovedMapForCodes, familyKeyForLmsCode } from '@/lib/lmsMcqApproval';
 import { batchTrainerExamUnlocked } from '@/lib/lmsTrainerGate';
+import { batchExamAttendanceUnlocked } from '@/lib/lmsAttendanceGate';
 import Employee from '@/models/Employee';
 
 export const runtime = 'nodejs';
@@ -39,6 +40,11 @@ export interface SopAssetFlags {
    * or a department trainer has completed this SOP.
    */
   trainerUnlocked: boolean;
+  /**
+   * True when a sitting date is assigned and the learner is marked present.
+   * False when the exam has no date yet, attendance is unfiled, or they were absent.
+   */
+  attendanceUnlocked: boolean;
 }
 
 // GET /api/lms/assets — per-assigned-SOP resource availability for the learner.
@@ -74,7 +80,7 @@ export async function GET() {
         );
         const codes = assignments.map((a) => a.sopCode).filter(Boolean);
 
-        const [contentMap, mcqApprovedMap, trainerUnlockedMap] = await Promise.all([
+        const [contentMap, mcqApprovedMap, trainerUnlockedMap, attendanceUnlockedMap] = await Promise.all([
           getJourneyContentBatch(codes),
           getMcqApprovedMapForCodes(codes),
           batchTrainerExamUnlocked(
@@ -85,6 +91,15 @@ export async function GET() {
               trainerDepartments: employee.trainerDepartments,
             },
             codes,
+          ),
+          batchExamAttendanceUnlocked(
+            {
+              _id: employee._id,
+              department: employee.department,
+              isTrainer: employee.isTrainer === true,
+              trainerDepartments: employee.trainerDepartments,
+            },
+            assignments.map((a) => ({ sopCode: a.sopCode, examDate: a.examDate })),
           ),
         ]);
 
@@ -123,6 +138,10 @@ export async function GET() {
               trainerUnlockedMap.get(code) === true
               || trainerUnlockedMap.get(code.toUpperCase()) === true
               || trainerUnlockedMap.get(fam) === true,
+            attendanceUnlocked:
+              attendanceUnlockedMap.get(code) === true
+              || attendanceUnlockedMap.get(code.toUpperCase()) === true
+              || attendanceUnlockedMap.get(fam) === true,
           };
         }
         return { assets };

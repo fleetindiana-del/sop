@@ -31,8 +31,14 @@ import {
   saveUploadedBuffer,
 } from "@/lib/upload";
 import { extractTextFromBuffer } from "@/lib/extractContent";
-import { extractSopContentMetadata } from "@/lib/sop-content-metadata";
+import {
+  extractSopContentMetadata,
+  isAnnexureFileName,
+  shouldSkipImportFileName,
+} from "@/lib/sop-content-metadata";
 import { parseRequiredAnnexuresFromContent } from "@/lib/sop-annexure-requirements";
+import { extractRefSopNoFromAnnexure } from "@/lib/annexure-parent-extract";
+import { linkAnnexureToParent } from "@/lib/sop-annexure";
 import { triggerMcqGenerationAsync } from "@/lib/mcq-generation";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { invalidateViewerUrlCache } from "@/lib/viewerHelper";
@@ -67,6 +73,7 @@ export type SopFileResult = {
   versionNum?: number;
   headerDateError?: boolean;
   headerDateErrors?: string[];
+  kind?: "main" | "annexure";
 };
 
 export async function checkImportDuplicate(opts: {
@@ -335,6 +342,84 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
     checksum,
     sopBaseId,
     versionNum,
+    kind: "main",
+  };
+}
+
+async function processAnnexureFileInput(input: SopFileInput): Promise<SopFileResult> {
+  const { buffer, fileName, relativePath } = input;
+  const fileType = detectFileType(fileName);
+  if (!fileType) {
+    return { file: fileName, success: false, error: "Unsupported file type", kind: "annexure" };
+  }
+
+  const content =
+    fileType === "docx" || fileType === "pdf"
+      ? await extractTextFromBuffer(buffer, fileType)
+      : "";
+  const refParent =
+    fileType === "docx"
+      ? await extractRefSopNoFromAnnexure({ content, buffer })
+      : undefined;
+  const meta = extractSopContentMetadata({ content, fileName, relativePath });
+  const parentIdentifier = refParent ?? meta.parentIdentifier;
+  if (!parentIdentifier) {
+    return {
+      file: fileName,
+      success: false,
+      kind: "annexure",
+      error:
+        "Could not resolve parent SOP — put the annexure in the SOP folder or include the parent code in the filename",
+    };
+  }
+
+  const parentHasRevision = /-\d+$/.test(parentIdentifier);
+  const linkResult = await linkAnnexureToParent({
+    buffer,
+    fileName,
+    relativePath,
+    parentIdentifier,
+    annexureLabel: meta.annexureLabel,
+    versionNum: parentHasRevision ? meta.versionNum : undefined,
+  });
+
+  if (linkResult.skipped) {
+    return {
+      file: fileName,
+      success: true,
+      skipped: true,
+      skipReason: "duplicate",
+      identifier: linkResult.parentIdentifier ?? parentIdentifier,
+      checksum: linkResult.checksum,
+      kind: "annexure",
+    };
+  }
+  if (!linkResult.success) {
+    return {
+      file: fileName,
+      success: false,
+      error: linkResult.error,
+      identifier: parentIdentifier,
+      kind: "annexure",
+    };
+  }
+
+  const parent = await SOP.findOne({
+    ...sopIdentifierMatchFilter(linkResult.parentIdentifier ?? parentIdentifier),
+    isObsolete: { $ne: true },
+  })
+    .select("_id identifier sopBaseId versionNum")
+    .lean();
+
+  return {
+    file: fileName,
+    success: true,
+    id: parent?._id ? String(parent._id) : undefined,
+    identifier: linkResult.parentIdentifier ?? parentIdentifier,
+    checksum: linkResult.checksum,
+    sopBaseId: parent?.sopBaseId,
+    versionNum: parent?.versionNum,
+    kind: "annexure",
   };
 }
 
@@ -369,40 +454,71 @@ export async function processSopUpload(formData: FormData) {
   const touchedFamilies = new Set<string>();
   const touchedIdentifiers = new Set<string>();
 
-  for (const [index, file] of files.entries()) {
+  const pairs = files.map((file, index) => ({
+    file,
+    relativePath: paths[index] || file.name,
+    annexure: isAnnexureFileName(file.name),
+  }));
+  // Main SOP/PDF records first so annexures in the same batch can link to them.
+  const ordered = [...pairs.filter((p) => !p.annexure), ...pairs.filter((p) => p.annexure)];
+
+  for (const [index, { file, relativePath, annexure }] of ordered.entries()) {
     try {
-      const relativePath = paths[index] || file.name;
+      if (shouldSkipImportFileName(file.name)) {
+        results.push({
+          file: file.name,
+          success: true,
+          skipped: true,
+          kind: annexure ? "annexure" : "main",
+        });
+        continue;
+      }
+
       const buffer = Buffer.from(await file.arrayBuffer());
-      const result = await processSopFileInput({
-        buffer,
-        fileName: file.name,
-        relativePath,
-        department: batchDepartment,
-        language,
-        identifier: identifierInput,
-        name: nameInput,
-        version: versionInput,
-        location,
-        generateMcq,
-      });
+      const result = annexure
+        ? await processAnnexureFileInput({
+            buffer,
+            fileName: file.name,
+            relativePath,
+            department: batchDepartment,
+            language,
+          })
+        : await processSopFileInput({
+            buffer,
+            fileName: file.name,
+            relativePath,
+            department: batchDepartment,
+            language,
+            identifier: identifierInput,
+            name: nameInput,
+            version: versionInput,
+            location,
+            generateMcq,
+          });
       results.push(result);
 
       if (result.success && !result.skipped && result.identifier) {
-        if (generateMcq) mcqIdentifiers.add(result.identifier);
+        if (generateMcq && result.kind !== "annexure") mcqIdentifiers.add(result.identifier);
         if (result.sopBaseId) touchedFamilies.add(result.sopBaseId);
         touchedIdentifiers.add(result.identifier);
         console.log(
-          `[sop-upload] ✓ (${index + 1}/${files.length}) ${result.identifier} → ok`,
+          `[sop-upload] ✓ (${index + 1}/${ordered.length}) ${result.identifier} → ok` +
+            (result.kind === "annexure" ? " (annexure)" : ""),
         );
       } else if (!result.success) {
         console.error(
-          `[sop-upload] ✗ (${index + 1}/${files.length}) ${file.name}: ${result.error}`,
+          `[sop-upload] ✗ (${index + 1}/${ordered.length}) ${file.name}: ${result.error}`,
         );
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Upload failed";
-      console.error(`[sop-upload] ✗ (${index + 1}/${files.length}) ${file.name}: ${message}`);
-      results.push({ file: file.name, success: false, error: message });
+      console.error(`[sop-upload] ✗ (${index + 1}/${ordered.length}) ${file.name}: ${message}`);
+      results.push({
+        file: file.name,
+        success: false,
+        error: message,
+        kind: annexure ? "annexure" : "main",
+      });
     }
   }
 

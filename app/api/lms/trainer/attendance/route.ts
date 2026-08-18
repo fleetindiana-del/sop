@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
   const from = parseDateOnly(String(params.get('from') || '')) || undefined;
   const to = parseDateOnly(String(params.get('to') || '')) || undefined;
   const department = String(params.get('department') || '').trim();
+  const limit = Number(params.get('limit')) || undefined;
 
   if (department && !deptMatchesTrainerScope(department, auth.trainer.trainerDepartments)) {
     return NextResponse.json(
@@ -63,6 +64,7 @@ export async function GET(req: NextRequest) {
       month,
       from,
       to,
+      limit,
     });
 
     const totals = sheets.reduce(

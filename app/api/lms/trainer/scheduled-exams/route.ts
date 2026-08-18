@@ -93,6 +93,10 @@ export async function POST(req: NextRequest) {
   const sopCode = stripVersion(String(body.sopCode || ''));
   const scheduledDate = parseDateOnly(String(body.scheduledDate || ''));
   const notes = String(body.notes || '').trim() || undefined;
+  const sitting = Number(body.sitting) === 2 || Number(body.sitting) === 3
+    ? (Number(body.sitting) as 2 | 3)
+    : 1;
+  const sitting1Date = parseDateOnly(String(body.sitting1Date || '')) || scheduledDate;
   // The trainer schedules *into a month*; the date is the deadline within it.
   // When the client sends both, the month/year drive where it lands so a
   // deliberate early/late deadline cannot silently move the assignment.
@@ -127,38 +131,49 @@ export async function POST(req: NextRequest) {
     const year = requestedYear || yearOfDate(scheduledDate);
 
     const result = await ScheduledExam.bulkWrite(
-      employees.map((e) => ({
-        updateOne: {
-          // Rescheduling within the same month updates the existing row so the
-          // unique (employee, SOP, month, year) index is never violated and the
-          // same employee can never appear twice for one exam in one month.
-          filter: {
-            employeeId: e.employeeId,
-            sopCode,
-            year,
-            month,
-            status: 'scheduled',
-          },
-          update: {
-            $set: {
-              trainerId: auth.trainer.employeeId,
-              trainerName: auth.trainer.name,
+      employees.map((e) => {
+        const dateField = sitting === 1 ? 'scheduledDate' : sitting === 2 ? 'scheduledDate2' : 'scheduledDate3';
+        return {
+          updateOne: {
+            // Rescheduling within the same month updates the existing row so the
+            // unique (employee, SOP, month, year) index is never violated and the
+            // same employee can never appear twice for one exam in one month.
+            filter: {
               employeeId: e.employeeId,
-              employeeName: e.name,
-              department: e.department,
-              designation: e.designation,
               sopCode,
-              sopName: resolved.exam.sopName,
-              scheduledDate,
-              month,
               year,
+              month,
               status: 'scheduled',
-              notes,
             },
+            update: {
+              $set: {
+                trainerId: auth.trainer.employeeId,
+                trainerName: auth.trainer.name,
+                employeeId: e.employeeId,
+                employeeName: e.name,
+                department: e.department,
+                designation: e.designation,
+                sopCode,
+                sopName: resolved.exam.sopName,
+                [dateField]: scheduledDate,
+                ...(sitting === 1 ? { scheduledDate, month, year } : {}),
+                status: 'scheduled',
+                notes,
+              },
+              ...(sitting === 1
+                ? {}
+                : {
+                    $setOnInsert: {
+                      scheduledDate: sitting1Date ?? scheduledDate,
+                      month,
+                      year,
+                    },
+                  }),
+            },
+            upsert: true,
           },
-          upsert: true,
-        },
-      })),
+        };
+      }),
     );
 
     bustTrainerScheduleCaches();
@@ -184,8 +199,8 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * PATCH /api/lms/trainer/scheduled-exams — reschedule one exam.
- * Body: { id, scheduledDate?: 'YYYY-MM-DD', notes? }
+ * PATCH /api/lms/trainer/scheduled-exams — reschedule one exam sitting.
+ * Body: { id, scheduledDate?: 'YYYY-MM-DD', sitting?: 1|2|3, notes? }
  */
 export async function PATCH(req: NextRequest) {
   const auth = await requireLmsTrainer();
@@ -211,9 +226,18 @@ export async function PATCH(req: NextRequest) {
       if (!next) {
         return NextResponse.json({ error: 'scheduledDate must be YYYY-MM-DD' }, { status: 400 });
       }
-      doc.scheduledDate = next;
-      doc.month = monthOfDate(next);
-      doc.year = yearOfDate(next);
+      const sitting = Number(body.sitting) === 2 || Number(body.sitting) === 3
+        ? (Number(body.sitting) as 2 | 3)
+        : 1;
+      if (sitting === 2) {
+        doc.scheduledDate2 = next;
+      } else if (sitting === 3) {
+        doc.scheduledDate3 = next;
+      } else {
+        doc.scheduledDate = next;
+        doc.month = monthOfDate(next);
+        doc.year = yearOfDate(next);
+      }
     }
     if (body.notes !== undefined) {
       doc.notes = String(body.notes || '').trim() || undefined;

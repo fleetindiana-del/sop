@@ -165,7 +165,8 @@ function mcqCountForCode(
   const re = sopFamilyIdentifierRegex(code);
   let total = 0;
   for (const bank of bankDocs) {
-    if ((bank.language || 'English') !== language) continue;
+    const bankLang = bank.language || 'English';
+    if (bankLang !== language) continue;
     if (re.test(String(bank.sopIdentifier || ''))) total += bank.usableQuestions || 0;
   }
   return total;
@@ -221,10 +222,22 @@ export async function getJourneyContentBatch(
       {
         $match: {
           isObsolete: { $ne: true },
-          language: { $in: ['English', 'Gujarati'] },
-          $or: missing.map((code) => ({
-            sopIdentifier: { $regex: sopFamilyIdentifierRegex(code) },
-          })),
+          // Mirror /api/lms/quiz: missing language = English masters.
+          $and: [
+            {
+              $or: [
+                { language: { $in: ['English', 'Gujarati'] } },
+                { language: { $exists: false } },
+                { language: null },
+                { language: '' },
+              ],
+            },
+            {
+              $or: missing.map((code) => ({
+                sopIdentifier: { $regex: sopFamilyIdentifierRegex(code) },
+              })),
+            },
+          ],
         },
       },
       {

@@ -21,7 +21,7 @@ function deptMatches(a: string, b: string): boolean {
 /**
  * Non-trainer employees may sit an SOP exam only after at least one active
  * trainer who covers their department has completed training for that SOP.
- * Trainers covering the department may always take the exam (they unlock others).
+ * Designated trainers may always take the exam (they unlock others).
  */
 export async function getTrainerExamEligibility(opts: {
   employeeId: string;
@@ -30,6 +30,9 @@ export async function getTrainerExamEligibility(opts: {
   trainerDepartments?: string[] | null;
   sopCode: string;
 }): Promise<TrainerExamGateResult> {
+  // Designated trainers may take the exam without waiting — they unlock others.
+  if (opts.isTrainer === true) return { allowed: true };
+
   const dept = normalizeEmployeeDepartment(opts.department);
   if (!dept) {
     return {
@@ -37,16 +40,6 @@ export async function getTrainerExamEligibility(opts: {
       code: 'no_trainer',
       reason: 'Your department is not set. Contact your administrator.',
     };
-  }
-
-  // Designated trainers for this department may take the exam without waiting.
-  if (opts.isTrainer === true) {
-    const covers = resolveTrainerDepartments({
-      department: opts.department || undefined,
-      trainerDepartments: opts.trainerDepartments,
-      isTrainer: true,
-    }).some((d) => deptMatches(d, dept));
-    if (covers) return { allowed: true };
   }
 
   const trainers = await Employee.find({ isActive: true, isTrainer: true })
@@ -114,26 +107,19 @@ export async function batchTrainerExamUnlocked(
   const unique = [...new Set(sopCodes.map((c) => String(c || '').trim()).filter(Boolean))];
   if (unique.length === 0) return out;
 
+  if (employee.isTrainer === true) {
+    for (const c of unique) {
+      out.set(c, true);
+      const fam = (baseIdentifierFromIdentifier(c) || c).toUpperCase();
+      out.set(fam, true);
+    }
+    return out;
+  }
+
   const dept = normalizeEmployeeDepartment(employee.department);
   if (!dept) {
     for (const c of unique) out.set(c, false);
     return out;
-  }
-
-  if (employee.isTrainer === true) {
-    const covers = resolveTrainerDepartments({
-      department: employee.department || undefined,
-      trainerDepartments: employee.trainerDepartments,
-      isTrainer: true,
-    }).some((d) => deptMatches(d, dept));
-    if (covers) {
-      for (const c of unique) {
-        out.set(c, true);
-        const fam = (baseIdentifierFromIdentifier(c) || c).toUpperCase();
-        out.set(fam, true);
-      }
-      return out;
-    }
   }
 
   const trainers = await Employee.find({ isActive: true, isTrainer: true })

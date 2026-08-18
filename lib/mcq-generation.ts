@@ -1136,6 +1136,23 @@ function representativesByLanguage(sops: ISOP[]): Map<"English" | "Gujarati", IS
   return byLang;
 }
 
+/**
+ * Gujarati MCQs are language-converted versions of the English question set.
+ * When a Gujarati SOP file is missing or unreadable, fall back to the readable
+ * English SOP text instead of failing the Gujarati run outright.
+ */
+function applyGujaratiSourceFallback(reps: Map<"English" | "Gujarati", ISOP>): boolean {
+  const english = reps.get("English");
+  const gujarati = reps.get("Gujarati");
+  if (!english) return false;
+  if (scoreSopRecordForMcq(english) < 50) return false;
+  if (!gujarati || scoreSopRecordForMcq(gujarati) < 50) {
+    reps.set("Gujarati", english);
+    return true;
+  }
+  return false;
+}
+
 /** Resolve generate-vs-regenerate (or honour an explicit "continue"), reset the
  *  progress job to "queued", and kick off the background run. The HTTP route
  *  awaits only this (fast) part; the client polls for live progress. */
@@ -1253,6 +1270,7 @@ export async function runMcqGeneration(
   }
 
   const reps = representativesByLanguage(sops);
+  const gujaratiUsingEnglishSource = applyGujaratiSourceFallback(reps);
 
   // Fold in any linked annexure files (extracted live, same as compliance audits
   // do via buildAnnexureSupplement) so clause parsing + prompts see annexure
@@ -1262,7 +1280,7 @@ export async function runMcqGeneration(
   // gets rebuilt to match, exactly like a normal content change would.
   const annexureResult = await buildAnnexureSupplementDetailed(sops);
   if (annexureResult.text) {
-    for (const [, sop] of reps) {
+    for (const sop of new Set(reps.values())) {
       sop.content = `${sop.content ?? ""}\n\n${annexureResult.text}`;
     }
   }
@@ -1355,6 +1373,12 @@ export async function runMcqGeneration(
         ? `Annexures: including ${annexureUsage.includedCount} of ${annexureUsage.linkedCount} linked file(s)`
         : `Annexures: ${annexureUsage.linkedCount} linked but none readable — generating from the main SOP content only`,
   );
+  if (gujaratiUsingEnglishSource) {
+    await pushLog(
+      identifier,
+      "Gujarati source text unavailable — using readable English SOP text to generate Gujarati MCQs",
+    );
+  }
   if (effectiveProvider === "claude" && !anthropicMcqApiAvailable()) {
     await pushLog(
       identifier,

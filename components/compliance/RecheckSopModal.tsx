@@ -49,10 +49,18 @@ function extractSectionId(ref?: string): string {
   return m?.[1] ?? '';
 }
 
+function sectionHeadingLabel(section?: string): string {
+  const raw = (section || '').trim();
+  const lower = raw.toLowerCase();
+  if (!raw || lower === 'not found' || lower === 'n/a' || lower === 'general') return 'General';
+  const id = extractSectionId(raw);
+  return id || raw;
+}
+
 function compareSectionIds(a?: string, b?: string): number {
   const parse = (v?: string): number[] => {
-    const id = extractSectionId(v);
-    if (!id) return [];
+    const id = sectionHeadingLabel(v);
+    if (!id || id === 'General' || !/^\d/.test(id)) return [];
     return id.split('.').map((p) => {
       const n = Number(p);
       return Number.isFinite(n) ? n : -1;
@@ -62,7 +70,7 @@ function compareSectionIds(a?: string, b?: string): number {
   const pb = parse(b);
   if (pa.length === 0 || pb.length === 0) {
     if (pa.length !== pb.length) return pa.length === 0 ? 1 : -1;
-    return (a || '').localeCompare(b || '');
+    return sectionHeadingLabel(a).localeCompare(sectionHeadingLabel(b));
   }
   const len = Math.max(pa.length, pb.length);
   for (let i = 0; i < len; i++) {
@@ -73,7 +81,12 @@ function compareSectionIds(a?: string, b?: string): number {
   return (a || '').localeCompare(b || '');
 }
 
-/** Section used for display/sort: revised SOP location first, else original finding. */
+/** Original SOP section on the finding — primary key for section-wise order. */
+function originalSectionRef(point: RunPoint): string {
+  return point.finding?.sopSectionAffected?.trim() || '';
+}
+
+/** Section used for revised-SOP display: revised location first, else original finding. */
 function pointSectionRef(point: RunPoint): string {
   if (point.revisedSopSection?.trim()) return point.revisedSopSection.trim();
   const revisedText =
@@ -82,7 +95,15 @@ function pointSectionRef(point: RunPoint): string {
       : point.revisedExcerpt || point.evidence || '';
   const fromExcerpt = extractSectionId(revisedText);
   if (fromExcerpt) return fromExcerpt;
-  return point.finding?.sopSectionAffected?.trim() || '';
+  return originalSectionRef(point);
+}
+
+function compareRecheckPoints(a: { point: RunPoint; index: number }, b: { point: RunPoint; index: number }): number {
+  const byOriginal = compareSectionIds(originalSectionRef(a.point), originalSectionRef(b.point));
+  if (byOriginal !== 0) return byOriginal;
+  const byRevised = compareSectionIds(pointSectionRef(a.point), pointSectionRef(b.point));
+  if (byRevised !== 0) return byRevised;
+  return a.index - b.index;
 }
 
 interface RunIssue {
@@ -311,7 +332,7 @@ function RunView({
   const showBanner = !hideBanner || forceExpandCards;
   const showChrome = !compact || forceExpandCards;
   // Keep the original index so ignore toggles still patch the right row.
-  // Default order: SOP section ascending (1, 1.3, 2, …).
+  // Order: original SOP section ascending (1, 1.3, 2, 4.1.14, …).
   const visiblePoints = run.results
     .map((r, i) => ({ point: r, index: i }))
     .filter(
@@ -320,10 +341,7 @@ function RunView({
         matchesSeverityFilter(point, severityFilter) &&
         matchesLevelFilter(point, levelFilter),
     )
-    .sort((a, b) => {
-      const bySection = compareSectionIds(pointSectionRef(a.point), pointSectionRef(b.point));
-      return bySection !== 0 ? bySection : a.index - b.index;
-    });
+    .sort(compareRecheckPoints);
 
   return (
     <div className="space-y-4 select-text bg-white p-1">
@@ -477,8 +495,26 @@ function RunView({
               No points match the current filters.
             </p>
           )}
-          {visiblePoints.map(({ point: r, index: i }) => (
-            <div key={`${i}-${forceExpandCards ? 'export' : 'live'}`} className={r.ignored ? 'opacity-45' : ''}>
+          {visiblePoints.map(({ point: r, index: i }, displayIdx) => {
+            const sectionLabel = sectionHeadingLabel(originalSectionRef(r));
+            const prevLabel =
+              displayIdx > 0
+                ? sectionHeadingLabel(originalSectionRef(visiblePoints[displayIdx - 1].point))
+                : null;
+            const showSectionHeader = sectionLabel !== prevLabel;
+            return (
+            <div key={`${i}-${forceExpandCards ? 'export' : 'live'}`} className="space-y-2">
+              {showSectionHeader && (
+                <div className="sticky top-0 z-[1] -mx-0.5 flex items-center gap-2 rounded-lg border border-purple-100 bg-purple-50/95 px-2.5 py-1.5 backdrop-blur">
+                  <span className="text-[10px] font-black uppercase tracking-wide text-purple-700">
+                    Section {sectionLabel}
+                  </span>
+                  <span className="truncate text-[10px] text-purple-600/80">
+                    {originalSectionRef(r).replace(/^\s*\d+(?:\.\d+)*\s*[-–:]?\s*/, '') || ''}
+                  </span>
+                </div>
+              )}
+            <div className={r.ignored ? 'opacity-45' : ''}>
               <div className="flex items-center gap-2 mb-1">
                 <span
                   className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
@@ -540,7 +576,9 @@ function RunView({
                 }}
               />
             </div>
-          ))}
+            </div>
+            );
+          })}
         </div>
       )}
 

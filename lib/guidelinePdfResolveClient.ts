@@ -1,4 +1,8 @@
-import { isGuidelineBoilerplate } from '@/lib/guidelineBoilerplate';
+import {
+  findClauseSectionStart,
+  isGuidelineBoilerplate,
+  sliceGuidelineSection,
+} from '@/lib/guidelineBoilerplate';
 import {
   isSmartSearchTerm,
   resolveDocPhraseInDocument,
@@ -35,16 +39,17 @@ export function resolveSearchPhraseFromText(
   searchAnchors: string[] = [],
   clauseNumber?: string,
 ): { query: string; point: string } {
+  const scoped = sliceGuidelineSection(pdfText, clauseNumber);
   const anchors = [searchPhrase.trim(), ...searchAnchors.map((a) => a.trim())].filter(Boolean);
 
   let query = searchPhrase.trim();
   let point = '';
 
-  const docPhrase = resolveDocPhraseInDocument(pdfText, anchors, clauseNumber);
+  const docPhrase = resolveDocPhraseInDocument(scoped, anchors, clauseNumber);
   if (docPhrase?.searchPhrase) {
     query = docPhrase.searchPhrase;
     point = docPhrase.fullPoint;
-  } else if (query && !textSupportedByBody(pdfText, query)) {
+  } else if (query && !textSupportedByBody(scoped, query) && !textSupportedByBody(pdfText, query)) {
     query = '';
   }
 
@@ -103,6 +108,7 @@ async function resolvePhraseStreaming(
   const anchors = [searchPhrase.trim(), ...searchAnchors.map((a) => a.trim())].filter(Boolean);
   let accumulated = '';
   let best: { query: string; point: string } | null = null;
+  const clauseNum = clauseNumber?.replace(/[^\d.]/g, "") ?? "";
 
   for (let p = 1; p <= pdf.numPages; p++) {
     if (signal?.aborted) break;
@@ -112,6 +118,23 @@ async function resolvePhraseStreaming(
     accumulated += (accumulated ? '\n\n' : '') + pageText;
 
     if (accumulated.length < 120) continue;
+
+    // When a clause is cited, wait until that section appears — do not lock onto
+    // early intro pages that share generic words (e.g. "intermediate", "API").
+    if (clauseNum) {
+      const sectionStart = findClauseSectionStart(accumulated, clauseNum);
+      if (sectionStart < 0) continue;
+      const section = sliceGuidelineSection(accumulated, clauseNum);
+      if (section.length < 40) continue;
+      const resolved = resolveSearchPhraseFromText(section, searchPhrase, searchAnchors, clauseNum);
+      if (resolved.query && textSupportedByBody(section, resolved.query)) {
+        const candidate = resolved.point || resolved.query;
+        if (isGuidelineBoilerplate(candidate)) continue;
+        best = resolved;
+        if (resolved.point) break;
+      }
+      continue;
+    }
 
     const resolved = resolveSearchPhraseFromText(accumulated, searchPhrase, searchAnchors, clauseNumber);
     if (resolved.query && textSupportedByBody(accumulated, resolved.query)) {

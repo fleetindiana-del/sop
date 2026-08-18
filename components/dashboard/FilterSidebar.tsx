@@ -161,6 +161,8 @@ export function FilterSidebar({ sops }: FilterSidebarProps) {
               "expiryDate",
               "language",
               "complianceScore",
+              "complianceDone",
+              "complianceBypassed",
               "uploadedAt",
             ].map((s) => (
               <option key={s} value={s}>

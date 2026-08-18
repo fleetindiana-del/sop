@@ -3,7 +3,8 @@ import {
   isGuidelineBoilerplate,
   normalizeGuidelineText,
   REQUIREMENT_VERB_RE,
-  stripGuidelineBoilerplate,
+  sliceGuidelineSection,
+  splitGuidelineSentences,
   substantiveScore,
 } from "@/lib/guidelineBoilerplate";
 
@@ -21,8 +22,7 @@ function splitIntoUnits(text: string): string[] {
   for (const para of text.split(/\n+/)) {
     const trimmed = normalizeGuidelineText(para);
     if (!trimmed || isGuidelineBoilerplate(trimmed)) continue;
-    const sentences = trimmed.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [trimmed];
-    for (const s of sentences) add(s);
+    for (const s of splitGuidelineSentences(trimmed)) add(s);
     if (trimmed.length >= 40 && trimmed.length <= 400) add(trimmed);
   }
 
@@ -219,37 +219,53 @@ export interface DocPhraseResult {
  * Find the document sentence related to the compliance impact and derive a PDF-searchable phrase from it.
  */
 export function resolveDocPhraseForImpact(input: DocPhraseInput): DocPhraseResult | null {
-  const body = stripGuidelineBoilerplate(input.clauseText, input.clauseNumber);
+  const body = sliceGuidelineSection(input.clauseText, input.clauseNumber);
   if (body.length < 20) return null;
 
   const anchors = input.anchors
     .map((a) => a.trim())
-    .filter((a) => a.length >= 12 && !isGuidelineBoilerplate(a));
+    .filter((a) => a.length >= 4 && !isGuidelineBoilerplate(a));
   if (!anchors.length) return null;
 
   const units = splitIntoUnits(body);
   if (!units.length) return null;
 
+  const clauseNum = input.clauseNumber?.replace(/[^\d.]/g, "") ?? "";
   let bestUnit: string | null = null;
   let bestScore = -1;
 
   for (const unit of units) {
     if (!phraseInBody(body, unit.slice(0, Math.min(40, unit.length)))) continue;
     let score = substantiveScore(unit);
+    if (clauseNum) {
+      // Prefer sentences that cite this section or its numbered paragraphs (8.2 / 8.20)
+      if (new RegExp(`\\b${clauseNum.replace(/\./g, "\\.")}(?!\\d)\\b`).test(unit)) score += 14;
+      if (new RegExp(`\\b${clauseNum.replace(/\./g, "\\.")}\\d+\\b`).test(unit)) score += 10;
+    }
     for (const anchor of anchors) {
       score += anchorOverlapScore(unit, anchor) * 18;
-      const keywords = anchor.toLowerCase().split(/\W+/).filter((w) => w.length > 5);
+      // Include short topic words from titles ("time", "limit") — len>5 was too strict
+      const keywords = anchor.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
       for (const kw of keywords) {
         if (unit.toLowerCase().includes(kw)) score += 2.5;
       }
     }
+    // Prefer earlier paragraphs inside a scoped section when scores are close
+    const pos = body.toLowerCase().indexOf(unit.slice(0, 32).toLowerCase());
+    if (pos >= 0 && pos < 200) score += 3;
     if (score > bestScore) {
       bestScore = score;
       bestUnit = unit;
     }
   }
 
-  if (!bestUnit || bestScore < 3) return null;
+  if (!bestUnit || bestScore < 3) {
+    // Scoped section with weak anchor overlap — still return the primary requirement sentence
+    const fallback =
+      units.find((u) => substantiveScore(u) >= 5 && REQUIREMENT_VERB_RE.test(u)) || units[0];
+    if (!fallback) return null;
+    bestUnit = fallback;
+  }
 
   const fullPoint = compactRequirementText(bestUnit) || bestUnit.slice(0, 260);
   const searchPhrase = extractVerbatimSearchWindow(body, bestUnit);
