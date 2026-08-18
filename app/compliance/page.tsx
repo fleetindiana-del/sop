@@ -17,6 +17,7 @@ import {
 import dynamic from 'next/dynamic';
 import { exportComplianceReportToPdf } from '@/lib/complianceReportPdf';
 import { PendingRunRequests } from '@/components/compliance/PendingRunRequests';
+import { ComplianceModuleNav } from '@/components/compliance/ComplianceModuleNav';
 
 const FinalSopModal = dynamic(() => import('@/components/compliance/FinalSopModal'), { ssr: false });
 const SopSourcePreviewModal = dynamic(() => import('@/components/compliance/SopSourcePreviewModal'), { ssr: false });
@@ -2011,6 +2012,9 @@ export default function ComplianceEnginePage() {
       </header>
 
       <div className="max-w-7xl mx-auto px-6 pt-3 pb-6">
+        <div className="mb-4">
+          <ComplianceModuleNav />
+        </div>
         {selectedProvider === 'claude' && claudeStatus && !claudeStatus.loading && !claudeStatus.ok && (
           <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             Claude is not connected. Run <code className="rounded bg-red-100 px-1">claude auth login</code> in a terminal, then refresh.

@@ -239,9 +239,13 @@ function parseRetryDelayMs(error: unknown, attempt: number, complianceMode = fal
   return 10_000 + attempt * 4_000;
 }
 
+type GeminiUserContent =
+  | string
+  | Array<string | { text: string } | { inlineData: { mimeType: string; data: string } }>;
+
 async function generateWithModel(
   model: GenerativeModel,
-  user: string,
+  user: GeminiUserContent,
   modelName: string,
   maxAttempts = 8,
   complianceMode = false,
@@ -443,6 +447,47 @@ export async function generateGeminiComplianceJson<T>(
       true,
     ),
   );
+}
+
+export type GeminiInlineImage = {
+  mimeType: string;
+  data: string;
+};
+
+/**
+ * Multimodal JSON generation (label images / PDFs). Uses the same free-tier
+ * chain and quota queue as compliance so vision calls don't stampede the key.
+ */
+export async function generateGeminiVisionJson<T>(
+  system: string,
+  userText: string,
+  images: GeminiInlineImage[],
+): Promise<T> {
+  const parts: GeminiUserContent = [
+    { text: userText },
+    ...images.map((img) => ({
+      inlineData: { mimeType: img.mimeType, data: img.data },
+    })),
+  ];
+
+  return enqueueComplianceCall(async () => {
+    let lastError: unknown;
+    const chain = getComplianceModelChain();
+    for (const modelName of chain) {
+      try {
+        const model = buildModel(system, modelName, true, 32768);
+        const text = await generateWithModel(model, parts, modelName, 3, true, true);
+        return parseJsonFromText<T>(text, "label-vision");
+      } catch (error) {
+        lastError = error;
+        if (isGeminiFreeTier() && (isRateLimitError(error) || is503Error(error))) {
+          throw error;
+        }
+        console.warn(`[label-vision] ${modelName} failed — ${errorMessage(error).slice(0, 180)}`);
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(errorMessage(lastError));
+  });
 }
 
 export async function* streamGeminiComplianceAnalysis(

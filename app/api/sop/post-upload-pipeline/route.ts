@@ -6,6 +6,7 @@ import {
   resolveSopIdsForIdentifiers,
   triggerComplianceV3Async,
 } from "@/lib/start-compliance-v3-async";
+import { getExistingComplianceScore } from "@/lib/compliance-score-lookup";
 
 const CODEX_UNAVAILABLE_MESSAGE =
   "No Codex available. Please use your local computer where Codex is available and run MCQ generation and compliance manually.";
@@ -69,7 +70,16 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  const complianceSkipped: string[] = [];
   for (const { sopId, identifier } of resolved) {
+    const existing = await getExistingComplianceScore(sopId, identifier);
+    if (existing && existing.score >= 8 && !existing.bypassed) {
+      console.log(
+        `[post-upload-pipeline] compliance skipped for ${identifier} — existing score ${existing.score}/10`,
+      );
+      complianceSkipped.push(identifier);
+      continue;
+    }
     triggerComplianceV3Async({
       sopId,
       provider: "codex",
@@ -90,6 +100,7 @@ export async function POST(request: NextRequest) {
       started: resolved.map((r) => r.identifier),
       mcq,
       compliance: "started",
+      complianceSkipped,
     },
     { status: 202 },
   );

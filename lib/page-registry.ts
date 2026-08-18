@@ -89,6 +89,14 @@ export const APP_PAGES: AppPage[] = [
     alwaysAllowed: true,
   },
   {
+    key: "nutra-label",
+    label: "Nutra Label Compliance",
+    prefix: "/compliance/label",
+    group: "Compliance",
+    description: "Public FSSAI nutraceutical label checker (no login)",
+    alwaysAllowed: true,
+  },
+  {
     key: "compliance",
     label: "Compliance",
     prefix: "/compliance",

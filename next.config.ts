@@ -19,6 +19,7 @@ const nextConfig: NextConfig = {
     serverActions: {
       bodySizeLimit: "50mb",
     },
+    proxyClientMaxBodySize: "25mb",
     // Fewer workers during static generation — this repo has large on-disk SOP trees.
     cpus: 4,
   },

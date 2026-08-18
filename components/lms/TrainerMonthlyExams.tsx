@@ -545,6 +545,7 @@ export function TrainerMonthlyExams({
     subtitle: string;
     rows: MonthlyExamRow[];
     showEmployee: boolean;
+    groupBy?: 'month' | 'sop' | 'employee';
   } | null>(null);
   const [sopDateEdit, setSopDateEdit] = useState<{
     sop: SopLineItem;
@@ -939,6 +940,7 @@ export function TrainerMonthlyExams({
       subtitle: `${live.length} unique SOP${live.length === 1 ? '' : 's'} · ${detailRows.length} assignment row${detailRows.length === 1 ? '' : 's'}`,
       rows: detailRows,
       showEmployee: true,
+      groupBy: 'sop',
     });
   };
 
@@ -961,6 +963,7 @@ export function TrainerMonthlyExams({
       subtitle: `${live.length} unique SOP${live.length === 1 ? '' : 's'} · ${detailRows.length} row${detailRows.length === 1 ? '' : 's'} · ${selectedMonthLabel}`,
       rows: detailRows,
       showEmployee: false,
+      groupBy: 'sop',
     });
   };
 
@@ -1023,6 +1026,7 @@ export function TrainerMonthlyExams({
       subtitle: `${uniqueCount} unique employee${uniqueCount === 1 ? '' : 's'} · ${detailRows.length} row${detailRows.length === 1 ? '' : 's'} · ${selectedMonthLabel}`,
       rows: detailRows,
       showEmployee: true,
+      groupBy: 'employee',
     });
   };
 
@@ -1415,57 +1419,7 @@ export function TrainerMonthlyExams({
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-52 flex-1 max-w-sm">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search employee or exam…"
-            className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-8 pr-8 text-xs focus:border-purple-300 focus:outline-none"
-          />
-          {search && (
-            <button
-              type="button"
-              onClick={() => setSearch('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-600"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-
-        <FilterSelect value={designation} onChange={setDesignation} options={data?.filters.designations ?? []} allLabel="All designations" />
-        <div className="relative">
-          <select
-            value={examFilter}
-            onChange={(e) => setExamFilter(e.target.value)}
-            className="max-w-[16rem] appearance-none truncate rounded-lg border border-gray-200 bg-white py-2 pl-3 pr-7 text-xs font-medium text-gray-600"
-          >
-            <option value="All">All exams</option>
-            {(data?.filters.exams ?? []).map((e) => (
-              <option key={e.sopCode} value={e.sopCode}>
-                {e.sopCode} — {e.sopName}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-        </div>
-        <div className="relative">
-          <select
-            value={String(year)}
-            onChange={(e) => setYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-            className="appearance-none rounded-lg border border-gray-200 bg-white py-2 pl-3 pr-7 text-xs font-medium text-gray-600"
-          >
-            <option value="all">All years</option>
-            {(data?.filters.years ?? []).map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-        </div>
-      </div>
+      {/* Filters removed — tables below use their own inline filters */}
 
       {loading && !data && (
         <div className="flex justify-center py-20">
@@ -1488,6 +1442,7 @@ export function TrainerMonthlyExams({
           subtitle={sopPopup.subtitle}
           rows={sopPopup.rows}
           showEmployee={sopPopup.showEmployee}
+          groupBy={sopPopup.groupBy}
           catalog={mcqByCode}
           onCancel={cancelSchedule}
           busyId={busyId}
@@ -1941,6 +1896,7 @@ type SopSortKey =
   | 'pdf'
   | 'video'
   | 'emps'
+  | 'completed'
   | 'pending'
   | 'sched1'
   | 'unsched1'
@@ -2013,6 +1969,8 @@ function sopSortKeys(sop: SopLineItem, key: SopSortKey): { nums: number[]; text:
       return { nums: [], text: sop.department || '' };
     case 'emps':
       return { nums: [sop.uniqueTotal, sop.uniqueRemaining], text: code };
+    case 'completed':
+      return { nums: [sop.uniqueCompleted, sop.uniqueRemaining], text: code };
     case 'pending':
       return { nums: [sop.uniqueRemaining, sop.uniqueTotal], text: code };
     case 'mcq':
@@ -2150,6 +2108,7 @@ function SopTableHeader({
         <th className={SOP_TH}><SopSortBtn label="PDF" sortKey="pdf" sort={sort} onSort={onSort} /></th>
         <th className={SOP_TH}><SopSortBtn label="Video" sortKey="video" sort={sort} onSort={onSort} /></th>
         <th className={SOP_TH}><SopSortBtn label="Tot emp" sortKey="emps" sort={sort} onSort={onSort} title="Sort by total employees" /></th>
+        <th className={SOP_TH}><SopSortBtn label="Completed" sortKey="completed" sort={sort} onSort={onSort} title="Sort by completed employees" /></th>
         <th className={SOP_TH}><SopSortBtn label="Pending" sortKey="pending" sort={sort} onSort={onSort} title="Sort by pending employees" /></th>
         <th className={SOP_TH}><SopSortBtn label="Sch 1" sortKey="sched1" sort={sort} onSort={onSort} /></th>
         <th className={SOP_TH}><SopSortBtn label="Unsch 1" sortKey="unsched1" sort={sort} onSort={onSort} /></th>
@@ -2406,6 +2365,15 @@ function SopLineRow({
       <td className={SOP_TD}>
         <SolidPill tone="green" title="Total assigned employees" onClick={() => onOpen('total')}>
           {sop.uniqueTotal}
+        </SolidPill>
+      </td>
+      <td className={SOP_TD}>
+        <SolidPill
+          tone="green"
+          title="Employees who have completed this SOP exam"
+          onClick={() => onOpen('completed')}
+        >
+          {sop.uniqueCompleted}
         </SolidPill>
       </td>
       <td className={SOP_TD}>
@@ -3140,11 +3108,148 @@ function SopDateAssignDialog({
   );
 }
 
+function groupRowsByMonth(rows: MonthlyExamRow[]) {
+  const map = new Map<string, MonthlyExamRow[]>();
+  for (const r of rows) {
+    const key = `${MONTHS_FULL[r.month - 1]} ${r.year}`;
+    const list = map.get(key) ?? [];
+    list.push(r);
+    map.set(key, list);
+  }
+  return map;
+}
+
+function groupRowsBySop(rows: MonthlyExamRow[]) {
+  const map = new Map<string, { label: string; rows: MonthlyExamRow[] }>();
+  for (const r of rows) {
+    const code = r.sopCode.trim().toUpperCase();
+    const entry = map.get(code) ?? { label: `${r.sopCode} — ${r.sopName}`, rows: [] };
+    entry.rows.push(r);
+    map.set(code, entry);
+  }
+  return map;
+}
+
+function groupRowsByEmployee(rows: MonthlyExamRow[]) {
+  const map = new Map<string, MonthlyExamRow[]>();
+  for (const r of rows) {
+    const list = map.get(r.employeeId) ?? [];
+    list.push(r);
+    map.set(r.employeeId, list);
+  }
+  return map;
+}
+
+function SopWiseSummaryTable({ rows }: { rows: MonthlyExamRow[] }) {
+  const groups = groupRowsBySop(rows);
+  const sorted = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  return (
+    <div className="overflow-hidden rounded-xl border border-gray-200">
+      <div className="max-h-[min(75vh,44rem)] overflow-auto">
+        <table className="w-full min-w-[700px] text-left text-xs">
+          <thead className="sticky top-0 z-10 border-b border-gray-100 bg-gray-50">
+            <tr className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 w-8">#</th>
+              <th className="px-3 py-2">SOP Code</th>
+              <th className="px-3 py-2">Training / SOP Name</th>
+              <th className="px-3 py-2 text-center">Employees</th>
+              <th className="px-3 py-2 text-center">Completed</th>
+              <th className="px-3 py-2 text-center">Remaining</th>
+              <th className="px-3 py-2 text-center">Progress</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {sorted.map(([code, { label, rows: gRows }], i) => {
+              const uniqueEmployees = new Set(gRows.map((r) => r.employeeId)).size;
+              const done = new Set(gRows.filter((r) => r.status === 'completed').map((r) => r.employeeId)).size;
+              const remaining = uniqueEmployees - done;
+              const pct = uniqueEmployees > 0 ? Math.round((done / uniqueEmployees) * 100) : 0;
+              return (
+                <tr key={code} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/60'}>
+                  <td className="px-3 py-2 text-[10px] font-bold text-gray-500 tabular-nums">{i + 1}</td>
+                  <td className="px-3 py-2 font-mono text-[11px] font-bold text-purple-700 whitespace-nowrap">{code}</td>
+                  <td className="px-3 py-2 text-gray-800 max-w-[20rem]">
+                    <span className="line-clamp-2 text-[11px] font-medium" title={label}>{gRows[0].sopName}</span>
+                  </td>
+                  <td className="px-3 py-2 text-center font-bold text-gray-900 tabular-nums">{uniqueEmployees}</td>
+                  <td className="px-3 py-2 text-center font-bold text-emerald-700 tabular-nums">{done}</td>
+                  <td className="px-3 py-2 text-center font-bold text-red-600 tabular-nums">{remaining}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-gray-200">
+                        <div className="h-full rounded-full bg-purple-500" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-8 text-right text-[10px] tabular-nums text-gray-500">{pct}%</span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function EmployeeWiseSummaryTable({ rows }: { rows: MonthlyExamRow[] }) {
+  const groups = groupRowsByEmployee(rows);
+  const sorted = [...groups.entries()].sort((a, b) => a[1][0].employeeName.localeCompare(b[1][0].employeeName));
+  return (
+    <div className="overflow-hidden rounded-xl border border-gray-200">
+      <div className="max-h-[min(75vh,44rem)] overflow-auto">
+        <table className="w-full min-w-[600px] text-left text-xs">
+          <thead className="sticky top-0 z-10 border-b border-gray-100 bg-gray-50">
+            <tr className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2 w-8">#</th>
+              <th className="px-3 py-2">Employee</th>
+              <th className="px-3 py-2">Designation</th>
+              <th className="px-3 py-2">Dept</th>
+              <th className="px-3 py-2 text-center">SOPs</th>
+              <th className="px-3 py-2 text-center">Completed</th>
+              <th className="px-3 py-2 text-center">Remaining</th>
+              <th className="px-3 py-2 text-center">Progress</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {sorted.map(([empId, gRows], i) => {
+              const uniqueSops = new Set(gRows.map((r) => r.sopCode.trim().toUpperCase())).size;
+              const doneSops = new Set(gRows.filter((r) => r.status === 'completed').map((r) => r.sopCode.trim().toUpperCase())).size;
+              const remaining = uniqueSops - doneSops;
+              const pct = uniqueSops > 0 ? Math.round((doneSops / uniqueSops) * 100) : 0;
+              return (
+                <tr key={empId} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/60'}>
+                  <td className="px-3 py-2 text-[10px] font-bold text-gray-500 tabular-nums">{i + 1}</td>
+                  <td className="px-3 py-2 font-semibold text-gray-900 whitespace-nowrap">{gRows[0].employeeName}</td>
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{gRows[0].designation || '—'}</td>
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap" title={gRows[0].department}>{shortDepartmentName(gRows[0].department)}</td>
+                  <td className="px-3 py-2 text-center font-bold text-gray-900 tabular-nums">{uniqueSops}</td>
+                  <td className="px-3 py-2 text-center font-bold text-emerald-700 tabular-nums">{doneSops}</td>
+                  <td className="px-3 py-2 text-center font-bold text-red-600 tabular-nums">{remaining}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-gray-200">
+                        <div className="h-full rounded-full bg-purple-500" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-8 text-right text-[10px] tabular-nums text-gray-500">{pct}%</span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function SopListPopup({
   title,
   subtitle,
   rows,
   showEmployee,
+  groupBy,
   catalog,
   onCancel,
   busyId,
@@ -3154,6 +3259,7 @@ function SopListPopup({
   subtitle: string;
   rows: MonthlyExamRow[];
   showEmployee: boolean;
+  groupBy?: 'month' | 'sop' | 'employee';
   catalog: Record<string, McqCatalogEntry>;
   onCancel: (row: MonthlyExamRow) => void | Promise<void>;
   busyId: string;
@@ -3182,6 +3288,10 @@ function SopListPopup({
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {rows.length === 0 ? (
             <p className="py-10 text-center text-sm text-gray-400">No assignment rows to show.</p>
+          ) : groupBy === 'sop' ? (
+            <SopWiseSummaryTable rows={rows} />
+          ) : groupBy === 'employee' ? (
+            <EmployeeWiseSummaryTable rows={rows} />
           ) : (
             <div className="overflow-hidden rounded-xl border border-gray-200">
               <div className="max-h-[min(75vh,44rem)] overflow-auto">
@@ -3213,14 +3323,14 @@ export function DeptFilterBtn({
 }) {
   if (departments.length <= 1) return null;
   return (
-    <span className="inline-flex flex-wrap items-center gap-1 rounded-full border border-emerald-200 bg-white p-0.5">
+    <span className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-purple-200 bg-white p-0.5">
       <button
         type="button"
         onClick={() => onChange('All')}
-        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${
+        className={`rounded-md px-2.5 py-1 text-[10px] font-semibold transition ${
           value === 'All'
-            ? 'bg-emerald-700 text-white'
-            : 'text-emerald-800 hover:bg-emerald-50'
+            ? 'bg-purple-600 text-white shadow-sm'
+            : 'text-purple-700 hover:bg-purple-50'
         }`}
       >
         All depts
@@ -3230,10 +3340,10 @@ export function DeptFilterBtn({
           key={d}
           type="button"
           onClick={() => onChange(d)}
-          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${
+          className={`rounded-md px-2.5 py-1 text-[10px] font-semibold transition ${
             value === d
-              ? 'bg-emerald-700 text-white'
-              : 'text-emerald-800 hover:bg-emerald-50'
+              ? 'bg-purple-600 text-white shadow-sm'
+              : 'text-purple-700 hover:bg-purple-50'
           }`}
         >
           {d}

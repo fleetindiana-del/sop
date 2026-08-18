@@ -42,9 +42,10 @@ export function ComplianceRunWatcher() {
   const isAnalyzing = useComplianceRunStore((s) => s.isAnalyzing);
   const initialCheckDone = useRef(false);
   const isLoginPage = pathname === "/login";
+  const isPublicLabel = Boolean(pathname?.startsWith("/compliance/label"));
 
   useEffect(() => {
-    if (isAnalyzing || isLoginPage) {
+    if (isAnalyzing || isLoginPage || isPublicLabel) {
       stopServerPoll();
       if (isAnalyzing) {
         useComplianceRunStore.getState().setServerActive(false, []);
@@ -86,7 +87,7 @@ export function ComplianceRunWatcher() {
     return () => {
       stopServerPoll();
     };
-  }, [isAnalyzing, isLoginPage]);
+  }, [isAnalyzing, isLoginPage, isPublicLabel]);
 
   return null;
 }

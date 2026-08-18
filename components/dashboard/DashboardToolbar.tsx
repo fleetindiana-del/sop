@@ -244,6 +244,14 @@ export function DashboardToolbar({
 
         <Btn
           size="sm"
+          className="border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100"
+          onClick={() => router.push("/compliance/label")}
+        >
+          <ShieldCheck className="h-3 w-3" /> Nutra Labels
+        </Btn>
+
+        <Btn
+          size="sm"
           className="border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
           onClick={() => router.push("/compliance/request")}
         >
