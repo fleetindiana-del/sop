@@ -231,14 +231,6 @@ export async function getJourneyContentBatch(
     ? await MCQBank.find({
         isObsolete: { $ne: true },
         $or: bankOr,
-        $and: [{
-          $or: [
-            { language: { $in: ['English', 'Gujarati'] } },
-            { language: { $exists: false } },
-            { language: null },
-            { language: '' },
-          ],
-        }],
       })
         .select('sopIdentifier language totalQuestions')
         .maxTimeMS(15_000)
