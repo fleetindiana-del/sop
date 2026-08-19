@@ -418,7 +418,7 @@ async function computeEmployeeAssignmentsMap(
     // No DB sort: we keep the earliest month in JS (`isEarlier`). Sorting the
     // full collection in Mongo exceeded Atlas M0 memory and timed out.
     TrainingMatrixRecord.find({ status: { $ne: 'na' }, ...deptFilter })
-      .select('employeeName department sopCode sopName month monthName year rawSymbol status')
+      .select('employeeName department sopCode sopName month monthName year rawSymbol status sourceFile')
       .maxTimeMS(20_000)
       .lean(),
     findLatestUploadsByDepartment(TrainingMatrixUpload, {
@@ -483,7 +483,10 @@ async function computeEmployeeAssignmentsMap(
       if (!snapshotEmployeeKeysByDept.has(dept)) snapshotEmployeeKeysByDept.set(dept, new Set());
       snapshotEmployeeKeysByDept.get(dept)!.add(empLookupKey);
 
-      for (const [sopCode] of Object.entries(emp.training)) {
+      // Only truthy flags count — Manage SOP removals set training[code]=false
+      // (or unset). Treating every key as assigned left exams on unassigned staff.
+      for (const [sopCode, flagged] of Object.entries(emp.training)) {
+        if (!flagged) continue;
         if (!isMatrixAssignableCode(sopCode)) continue;
         const sched = baseToSchedule.get(stripVersion(sopCode));
         if (!sched) continue;
@@ -508,12 +511,18 @@ async function computeEmployeeAssignmentsMap(
     year: number;
     rawSymbol?: string;
     status?: string;
+    sourceFile?: string;
   }>) {
     const name = String(r.employeeName || '').trim();
     const department = String(r.department || '').trim();
     if (!name || !department || !r.sopCode || !isMatrixAssignableCode(r.sopCode)) continue;
     const empLookupKey = empKey(department, name);
-    if (snapshotEmployeeKeysByDept.get(department)?.has(empLookupKey)) continue;
+    // Snapshot employees normally skip Excel-era records (snapshot is source of
+    // truth). Manage-SOP manual rows are exceptions — they are the live edits
+    // from Add SOP Matrix and must reach LMS trainer / All Exams views.
+    if (snapshotEmployeeKeysByDept.get(department)?.has(empLookupKey)) {
+      if (String(r.sourceFile || '') !== 'manage-sop-manual') continue;
+    }
     add(department, name, {
       sopCode: r.sopCode,
       sopName: r.sopName,

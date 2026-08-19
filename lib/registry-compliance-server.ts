@@ -18,19 +18,36 @@ function keepBest(map: Map<string, ReportHit>, key: string | undefined, hit: Rep
   }
 }
 
-function lookupReport(
-  sop: Pick<RegistrySOP, "id" | "identifier">,
+function pickNewer(a: ReportHit, b: ReportHit): ReportHit {
+  return (a.analyzedAt ?? 0) >= (b.analyzedAt ?? 0) ? a : b;
+}
+
+function lookupCurrentReport(
+  sop: Pick<RegistrySOP, "id">,
   bySopId: Map<string, ReportHit>,
-  byIdentifier: Map<string, ReportHit>,
 ): ReportHit | undefined {
-  return bySopId.get(sop.id) ?? byIdentifier.get(sop.identifier);
+  return bySopId.get(sop.id);
+}
+
+function lookupBestPriorReport(
+  sop: Pick<RegistrySOP, "id" | "recordIds">,
+  bySopId: Map<string, ReportHit>,
+): ReportHit | undefined {
+  let best: ReportHit | undefined;
+  for (const recordId of sop.recordIds) {
+    if (recordId === sop.id) continue;
+    const hit = bySopId.get(recordId);
+    if (!hit) continue;
+    best = best ? pickNewer(best, hit) : hit;
+  }
+  return best;
 }
 
 /**
  * Attach current-version compliance fields to grouped registry rows.
  *
- * Join is by the current version only (`row.id` / `row.identifier`) so an older
- * version's report never appears on a newly uploaded revision.
+ * Join is by the current version's record id only so an older version's report
+ * never appears on a newly uploaded revision.
  */
 export async function attachRegistryCompliance(rows: RegistrySOP[]): Promise<RegistrySOP[]> {
   if (rows.length === 0) return rows;
@@ -46,7 +63,6 @@ export async function attachRegistryCompliance(rows: RegistrySOP[]): Promise<Reg
     ]);
 
     const reportsBySopId = new Map<string, ReportHit>();
-    const reportsByIdentifier = new Map<string, ReportHit>();
     for (const r of reports) {
       const hit: ReportHit = {
         id: r._id.toString(),
@@ -58,34 +74,43 @@ export async function attachRegistryCompliance(rows: RegistrySOP[]): Promise<Reg
             : 0,
       };
       keepBest(reportsBySopId, r.sopId?.toString(), hit);
-      keepBest(reportsByIdentifier, r.sopIdentifier, hit);
     }
 
     const wizardBySopId = new Map<string, ReportHit>();
-    const wizardByIdentifier = new Map<string, ReportHit>();
     for (const r of wizardResults) {
       const hit: ReportHit = {
         overallScore: r.overallScore ?? 0,
         analyzedAt: r.runAt ? new Date(r.runAt).getTime() : 0,
       };
       keepBest(wizardBySopId, r.sopId?.toString(), hit);
-      keepBest(wizardByIdentifier, r.sopNo, hit);
+    }
+
+    const mergedBySopId = new Map<string, ReportHit>();
+    for (const [sopId, hit] of reportsBySopId) {
+      mergedBySopId.set(sopId, hit);
+    }
+    for (const [sopId, hit] of wizardBySopId) {
+      const existing = mergedBySopId.get(sopId);
+      mergedBySopId.set(sopId, existing ? pickNewer(existing, hit) : hit);
     }
 
     return rows.map((sop) => {
-      const report =
-        lookupReport(sop, reportsBySopId, reportsByIdentifier) ??
-        lookupReport(sop, wizardBySopId, wizardByIdentifier);
+      const report = lookupCurrentReport(sop, mergedBySopId);
       const analyzed = Boolean(report);
       const score = analyzed ? report!.overallScore : 0;
       const done = analyzed && score >= COMPLIANCE_PASS_SCORE;
+      const priorReport = lookupBestPriorReport(sop, mergedBySopId);
+      const priorFailed =
+        Boolean(priorReport) && priorReport!.overallScore < COMPLIANCE_PASS_SCORE;
+      const bypassed =
+        !analyzed && hasUploadedPriorVersion(sop) && priorFailed;
       return {
         ...sop,
         complianceScore: analyzed ? score : 0,
         complianceReportId: report?.id,
         complianceAnalyzed: analyzed,
         complianceDone: done,
-        complianceBypassed: !analyzed && hasUploadedPriorVersion(sop),
+        complianceBypassed: bypassed,
       };
     });
   } catch (err) {

@@ -8,6 +8,7 @@ import {
 import { TrainerExamCalendar } from '@/components/lms/TrainerExamCalendar';
 import { countEmployeeUniqueSops, countUniqueSops, countUniqueSopsByMonth, listEmployeeUniqueSops, listUniqueSops, listUniqueSopsForMonth } from '@/lib/lmsTrainerExamCounts';
 import { localDateOnlyIso } from '@/lib/lmsTrainingCycle';
+import { deptMatchesTrainerScope, resolveTrainerDeptFilter } from '@/lib/lmsTrainerScope';
 import { displaySopCode } from '@/lib/sop-display';
 import { getExpiryTier } from '@/lib/sop-utils';
 
@@ -653,9 +654,16 @@ export function TrainerMonthlyExams({
     });
   };
 
+  const deptScopedRows = useMemo(() => {
+    const employeeDeptScope = resolveTrainerDeptFilter(data?.trainer.trainerDepartments ?? [], dept);
+    const base = data?.rows ?? [];
+    if (employeeDeptScope.length === 0) return base;
+    return base.filter((r) => deptMatchesTrainerScope(r.department, employeeDeptScope));
+  }, [data, dept]);
+
   const searchFilteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (data?.rows ?? []).filter((r) => {
+    return deptScopedRows.filter((r) => {
       if (designation !== 'All' && r.designation !== designation) return false;
       if (examFilter !== 'All' && r.sopCode !== examFilter) return false;
       if (q && !`${r.employeeName} ${r.designation} ${r.sopCode} ${r.sopName} ${r.sopNameGujarati ?? ''}`.toLowerCase().includes(q)) {
@@ -663,7 +671,7 @@ export function TrainerMonthlyExams({
       }
       return true;
     });
-  }, [data, designation, examFilter, search]);
+  }, [deptScopedRows, designation, examFilter, search]);
 
   const monthFilteredRows = useMemo(() => {
     const viewYear = year === 'all' ? 'all' as const : year;
@@ -736,13 +744,13 @@ export function TrainerMonthlyExams({
   }, [searchFilteredRows, year, data]);
 
   const monthSopCounts = useMemo(
-    () => countUniqueSopsByMonth(data?.rows ?? []),
-    [data],
+    () => countUniqueSopsByMonth(deptScopedRows),
+    [deptScopedRows],
   );
 
   const yearSopTotal = useMemo(
-    () => countUniqueSops(data?.rows ?? []),
-    [data],
+    () => countUniqueSops(deptScopedRows),
+    [deptScopedRows],
   );
 
   const scopedExamRows = useMemo(() => {
@@ -1140,9 +1148,9 @@ export function TrainerMonthlyExams({
                 active={false}
                 done={yearSopTotal.completed}
                 left={yearSopTotal.remaining}
-                onSelect={() => openMonthSopPopup('all months', data?.rows ?? [], 'total')}
-                onDoneClick={() => openMonthSopPopup('all months', data?.rows ?? [], 'completed')}
-                onLeftClick={() => openMonthSopPopup('all months', data?.rows ?? [], 'remaining')}
+                onSelect={() => openMonthSopPopup('all months', deptScopedRows, 'total')}
+                onDoneClick={() => openMonthSopPopup('all months', deptScopedRows, 'completed')}
+                onLeftClick={() => openMonthSopPopup('all months', deptScopedRows, 'remaining')}
               />
               <MonthExtraCapsules
                 extras={extrasAll}
@@ -2993,7 +3001,7 @@ function SopDateAssignDialog({
     : sitting === 2
       ? sop.sitting2.dates
       : sop.sitting3.dates;
-  const initialDate = mode === 'edit' && existingDates.length > 0
+  const initialDate = existingDates.length > 0
     ? existingDates[0]
     : defaultExamDeadline(primaryYear, primaryMonth);
 

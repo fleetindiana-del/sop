@@ -145,7 +145,7 @@ function buildRow(sop: RegistrySOP, sr: number): (string | number)[] {
     sop.guidelineReference ?? "",
     formatDate(sop.uploadedAt),
     sop.complianceDone ? "Yes" : "No",
-    sop.complianceAnalyzed ? `${Math.round(sop.complianceScore * 10)}%` : "—",
+    sop.complianceDone ? `${Math.round(sop.complianceScore * 10)}%` : "—",
     sop.complianceBypassed ? "Yes" : "No",
     priorVersionsSummary(sop),
   ];

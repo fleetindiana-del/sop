@@ -848,6 +848,8 @@ function ManageSOPDashboard() {
           localStorage.removeItem(TRAINING_MATRIX_OVERVIEW_CACHE_KEY);
           localStorage.removeItem('induction_training_matrix_overview_cache_v5');
           localStorage.setItem(TRAINING_MATRIX_NEEDS_REFRESH_KEY, String(Date.now()));
+          // Drop LMS session caches so trainer / All Exams refetch assignment maps.
+          sessionStorage.removeItem('lms-portal-cache-v8');
         }
       } catch { /* storage unavailable — non-fatal */ }
 
@@ -1238,20 +1240,24 @@ function ManageSOPDashboard() {
           cache: 'no-store',
           signal: controller.signal,
         });
-        if (!freshRes.ok) throw new Error('Failed to fetch');
-        const data = (await freshRes.json()) as ManageSOPViewResponse;
-        if (!isValidManageSopViewResponse(data)) {
-          throw new Error('Incomplete SOP data received from server');
-        }
-        setViewData(data);
-        try {
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(MANAGE_SOP_VIEW_LOCAL_CACHE_KEY, JSON.stringify(data));
+        if (freshRes.ok) {
+          const data = (await freshRes.json()) as ManageSOPViewResponse;
+          if (isValidManageSopViewResponse(data)) {
+            setViewData(data);
+            try {
+              if (typeof window !== 'undefined') {
+                localStorage.setItem(MANAGE_SOP_VIEW_LOCAL_CACHE_KEY, JSON.stringify(data));
+              }
+            } catch {
+              // Non-fatal cache write failure.
+            }
+            setError('');
+          } else if (!hadData) {
+            throw new Error('Incomplete SOP data received from server');
           }
-        } catch {
-          // Non-fatal cache write failure.
+        } else if (!hadData) {
+          throw new Error('Failed to fetch');
         }
-        setError('');
       } catch (err) {
         if (controller.signal.aborted) return;
         if (!hadData) {

@@ -11,6 +11,7 @@ import {
 } from '@/lib/lmsTrainerExamCounts';
 import { MarkAttendanceModal } from '@/components/lms/MarkAttendanceModal';
 import { toDateOnlyIso } from '@/lib/trainingExamScheduleShared';
+import { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
 
 type ExamStatus = 'completed' | 'pending' | 'overdue';
 
@@ -320,14 +321,20 @@ export function TrainerLmsSchedulePanel({
     void load();
   }, [load]);
 
+  /** Rows limited to employees in the trainer's departments (QA, Production, …). */
+  const scopedRows = useMemo(() => {
+    if (trainerDepartments.length === 0) return rows;
+    return rows.filter((r) => deptMatchesTrainerScope(r.department, trainerDepartments));
+  }, [rows, trainerDepartments]);
+
   /** Live work inside the training cycle — pre-cycle months are ignored. */
   const liveRows = useMemo(() => {
-    return rows.filter((r) => {
+    return scopedRows.filter((r) => {
       if (r.isIgnored) return false;
       if (!cycleStart) return true;
       return monthIndex(r.year, r.month) >= monthIndex(cycleStart.year, cycleStart.month);
     });
-  }, [rows, cycleStart]);
+  }, [scopedRows, cycleStart]);
 
   const monthScopedRows = useMemo(
     () => rowsForMonthFilter(liveRows, monthFilter, year, cycleStart),
@@ -553,6 +560,7 @@ export function TrainerLmsSchedulePanel({
       });
     }
     return [...map.values()]
+      .filter((entry) => deptMatchesTrainerScope(entry.department, trainerDepartments))
       .map((entry) => {
         const unique = countEmployeeUniqueSops(entry.rows);
         return {
@@ -568,7 +576,7 @@ export function TrainerLmsSchedulePanel({
         if (byStatus !== 0) return byStatus;
         return a.employeeName.localeCompare(b.employeeName);
       });
-  }, [employeePopup, monthScopedRows, uniqueSops]);
+  }, [employeePopup, monthScopedRows, uniqueSops, trainerDepartments]);
 
   const openEmployeeSopDetail = useCallback((
     emp: { employeeName: string; rows: MonthlyRow[] },

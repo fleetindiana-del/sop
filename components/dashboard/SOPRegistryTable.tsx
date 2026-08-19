@@ -34,7 +34,7 @@ import {
   isOfficePreviewAvailable,
 } from "@/lib/file-urls";
 import { docxRequiredForLang, formatUploaded, pdfRequiredForLang } from "@/lib/sop-utils";
-import { compliancePercent } from "@/lib/registry-compliance";
+import { compliancePercent, shouldShowComplianceScore } from "@/lib/registry-compliance";
 import { annexureRomanFromLabel } from "@/lib/sop-annexure-requirements";
 import { displaySopCode, displaySopTitle } from "@/lib/sop-display";
 import { describeFilters } from "@/lib/filter-breadcrumb";
@@ -1015,7 +1015,7 @@ const SOPRow = memo(function SOPRow({
 
         {/* Score */}
         <td className={`${registryTdBase} text-center`}>
-          {sop.complianceAnalyzed ? (
+          {shouldShowComplianceScore(sop) ? (
             sop.complianceReportId ? (
               <a
                 href={`/compliance/report/${sop.complianceReportId}`}
@@ -1351,13 +1351,15 @@ function SOPDetailPanel({
             <Users className="h-3 w-3 shrink-0 text-gray-500" />
             <span className="font-semibold text-gray-600">Compliance:</span>
             <span className="font-bold text-gray-800">
-              {sop.complianceAnalyzed
-                ? `${compliancePercent(sop.complianceScore)}% (${sop.complianceDone ? "Done" : "Not done"})`
+              {shouldShowComplianceScore(sop)
+                ? `${compliancePercent(sop.complianceScore)}% (Done)`
                 : sop.complianceBypassed
                   ? "Bypassed"
-                  : "Not run"}
+                  : sop.complianceAnalyzed
+                    ? "Not done"
+                    : "Not run"}
             </span>
-            {sop.complianceReportId && (
+            {shouldShowComplianceScore(sop) && sop.complianceReportId && (
               <a
                 href={`/compliance/report/${sop.complianceReportId}`}
                 target="_blank"

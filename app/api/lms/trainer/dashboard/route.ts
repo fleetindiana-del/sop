@@ -7,10 +7,10 @@ import {
   lmsServerTtl,
 } from '@/lib/lmsCache';
 import { requireLmsTrainer, deptMatchesTrainerScope } from '@/lib/lmsTrainerAuth';
-import Employee from '@/models/Employee';
 import SOP from '@/models/SOP';
 import LearningProgress from '@/models/lms/LearningProgress';
 import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
+import { listTrainerScopedEmployees } from '@/lib/lmsTrainerEmployees';
 import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
 import {
   hasGujaratiScript,
@@ -138,23 +138,15 @@ export async function GET(req: NextRequest) {
           };
         }
 
-        const deptRegex = scopedDepts.map(
-          (d) => new RegExp(`^${d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
-        );
-        const employees = await Employee.find({
+        const employeesRaw = await listTrainerScopedEmployees(scopedDepts, { skipSync: true });
+        const employees = employeesRaw.map((e) => ({
+          _id: e.employeeId,
+          name: e.name,
+          designation: e.designation,
+          department: e.department,
           isActive: true,
-          department: { $in: deptRegex },
-        })
-          .select('_id name designation department isActive isTrainer')
-          .sort({ name: 1 })
-          .lean<{
-            _id: unknown;
-            name: string;
-            designation: string;
-            department: string;
-            isActive: boolean;
-            isTrainer?: boolean;
-          }[]>();
+          isTrainer: e.isTrainer,
+        }));
 
         const employeeIds = employees.map((e) => e._id);
         const [assignmentsMap, rescheduleRules, ignoreRules, progressList] = await Promise.all([
@@ -242,9 +234,8 @@ export async function GET(req: NextRequest) {
             employeeId: id,
             employeeDepartment: emp.department,
           }).filter((a) =>
-            // Only SOPs in the trainer's departments (not every SOP on an
-            // in-scope employee's matrix from other departments).
-            deptMatchesTrainerScope(a.sopDepartment || emp.department, scopedDepts),
+            deptMatchesTrainerScope(emp.department, scopedDepts)
+            && deptMatchesTrainerScope(a.sopDepartment || emp.department, scopedDepts),
           );
 
           let completedSops = 0;

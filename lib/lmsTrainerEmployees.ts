@@ -14,6 +14,7 @@
 
 import Employee from '@/models/Employee';
 import { connectDB } from '@/lib/mongodb';
+import { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
 import { syncEmployeesFromMatrixThrottled } from '@/lib/syncEmployeesFromMatrix';
 
 export interface TrainerScopedEmployee {
@@ -91,20 +92,21 @@ export async function listTrainerScopedEmployees(
   }
 
   await connectDB();
-  const rows = await Employee.find({
-    isActive: true,
-    department: { $in: departmentRegexes(departments) },
-  })
+  const rows = await Employee.find({ isActive: true })
     // lmsPasswordHash is select:false — needed to tell real LMS access apart
     // from an employee who merely has a username.
     .select('_id name designation department employeeId isActive isTrainer lmsUsername +lmsPasswordHash')
     .sort({ name: 1 })
     .lean<EmployeeLean[]>();
 
+  const scopedRows = rows.filter((row) =>
+    deptMatchesTrainerScope(String(row.department || ''), departments),
+  );
+
   // Collapse duplicate person rows (same department + name). Keep the record
   // that can actually sign in, so scheduling never targets a dead duplicate.
   const byIdentity = new Map<string, TrainerScopedEmployee>();
-  for (const row of rows) {
+  for (const row of scopedRows) {
     const scoped = toScoped(row);
     if (!scoped.name || !scoped.department) continue;
     const key = employeeAssignmentKey(scoped.department, scoped.name);

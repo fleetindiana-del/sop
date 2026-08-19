@@ -13,3 +13,10 @@ export function hasUploadedPriorVersion(sop: Pick<RegistrySOP, "priorVersions" |
 export function compliancePercent(score: number): number {
   return Math.round(score * 10);
 }
+
+/** Score is shown only when the current version passed compliance (≥ 80%). */
+export function shouldShowComplianceScore(
+  sop: Pick<RegistrySOP, "complianceDone">,
+): boolean {
+  return Boolean(sop.complianceDone);
+}

@@ -3,7 +3,10 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
 import { resolveTrainerDepartments } from '@/lib/employeeTrainer';
+import { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
 import Employee from '@/models/Employee';
+
+export { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
 
 export type LmsTrainerContext = {
   employeeId: string;
@@ -70,8 +73,3 @@ export async function requireLmsTrainer(): Promise<
   };
 }
 
-export function deptMatchesTrainerScope(department: string, trainerDepartments: string[]): boolean {
-  const d = String(department || '').trim().toLowerCase();
-  if (!d) return false;
-  return trainerDepartments.some((td) => td.trim().toLowerCase() === d);
-}

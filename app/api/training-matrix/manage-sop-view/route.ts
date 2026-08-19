@@ -16,7 +16,6 @@ import {
 import { invalidateInductionTrainingMatrixCache } from "@/lib/inductionTrainingMatrixCache";
 import {
   getEmployeeAssignmentsMap,
-  invalidateEmployeeAssignmentsCache,
 } from "@/lib/employeeAssignments";
 import {
   getManageSopViewCacheEntry,
@@ -25,6 +24,7 @@ import {
   runManageSopViewRebuildSingleflight,
   setManageSopViewCached,
 } from "@/lib/manageSopViewCache";
+import { bustTrainerScheduleCaches } from "@/lib/lmsTrainerCache";
 import { filterPrimaryRegistryRowsUniqueByFamily } from "@/lib/registryPrimaryRows";
 import {
   expandSopIdentifierVariants,
@@ -39,6 +39,7 @@ import {
   resolveTrainingMatrixDepartment,
 } from "@/lib/trainingMatrixDepartments";
 import { resolveTrainerDepartments } from "@/lib/employeeTrainer";
+import SOP from "@/models/SOP";
 
 const MONTH_NAMES = [
   "",
@@ -166,6 +167,36 @@ function normalizeDesignationToken(input: string): string {
     .replace(/[^a-z0-9]/g, "");
 }
 
+/** Full name + 2-letter abbr tokens so "Sr Executive" matches "SE" and vice versa. */
+function designationMatchTokens(input: string): string[] {
+  const raw = String(input || "").trim();
+  if (!raw) return [];
+  const tokens = new Set<string>();
+  for (const part of raw.split(/[;,/|]/).map((p) => p.trim()).filter(Boolean)) {
+    const full = normalizeDesignationToken(part);
+    if (full) tokens.add(full);
+    const abbr = normalizeDesignationToken(desigAbbr(part));
+    if (abbr) tokens.add(abbr);
+  }
+  return Array.from(tokens);
+}
+
+function designationSetsOverlap(
+  left: string | string[],
+  right: string | string[],
+): boolean {
+  const a = new Set(
+    (Array.isArray(left) ? left : [left]).flatMap(designationMatchTokens),
+  );
+  if (a.size === 0) return false;
+  for (const t of (Array.isArray(right) ? right : [right]).flatMap(
+    designationMatchTokens,
+  )) {
+    if (t && a.has(t)) return true;
+  }
+  return false;
+}
+
 export interface SOPViewDesignationStat {
   designation: string;
   isAssigned: boolean;
@@ -268,8 +299,41 @@ async function revalidateManageSopViewInBackground(
   }
 }
 
+/** When a rebuild times out or throws, serve the last good snapshot instead of 500. */
+async function tryServeStaleManageSopViewFallback(
+  cacheYear: number | "all",
+  search: string,
+  reqStartMs: number,
+  cause: unknown,
+): Promise<NextResponse | null> {
+  try {
+    const mem = getManageSopViewMemoryEntry(cacheYear, search);
+    if (mem && hasUnassignedEmployeesPayload(mem.payload)) {
+      console.warn(
+        `${MANAGE_SOP_API_LOG} GET fallback=mem(stale) year=${cacheYear} search="${search}" totalMs=${elapsedMs(reqStartMs)}`,
+        cause,
+      );
+      return NextResponse.json(mem.payload, { status: 200 });
+    }
+    await connectDB();
+    const entry = await getManageSopViewCacheEntry(cacheYear, search);
+    if (entry && hasUnassignedEmployeesPayload(entry.payload)) {
+      console.warn(
+        `${MANAGE_SOP_API_LOG} GET fallback=durable(stale) year=${cacheYear} search="${search}" totalMs=${elapsedMs(reqStartMs)}`,
+        cause,
+      );
+      return NextResponse.json(entry.payload, { status: 200 });
+    }
+  } catch {
+    // Fallback read failed too.
+  }
+  return null;
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const reqStartMs = nowMs();
+  let cacheYear: number | "all" = "all";
+  let search = "";
   try {
     const searchParams = request.nextUrl.searchParams;
     const yearParam = searchParams.get("year");
@@ -278,16 +342,29 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // "main training matrix" view. A numeric year still scopes to that one year.
     const yearAll = !yearParam || yearParam === "all";
     const year = yearAll ? 0 : parseInt(yearParam) || new Date().getFullYear();
-    const search = searchParams.get("search")?.toLowerCase() || "";
-    const cacheYear: number | "all" = yearAll ? "all" : year;
+    search = searchParams.get("search")?.toLowerCase() || "";
+    cacheYear = yearAll ? "all" : year;
     const ctx = { cacheYear, search, yearAll, year, reqStartMs, forceFresh };
 
     // Explicit refresh: recompute synchronously (single-flight dedups concurrent).
+    // Never fall back to a pre-Update snapshot here — callers (Manage SOP Update)
+    // treat a 200 as authoritative and would otherwise wipe just-saved ticks.
     if (forceFresh) {
-      const response = await runManageSopViewRebuildSingleflight(cacheYear, search, () =>
-        buildManageSopViewResponse(request, ctx),
-      );
-      return NextResponse.json(response, { status: 200 });
+      try {
+        const response = await runManageSopViewRebuildSingleflight(cacheYear, search, () =>
+          buildManageSopViewResponse(request, ctx),
+        );
+        return NextResponse.json(response, { status: 200 });
+      } catch (error) {
+        console.error(
+          `${MANAGE_SOP_API_LOG} GET /api/training-matrix/manage-sop-view source=manage-sop refresh=1 FAILED totalMs=${elapsedMs(reqStartMs)}`,
+          error,
+        );
+        return NextResponse.json(
+          { error: "Failed to refresh SOP view data" },
+          { status: 500 },
+        );
+      }
     }
 
     // Fast path: fresh memory hit, no DB round-trip.
@@ -327,6 +404,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(response, { status: 200 });
   } catch (error) {
+    const fallback = await tryServeStaleManageSopViewFallback(
+      cacheYear,
+      search,
+      reqStartMs,
+      error,
+    );
+    if (fallback) return fallback;
+
     console.error(
       `${MANAGE_SOP_API_LOG} GET /api/training-matrix/manage-sop-view source=manage-sop FAILED totalMs=${elapsedMs(reqStartMs)}`,
       error,
@@ -1429,28 +1514,40 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const [removalResults, employeeResults, mainUploads, uploadIdResults] = await Promise.all([
       // All deletions in parallel
-      Promise.all(normRemovals.map((r) => {
+      Promise.all(normRemovals.map(async (r) => {
         const filter: Record<string, any> = {
           sopCode: r.sopCode, department: r.department, year: r.year,
           month: { $in: r.months }, sourceFile: "manage-sop-manual",
         };
-        if (!r.removeAllDesignations) filter.designation = { $in: r.designations };
-        return TrainingMatrixRecord.deleteMany(filter);
+        if (r.removeAllDesignations) {
+          return TrainingMatrixRecord.deleteMany(filter);
+        }
+        // Resilient designation match: load candidates then filter by token/abbr
+        // so "Sr Executive" removals also clear records stored as "SE".
+        const candidates = await TrainingMatrixRecord.find(filter)
+          .select("_id designation")
+          .lean<Array<{ _id: unknown; designation?: string }>>();
+        const ids = candidates
+          .filter((row) => designationSetsOverlap(row.designation || "", r.designations))
+          .map((row) => row._id);
+        if (ids.length === 0) return { deletedCount: 0 };
+        return TrainingMatrixRecord.deleteMany({ _id: { $in: ids } });
       })),
-      // All employee lookups in parallel (one per entry).
-      // Trainers eligible for this department are ALWAYS included regardless of
-      // designation match — they manage all SOPs in their selected departments.
-      Promise.all(normEntries.map((e) =>
-        Employee.find({
+      // Employees in the department whose designation matches (full name or abbr).
+      // Trainers are NOT auto-included — LMS exams must only go to assigned roles.
+      Promise.all(normEntries.map(async (e) => {
+        const emps = await Employee.find({
           isActive: true,
-          $or: [
-            { department: e.department, designation: { $in: e.designations } },
-            { isTrainer: true, department: e.department },
-            { isTrainer: true, trainerDepartments: e.department },
-          ],
+          department: e.department,
         })
-          .select("name designation isTrainer trainerDepartments department").lean()
-      )),
+          .select("name designation isTrainer trainerDepartments department")
+          .lean();
+        return (emps as Array<{ name?: string; designation?: string; isTrainer?: boolean }>).filter(
+          (emp) =>
+            !emp.isTrainer &&
+            designationSetsOverlap(emp.designation || "", e.designations),
+        );
+      })),
       // All main-upload fetches in parallel (one per unique dept)
       Promise.all(uniqueDepts.map((dept) =>
         TrainingMatrixUpload.findOne({
@@ -1588,9 +1685,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             const newMonths = patch.months.map((m: number) => MONTH_NAMES[m] || `Month ${m}`);
             const allMonths = [...new Set([...existingMonths, ...newMonths])];
             update.$set[`snapshot.sopMonthMap.${patch.sopCode}`] = allMonths.join(',');
-            const desigSet = new Set(patch.designations.map((d) => d.toLowerCase()));
             snapshotEmployees.forEach((emp, idx) => {
-              if (desigSet.has(String(emp?.designation || "").toLowerCase())) {
+              if (designationSetsOverlap(emp?.designation || "", patch.designations)) {
                 update.$set[`snapshot.employees.${idx}.training.${patch.sopCode}`] = true;
               }
             });
@@ -1608,43 +1704,82 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (!mainUpload?._id) return;
           const snapshotEmployees: Array<{ designation?: string; training?: Record<string, boolean> }> =
             Array.isArray(mainUpload?.snapshot?.employees) ? mainUpload.snapshot.employees : [];
-          const update: Record<string, unknown> = { $set: {} };
-          const setFields = update.$set as Record<string, boolean>;
+          const unsetFields: Record<string, string> = {};
 
           for (const removal of removals) {
             if (removal.removeAllDesignations) {
-              snapshotEmployees.forEach((emp, idx) => {
-                setFields[`snapshot.employees.${idx}.training.${removal.sopCode}`] = false;
+              snapshotEmployees.forEach((_emp, idx) => {
+                // Prefer $unset so LMS no longer sees the key at all.
+                unsetFields[`snapshot.employees.${idx}.training.${removal.sopCode}`] = "";
               });
               continue;
             }
-            const desigSet = new Set(removal.designations.map((d) => d.toLowerCase()));
             snapshotEmployees.forEach((emp, idx) => {
-              if (desigSet.has(String(emp?.designation || "").toLowerCase())) {
-                setFields[`snapshot.employees.${idx}.training.${removal.sopCode}`] = false;
+              if (designationSetsOverlap(emp?.designation || "", removal.designations)) {
+                unsetFields[`snapshot.employees.${idx}.training.${removal.sopCode}`] = "";
               }
             });
           }
 
-          if (Object.keys(setFields).length > 0) {
-            await TrainingMatrixUpload.updateOne({ _id: mainUpload._id }, update);
+          if (Object.keys(unsetFields).length > 0) {
+            await TrainingMatrixUpload.updateOne({ _id: mainUpload._id }, { $unset: unsetFields });
           }
         } catch (e) {
           warnings.push(`Failed to sync ${dept} snapshot removals: ${(e as Error).message}`);
         }
       }),
       // Keep MatrixSOPAssignment.designationApplicability aligned with Manage SOP edits.
+      // Create a row when none exists so designation ticks survive reload without
+      // depending solely on TrainingMatrixRecord counts.
       ...[...assignmentDesigByKey.values()].map(async (u) => {
         try {
           const base = stripVersion(u.sopCode);
-          await MatrixSOPAssignment.updateMany(
-            {
-              department: u.department,
-              isActive: true,
-              $or: [{ sopCode: u.sopCode }, { sopCode: base }],
-            },
-            { $set: { designationApplicability: u.designations } },
-          );
+          const filter = {
+            department: u.department,
+            isActive: true,
+            $or: [{ sopCode: u.sopCode }, { sopCode: base }],
+          };
+          const existing = await MatrixSOPAssignment.findOne(filter).select("_id").lean();
+          if (existing) {
+            await MatrixSOPAssignment.updateMany(filter, {
+              $set: { designationApplicability: u.designations },
+            });
+            return;
+          }
+          if (u.designations.length === 0) return;
+          const sopDoc = await SOP.findOne({
+            $or: [
+              { identifier: u.sopCode },
+              { identifier: base },
+              { sopBaseId: base },
+            ],
+            isObsolete: { $ne: true },
+          })
+            .select("_id identifier name")
+            .lean<{ _id: unknown; identifier?: string; name?: string }>();
+          if (!sopDoc?._id) {
+            warnings.push(
+              `No master SOP found to create matrix assignment for ${u.sopCode} in ${u.department}`,
+            );
+            return;
+          }
+          const month = u.designations.length
+            ? (normEntries.find(
+                (e) =>
+                  stripVersion(e.sopCode) === base && e.department === u.department,
+              )?.months[0] || new Date().getMonth() + 1)
+            : new Date().getMonth() + 1;
+          await MatrixSOPAssignment.create({
+            department: u.department,
+            sopId: sopDoc._id,
+            sopCode: sopDoc.identifier || u.sopCode,
+            sopName: sopDoc.name || u.sopCode,
+            effectiveMonth: month,
+            effectiveYear: fallbackYear,
+            designationApplicability: u.designations,
+            isActive: true,
+            createdBy: "manage-sop",
+          });
         } catch (e) {
           warnings.push(
             `Failed to sync matrix assignment for ${u.sopCode} in ${u.department}: ${(e as Error).message}`,
@@ -1664,7 +1799,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Drop caches before responding so the client's ?refresh=1 fetch never reads stale data.
-    invalidateEmployeeAssignmentsCache();
+    // Also bust LMS trainer / All Exams caches so assignment changes appear immediately.
+    bustTrainerScheduleCaches();
     await Promise.all([
       invalidateTrainingMatrixCache(),
       invalidateInductionTrainingMatrixCache(),

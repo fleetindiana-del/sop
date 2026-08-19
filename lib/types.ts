@@ -33,7 +33,7 @@ export interface RegistrySOP {
   complianceAnalyzed?: boolean;
   /** Analyzed and score is ≥ 80% (8/10). */
   complianceDone?: boolean;
-  /** New version was uploaded without running compliance on it. */
+  /** New version uploaded while the prior version had not passed compliance. */
   complianceBypassed?: boolean;
   /** ComplianceReport _id for the current version, if a full report exists. */
   complianceReportId?: string;

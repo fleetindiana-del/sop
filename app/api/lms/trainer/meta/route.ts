@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 
     let filtered = employees;
     if (sopCode) {
-      const assignmentsMap = await getEmployeeAssignmentsMap();
+      const assignmentsMap = await getEmployeeAssignmentsMap({ departments: depts });
       filtered = employees.filter((e) => {
         const assignments = assignmentsMap.get(employeeAssignmentKey(e.department, e.name)) ?? [];
         return assignments.some((a) => sopFamilyCodesMatch(a.sopCode, sopCode));

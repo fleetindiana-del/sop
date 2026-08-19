@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const body = await getOrBuildLmsCache(
-          `lms:trainer:monthly:v8:${trainer.employeeId}:${deptParam || 'all'}:${yearParam || 'all'}:${includeIgnored ? 'inc' : 'exc'}`,
+          `lms:trainer:monthly:v9:${trainer.employeeId}:${deptParam || 'all'}:${yearParam || 'all'}:${includeIgnored ? 'inc' : 'exc'}`,
       lmsServerTtl.adminEmployeeTraining,
       async () => {
         await connectDB();
@@ -185,6 +185,8 @@ export async function GET(req: NextRequest) {
 
         for (const emp of employees) {
           if (emp.isTrainer) continue; // trainers are not learners on this board
+          // Only employees whose home department is in the trainer's scope.
+          if (!deptMatchesTrainerScope(emp.department, scopedDepts)) continue;
           const employeeId = emp.employeeId;
           const raw = assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || [];
           // Mirror /api/lms/auth/me exactly: drop admin-ignored assignments
@@ -195,9 +197,10 @@ export async function GET(req: NextRequest) {
             employeeId,
             employeeDepartment: emp.department,
           }).filter((a) =>
-            // Only SOPs that belong to the trainer's departments — not every SOP
-            // an in-scope employee happens to carry from another department.
-            deptMatchesTrainerScope(a.sopDepartment || emp.department, scopedDepts),
+            // Employee must be in the trainer's departments, and the SOP must
+            // belong to one of those departments — not every assignee company-wide.
+            deptMatchesTrainerScope(emp.department, scopedDepts)
+            && deptMatchesTrainerScope(a.sopDepartment || emp.department, scopedDepts),
           );
 
           for (const a of assignments) {
