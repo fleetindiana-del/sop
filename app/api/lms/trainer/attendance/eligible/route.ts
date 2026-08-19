@@ -44,19 +44,22 @@ export async function GET(req: NextRequest) {
   try {
     await connectDB();
 
-    // Department scope: a trainer only ever sees their own departments' people.
     const departments = department ? [department] : auth.trainer.trainerDepartments;
-    const scoped = await listTrainerScopedEmployees(departments);
+
+    // Fire all independent queries in parallel.
+    const [scoped, assignments, existingSheets] = await Promise.all([
+      listTrainerScopedEmployees(departments),
+      getEmployeeAssignmentsMap(),
+      date
+        ? listAttendanceSheets({ departments, sopCode, from: date, to: date, limit: 1 })
+        : Promise.resolve([]),
+    ]);
 
     const resolved = await resolveTrainingSop(sopCode, departments, { employees: scoped });
     if (!resolved.ok) {
       return NextResponse.json({ error: resolved.error }, { status: resolved.status });
     }
 
-    // Whether the SOP is on an employee's training matrix is shown, not enforced:
-    // a trainer may legitimately run a session for someone not yet assigned, and
-    // the sheet must record who was actually in the room.
-    const assignments = await getEmployeeAssignmentsMap();
     const employees = scoped.map((emp) => {
       const assigned = (assignments.get(employeeAssignmentKey(emp.department, emp.name)) || [])
         .some((a) => stripVersion(a.sopCode) === sopCode);
@@ -68,26 +71,12 @@ export async function GET(req: NextRequest) {
         employeeCode: emp.employeeCode,
         isTrainer: emp.isTrainer,
         hasLmsAccess: emp.hasLmsAccess,
-        /** SOP is on this employee's training matrix. */
         assignedThisSop: assigned,
-        /** Everyone starts present; the trainer unmarks absentees. */
         defaultStatus: 'present' as const,
       };
     });
 
-    // Surface a sheet already filed for this session so the trainer edits it
-    // rather than colliding with the unique (SOP, department, date) index on save.
-    let existing = null;
-    if (date) {
-      const [doc] = await listAttendanceSheets({
-        departments,
-        sopCode,
-        from: date,
-        to: date,
-        limit: 1,
-      });
-      if (doc) existing = serializeAttendance(doc);
-    }
+    const existing = existingSheets[0] ? serializeAttendance(existingSheets[0]) : null;
 
     return NextResponse.json({
       sop: resolved.sop,

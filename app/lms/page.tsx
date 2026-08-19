@@ -616,6 +616,7 @@ function TrainingTable({
     selected: Set<string>;
     onToggle: (sopCode: string) => void;
     onToggleAll: (sopCodes: string[], select: boolean) => void;
+    attendanceMode?: boolean;
   };
 }) {
   const [sort, setSort] = useState<SortState>({ key: 'sopCode', dir: 'asc' });
@@ -727,7 +728,7 @@ function TrainingTable({
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
               <th className="px-1 py-1.5 text-center">
-                {selection ? (
+                {selection && !selection.attendanceMode ? (
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
@@ -880,7 +881,7 @@ function TrainingTable({
                   onFocus={() => onPrefetch?.(assignment.sopCode)}
                   onClick={selection ? () => selection.onToggle(codeKey) : undefined}
                   className={`transition hover:bg-gray-50/80 ${selection ? 'cursor-pointer' : ''} ${
-                    selected ? 'bg-indigo-50/80' : ''
+                    selected && !selection?.attendanceMode ? 'bg-indigo-50/80' : ''
                   } ${
                     highlightExpiredDue
                       ? 'bg-red-100/80 ring-1 ring-inset ring-red-200'
@@ -894,12 +895,23 @@ function TrainingTable({
                 >
                   <td className="px-1 py-1.5" onClick={(e) => selection && e.stopPropagation()}>
                     {selection ? (
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={() => selection.onToggle(codeKey)}
-                        className="mx-auto block h-3.5 w-3.5 rounded border-gray-300"
-                      />
+                      selection.attendanceMode ? (
+                        <button
+                          type="button"
+                          onClick={() => selection.onToggle(codeKey)}
+                          className="mx-auto flex items-center gap-0.5 rounded border border-teal-300 bg-teal-50 px-1.5 py-0.5 text-[9px] font-bold text-teal-800 hover:bg-teal-100"
+                          title="Mark attendance for this SOP"
+                        >
+                          <UserCheck className="h-3 w-3" />
+                        </button>
+                      ) : (
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => selection.onToggle(codeKey)}
+                          className="mx-auto block h-3.5 w-3.5 rounded border-gray-300"
+                        />
+                      )
                     ) : (
                       <StatusIcon status={status} schedule={schedule} />
                     )}
@@ -1660,12 +1672,23 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
 
   const trainerSelection = useMemo(() => {
     if (!trainerBulk) return undefined;
+    if (trainerBulk.mode === 'mark-attendance') {
+      return {
+        selected: new Set<string>(),
+        onToggle: (sopCode: string) => {
+          const sop = trainerBulk.uniqueSops.find((s) => s.sopCode === sopCode);
+          trainerData?.onOpenAttendance(sopCode, sop?.sopName ?? sopCode);
+        },
+        onToggleAll: () => {},
+        attendanceMode: true,
+      };
+    }
     return {
       selected: trainerBulk.selectedSopCodes,
       onToggle: trainerBulk.onToggle,
       onToggleAll: trainerBulk.onToggleAll,
     };
-  }, [trainerBulk]);
+  }, [trainerBulk, trainerData]);
 
   const handleTrainerBulkBridge = useCallback((bridge: TrainerBulkBridge | null) => {
     setTrainerBulk((prev) => {
@@ -1838,7 +1861,7 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
                 <h2 className="flex items-center gap-1.5 text-xs font-bold text-gray-800">
                   <ClipboardList className="h-3.5 w-3.5 text-purple-600" />
                   {trainerBulk
-                    ? (trainerBulk.mode === 'assign-exam' ? 'Assign Exam — select SOPs' : 'Schedule Training — select SOPs')
+                    ? (trainerBulk.mode === 'mark-attendance' ? 'Mark Attendance — click a SOP' : 'Schedule Training — select SOPs')
                     : trainerData?.scheduleFilterLabel
                       ? `My Trainings · ${trainerData.scheduleFilterLabel}`
                       : 'My Trainings'}
@@ -1969,7 +1992,7 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
 
               <div className="mt-3 text-center text-xs text-gray-400">
                 {trainerBulk
-                  ? `${trainerTableRows.length} SOP${trainerTableRows.length !== 1 ? 's' : ''} · ${trainerBulk.selectedSopCodes.size} selected`
+                  ? `${trainerTableRows.length} SOP${trainerTableRows.length !== 1 ? 's' : ''}${trainerBulk.mode === 'mark-attendance' ? ' · click to mark attendance' : ` · ${trainerBulk.selectedSopCodes.size} selected`}`
                   : `${filtered.length} of ${monthScopedAssignments.length} training${monthScopedAssignments.length !== 1 ? 's' : ''}${
                       monthFilter === 'all' ? '' : ` · ${MONTH_NAMES[monthFilter - 1]}`
                     }`}

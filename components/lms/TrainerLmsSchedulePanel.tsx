@@ -37,7 +37,7 @@ export interface TrainerUniqueSop {
 }
 
 export interface TrainerBulkBridge {
-  mode: 'schedule-training' | 'assign-exam';
+  mode: 'schedule-training' | 'mark-attendance';
   selectedSopCodes: Set<string>;
   onToggle: (sopCode: string) => void;
   /** Select or clear all SOPs currently listed for bulk mode. */
@@ -176,7 +176,7 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-type BulkMode = 'idle' | 'schedule-training' | 'assign-exam';
+type BulkMode = 'idle' | 'schedule-training' | 'mark-attendance';
 
 function parseCycleStart(raw: string | undefined | null): CycleStart | null {
   const m = /^(\d{4})-(\d{1,2})$/.exec(String(raw || '').trim());
@@ -679,7 +679,7 @@ export function TrainerLmsSchedulePanel({
   };
 
   const submitBulk = async () => {
-    if (bulkMode === 'idle' || selectedSopCodes.size === 0 || !bulkDate) return;
+    if (bulkMode !== 'schedule-training' || selectedSopCodes.size === 0 || !bulkDate) return;
     setBulkBusy(true);
     setBulkMsg('');
     try {
@@ -697,18 +697,11 @@ export function TrainerLmsSchedulePanel({
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || 'Action failed');
 
-      if (bulkMode === 'assign-exam') {
-        setBulkMsg(
-          `Assigned exam date ${json.date} to ${json.scheduled ?? 0} employee exam(s)`
-          + (json.skipped?.length ? ` · ${json.skipped.length} skipped` : ''),
-        );
-      } else {
-        setBulkMsg(
-          `Assigned date ${json.date} to ${json.scheduled ?? 0} employee(s)`
-          + (json.sessions != null ? ` · ${json.sessions} attendance session(s)` : '')
-          + (json.skipped?.length ? ` · ${json.skipped.length} skipped` : ''),
-        );
-      }
+      setBulkMsg(
+        `Assigned date ${json.date} to ${json.scheduled ?? 0} employee(s)`
+        + (json.sessions != null ? ` · ${json.sessions} attendance session(s)` : '')
+        + (json.skipped?.length ? ` · ${json.skipped.length} skipped` : ''),
+      );
       setBulkMode('idle');
       setSelectedSopCodes(new Set());
       await load();
@@ -794,14 +787,14 @@ export function TrainerLmsSchedulePanel({
           </button>
           <button
             type="button"
-            onClick={() => startBulk('assign-exam')}
+            onClick={() => startBulk('mark-attendance')}
             className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold ${
-              bulkMode === 'assign-exam'
-                ? 'bg-indigo-700 text-white'
-                : 'bg-indigo-600 text-white hover:bg-indigo-700'
+              bulkMode === 'mark-attendance'
+                ? 'bg-teal-700 text-white'
+                : 'bg-teal-600 text-white hover:bg-teal-700'
             }`}
           >
-            <ClipboardList className="h-3.5 w-3.5" /> Assign Exam
+            <UserCheck className="h-3.5 w-3.5" /> Mark Attendance
           </button>
           <button
             type="button"
@@ -974,40 +967,54 @@ export function TrainerLmsSchedulePanel({
       )}
 
       {bulkMode !== 'idle' && (
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
+        <div className={`rounded-xl border p-3 ${
+          bulkMode === 'mark-attendance'
+            ? 'border-teal-200 bg-teal-50/50'
+            : 'border-indigo-200 bg-indigo-50/50'
+        }`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-800">
-              {bulkMode === 'assign-exam' ? 'Assign Exam — select SOPs below' : 'Schedule Training — assign date to SOPs below'}
-              <span className="ml-1 font-normal normal-case text-indigo-700/70">
+            <p className={`text-[11px] font-semibold uppercase tracking-wide ${
+              bulkMode === 'mark-attendance' ? 'text-teal-800' : 'text-indigo-800'
+            }`}>
+              {bulkMode === 'mark-attendance'
+                ? 'Mark Attendance — click a SOP below to open the attendance sheet'
+                : 'Schedule Training — assign date to SOPs below'}
+              <span className={`ml-1 font-normal normal-case ${
+                bulkMode === 'mark-attendance' ? 'text-teal-700/70' : 'text-indigo-700/70'
+              }`}>
                 (use My Trainings table)
               </span>
             </p>
             <div className="flex flex-wrap items-center gap-2">
-              <label className="text-[11px] font-semibold text-gray-600">
-                {bulkMode === 'assign-exam' ? 'Exam date' : 'Assigned date'}
-                <input
-                  type="date"
-                  value={bulkDate}
-                  onChange={(e) => setBulkDate(e.target.value)}
-                  className="ml-1.5 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => setSelectedSopCodes(new Set(displayUniqueSops.map((s) => s.sopCode)))}
-                className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600"
-              >
-                Select all
-              </button>
-              <button
-                type="button"
-                disabled={bulkBusy || selectedSopCodes.size === 0}
-                onClick={() => void removeAssignForCodes([...selectedSopCodes])}
-                className="inline-flex items-center gap-1 rounded-lg border border-red-300 bg-white px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
-              >
-                <Trash2 className="h-3 w-3" />
-                Remove assign ({selectedSopCodes.size})
-              </button>
+              {bulkMode === 'schedule-training' && (
+                <>
+                  <label className="text-[11px] font-semibold text-gray-600">
+                    Assigned date
+                    <input
+                      type="date"
+                      value={bulkDate}
+                      onChange={(e) => setBulkDate(e.target.value)}
+                      className="ml-1.5 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSopCodes(new Set(displayUniqueSops.map((s) => s.sopCode)))}
+                    className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bulkBusy || selectedSopCodes.size === 0}
+                    onClick={() => void removeAssignForCodes([...selectedSopCodes])}
+                    className="inline-flex items-center gap-1 rounded-lg border border-red-300 bg-white px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Remove assign ({selectedSopCodes.size})
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 onClick={cancelBulk}
@@ -1015,20 +1022,22 @@ export function TrainerLmsSchedulePanel({
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                disabled={bulkBusy || selectedSopCodes.size === 0 || !bulkDate}
-                onClick={() => void submitBulk()}
-                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
-              >
-                {bulkBusy ? 'Saving…' : bulkMode === 'assign-exam'
-                  ? `Assign exam (${selectedSopCodes.size})`
-                  : `Assign date (${selectedSopCodes.size})`}
-              </button>
+              {bulkMode === 'schedule-training' && (
+                <button
+                  type="button"
+                  disabled={bulkBusy || selectedSopCodes.size === 0 || !bulkDate}
+                  onClick={() => void submitBulk()}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
+                >
+                  {bulkBusy ? 'Saving…' : `Assign date (${selectedSopCodes.size})`}
+                </button>
+              )}
             </div>
           </div>
           {uniqueSops.length === 0 && (
-            <p className="mt-2 text-center text-xs text-indigo-800/60">
+            <p className={`mt-2 text-center text-xs ${
+              bulkMode === 'mark-attendance' ? 'text-teal-800/60' : 'text-indigo-800/60'
+            }`}>
               No SOPs in {monthLabel}. Switch month filter or choose All.
             </p>
           )}

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Check, Loader2, Search, UserCheck, UserX, X,
+  AlertCircle, Check, Loader2, Search, Trash2, UserCheck, UserX, X,
 } from 'lucide-react';
 
 type EligibleEmployee = {
@@ -58,20 +58,23 @@ export function MarkAttendanceModal({
   const [absent, setAbsent] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [savedMsg, setSavedMsg] = useState('');
+  const [existingId, setExistingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!dept && departments[0]) setDept(departments[0]);
   }, [departments, dept]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (keepMessages = false) => {
     if (!sopCode || !dept) {
       setEmployees([]);
       setLoading(false);
       return;
     }
     setLoading(true);
-    setError('');
-    setSavedMsg('');
+    if (!keepMessages) {
+      setError('');
+      setSavedMsg('');
+    }
     try {
       const qs = new URLSearchParams({
         sopCode,
@@ -98,12 +101,15 @@ export function MarkAttendanceModal({
       setEmployees(list);
 
       if (json.existing?.records) {
+        setExistingId(json.existing._id ?? json.existing.id ?? null);
+        const visibleIds = new Set(list.map((e) => e.employeeId));
         setAbsent(new Set(
           (json.existing.records as Array<{ employeeId: string; status: string }>)
-            .filter((r) => r.status === 'absent')
+            .filter((r) => r.status === 'absent' && visibleIds.has(r.employeeId))
             .map((r) => r.employeeId),
         ));
       } else {
+        setExistingId(null);
         setAbsent(new Set());
       }
     } catch (err) {
@@ -136,6 +142,26 @@ export function MarkAttendanceModal({
     });
   };
 
+  const deleteRecord = async () => {
+    if (!existingId) return;
+    setBusy(true);
+    setError('');
+    setSavedMsg('');
+    try {
+      const res = await fetch(`/api/lms/trainer/attendance?id=${existingId}`, { method: 'DELETE' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Failed to delete');
+      setExistingId(null);
+      setAbsent(new Set());
+      setSavedMsg('Attendance record deleted');
+      onSaved?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const save = async () => {
     if (!employees?.length || !dept) return;
     setBusy(true);
@@ -159,6 +185,7 @@ export function MarkAttendanceModal({
         `Saved — ${json.sheet?.presentCount ?? presentCount} present, ${json.sheet?.absentCount ?? absent.size} absent`,
       );
       onSaved?.();
+      await load(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
     } finally {
@@ -302,23 +329,36 @@ export function MarkAttendanceModal({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-gray-100 px-4 py-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            onClick={() => void save()}
-            disabled={busy || loading || !employees?.length}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-purple-700 disabled:opacity-50"
-          >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5" />}
-            Save attendance
-          </button>
+        <div className="flex shrink-0 items-center justify-between border-t border-gray-100 px-4 py-3">
+          {existingId ? (
+            <button
+              type="button"
+              onClick={() => void deleteRecord()}
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded-lg border border-red-300 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete record
+            </button>
+          ) : <span />}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={busy || loading || !employees?.length}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-purple-700 disabled:opacity-50"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5" />}
+              Save attendance
+            </button>
+          </div>
         </div>
       </div>
     </div>
