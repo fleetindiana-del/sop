@@ -158,7 +158,7 @@ export async function GET(req: NextRequest) {
 
         const employeeIds = employees.map((e) => e._id);
         const [assignmentsMap, rescheduleRules, ignoreRules, progressList] = await Promise.all([
-          getEmployeeAssignmentsMap(),
+          getEmployeeAssignmentsMap({ departments: scopedDepts }),
           listTrainingReschedules(),
           // Same admin ignore rules the learner's LMS applies, so the trainer's
           // totals cannot drift from what the employee actually sees.

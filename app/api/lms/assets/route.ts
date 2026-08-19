@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
-import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
+import { getEmployeeAssignmentsMap, employeeAssignmentDepartments } from '@/lib/employeeAssignments';
 import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
 import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
 import {
@@ -70,7 +70,9 @@ export async function GET() {
           }>();
         if (!employee || !employee.isActive) return { assets: {} };
 
-        const assignmentsMap = await getEmployeeAssignmentsMap();
+        const assignmentsMap = await getEmployeeAssignmentsMap({
+          departments: employeeAssignmentDepartments(employee),
+        });
         const key = `${employee.department}||${employee.name}`.trim().toLowerCase();
         const ignoreRules = await listTrainingIgnores(employee.department);
         const assignments = filterIgnoredAssignments(

@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { connectDB } from '@/lib/mongodb';
-import { sopFamilyGroupKey } from '@/lib/sop-utils';
+import { sopFamilyGroupKey, sopFamilyIdentifierRegex } from '@/lib/sop-utils';
 
 /**
  * MCQ Bank "Approved" for a SOP family = every question is checked (ticked).
@@ -30,37 +30,29 @@ export async function getMcqApprovedMapForCodes(
   const db = mongoose.connection.db;
   if (!db) return result;
 
-  const idMatchers = famKeys.map((f) => ({
-    sopIdentifier: { $regex: `^${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, $options: 'i' },
-  }));
+  const bankFamilies = [...new Set(unique.map(familyKeyForLmsCode))];
+  const bankOr = bankFamilies.flatMap((base) => [
+    { sopIdentifier: base },
+    { sopIdentifier: { $regex: sopFamilyIdentifierRegex(base) } },
+  ]);
 
-  const banks = await db.collection('mcqbanks').aggregate([
-    { $match: { isObsolete: { $ne: true }, $or: idMatchers } },
-    {
-      $project: {
-        sopIdentifier: 1,
-        language: 1,
-        totalQuestions: { $size: { $ifNull: ['$mcqs', []] } },
-        checkedCount: {
-          $size: {
-            $filter: {
-              input: { $ifNull: ['$mcqs', []] },
-              as: 'q',
-              cond: { $eq: ['$$q.isChecked', true] },
-            },
-          },
-        },
-      },
-    },
-  ]).toArray();
+  const banks = bankOr.length
+    ? await db.collection('mcqbanks').find(
+        { isObsolete: { $ne: true }, $or: bankOr },
+        { projection: { sopIdentifier: 1, language: 1, 'mcqs.isChecked': 1, totalQuestions: 1 } },
+      ).maxTimeMS(15_000).toArray()
+    : [];
 
   const byFam = new Map<string, { totalQ: number; checkedQ: number }>();
   for (const b of banks) {
     const fam = sopFamilyGroupKey({ identifier: String(b.sopIdentifier || '').trim() });
     if (!famKeys.includes(fam)) continue;
+    const mcqs = Array.isArray(b.mcqs) ? b.mcqs as Array<{ isChecked?: boolean }> : [];
+    const totalQ = Number(b.totalQuestions) || mcqs.length;
+    const checkedQ = mcqs.filter((q) => q.isChecked === true).length;
     const cur = byFam.get(fam) || { totalQ: 0, checkedQ: 0 };
-    cur.totalQ += Number(b.totalQuestions) || 0;
-    cur.checkedQ += Number(b.checkedCount) || 0;
+    cur.totalQ += totalQ;
+    cur.checkedQ += checkedQ;
     byFam.set(fam, cur);
   }
 

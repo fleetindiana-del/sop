@@ -18,6 +18,8 @@ import {
   resolveExcelCodeToDbBase,
 } from '@/lib/sopIdentifierNormalize';
 import { getServerGroupedCache, setServerGroupedCache, invalidateDashboardSopsCache } from '@/lib/server-cache';
+import { SOP_LIST_EXCLUDE } from '@/lib/sop-list-projection';
+import { findLatestUploadsByDepartment } from '@/lib/latestMatrixUploads';
 import { getInductionTrainingMatrixCacheEntry, setInductionTrainingMatrixCached } from '@/lib/inductionTrainingMatrixCache';
 import { resolveEngGujFilePaths } from '@/lib/pathLanguageDetection';
 
@@ -299,14 +301,14 @@ async function computeOverviewPayload(forceFresh: boolean) {
     //   3. Trainers + induction upload snapshots
     const cachedRegistry = getServerGroupedCache();
     const [sopRecords, mcqAgg, trainerDocs, uploads] = await Promise.all([
-      cachedRegistry ? Promise.resolve(null) : SOP.find({}).select('-content').lean(),
+      cachedRegistry ? Promise.resolve(null) : SOP.find({}).select(SOP_LIST_EXCLUDE).lean(),
       MCQBank.aggregate([
         { $match: { isObsolete: { $ne: true } } },
         {
           $project: {
             sopIdentifier: 1,
             language: 1,
-            totalQuestions: { $size: { $ifNull: ['$mcqs', []] } },
+            totalQuestions: { $ifNull: ['$totalQuestions', { $size: { $ifNull: ['$mcqs', []] } }] },
             approvedCount: {
               $size: {
                 $filter: {
@@ -320,10 +322,9 @@ async function computeOverviewPayload(forceFresh: boolean) {
         },
       ]),
       DepartmentTrainer.find({}).select('departmentName sopIdentifier trainerName').lean(),
-      InductionTrainingMatrixUpload.find({ snapshot: { $exists: true, $ne: null } })
-        .sort({ uploadedAt: -1 })
-        .select('department uploadedAt fileUrl fileName snapshot')
-        .lean(),
+      findLatestUploadsByDepartment(InductionTrainingMatrixUpload, {
+        snapshot: { $exists: true, $ne: null },
+      }),
     ]);
 
     // 1. Same SOP source as the Dashboard: collapse versions into one row per family.

@@ -16,6 +16,7 @@ import {
   resolveExcelCodeToDbBase,
 } from '@/lib/sopIdentifierNormalize';
 import { invalidateLmsServerPrefix } from '@/lib/lmsCache';
+import { findLatestUploadsByDepartment } from '@/lib/latestMatrixUploads';
 import { resolveTrainerDepartments } from '@/lib/employeeTrainer';
 import {
   resolveSopFamilyNames,
@@ -225,10 +226,10 @@ async function buildSopLookup(): Promise<SopLookup> {
     MatrixSOPAssignment.find({ isActive: true })
       .select('department sopCode sopName')
       .lean(),
-    TrainingMatrixRecord.aggregate<{ _id: string; names: string[] }>([
-      { $match: { status: { $ne: 'na' }, sopName: { $exists: true, $ne: '' } } },
-      { $group: { _id: { $toUpper: '$sopCode' }, names: { $addToSet: '$sopName' } } },
-    ]),
+    // Registry + MatrixSOPAssignment already cover display names. Grouping
+    // every training-matrix row for sopName timed out on Atlas (32MB sort /
+    // 45s socket) and emptied the LMS dashboard.
+    Promise.resolve([] as Array<{ _id: string; names: string[] }>),
   ]);
 
   const families = new Map<string, ISOP[]>();
@@ -295,7 +296,7 @@ async function buildSopLookup(): Promise<SopLookup> {
 // employees list and the training-status endpoints both need it and fire within
 // milliseconds of each other, so a short-lived in-memory cache lets the second
 // caller reuse the first one's work instead of recomputing it from scratch.
-const ASSIGNMENTS_CACHE_TTL_MS = 15_000;
+const ASSIGNMENTS_CACHE_TTL_MS = 60_000;
 
 interface AssignmentsCache {
   expiresAt: number;
@@ -304,35 +305,70 @@ interface AssignmentsCache {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __employeeAssignmentsCache: AssignmentsCache | undefined;
+  var __employeeAssignmentsCaches: Map<string, AssignmentsCache> | undefined;
+}
+
+function assignmentCacheStore(): Map<string, AssignmentsCache> {
+  if (!global.__employeeAssignmentsCaches) {
+    global.__employeeAssignmentsCaches = new Map();
+  }
+  return global.__employeeAssignmentsCaches;
+}
+
+function assignmentScopeKey(departments?: string[]): string {
+  if (!departments?.length) return 'all';
+  const parts = [...new Set(departments.map((d) => d.trim().toLowerCase()).filter(Boolean))];
+  return parts.length ? parts.sort().join('|') : 'all';
+}
+
+/** Case-insensitive department filter. Empty / omitted → no filter. */
+export function departmentMatchFilter(departments?: string[]): Record<string, unknown> {
+  if (!departments?.length) return {};
+  const regexes = departments
+    .map((d) => String(d || '').trim())
+    .filter(Boolean)
+    .map((d) => new RegExp(`^${d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'));
+  if (!regexes.length) return {};
+  return { department: { $in: regexes } };
+}
+
+export function employeeAssignmentDepartments(employee: {
+  department?: string | null;
+  trainerDepartments?: string[] | null;
+}): string[] {
+  return [...new Set(
+    [employee.department, ...(employee.trainerDepartments || [])]
+      .map((d) => String(d || '').trim())
+      .filter(Boolean),
+  )];
 }
 
 export function invalidateEmployeeAssignmentsCache(): void {
-  global.__employeeAssignmentsCache = undefined;
+  global.__employeeAssignmentsCaches = undefined;
   invalidateLmsServerPrefix('lms:admin:');
 }
 
 export function getEmployeeAssignmentsMap(
-  opts?: { force?: boolean },
+  opts?: { force?: boolean; departments?: string[] },
 ): Promise<Map<string, EmployeeSopAssignment[]>> {
   const now = Date.now();
-  const cached = global.__employeeAssignmentsCache;
+  const scope = assignmentScopeKey(opts?.departments);
+  const store = assignmentCacheStore();
+  const cached = store.get(scope);
   if (!opts?.force && cached && cached.expiresAt > now) {
     return cached.promise;
   }
 
-  const promise = computeEmployeeAssignmentsMap().catch((err) => {
+  const promise = computeEmployeeAssignmentsMap(opts?.departments).catch((err) => {
     // Never cache a failed computation.
-    if (global.__employeeAssignmentsCache?.promise === promise) {
-      global.__employeeAssignmentsCache = undefined;
-    }
+    if (store.get(scope)?.promise === promise) store.delete(scope);
     throw err;
   });
 
-  global.__employeeAssignmentsCache = {
+  store.set(scope, {
     expiresAt: now + ASSIGNMENTS_CACHE_TTL_MS,
     promise,
-  };
+  });
   return promise;
 }
 
@@ -370,22 +406,26 @@ async function buildMatrixAssignableCodeFilter(): Promise<(raw: string) => boole
   };
 }
 
-async function computeEmployeeAssignmentsMap(): Promise<Map<string, EmployeeSopAssignment[]>> {
+async function computeEmployeeAssignmentsMap(
+  departments?: string[],
+): Promise<Map<string, EmployeeSopAssignment[]>> {
   // empKey → (sopCode → kept assignment). One entry per SOP per employee.
   const byEmp = new Map<string, Map<string, EmployeeSopAssignment>>();
+  const deptFilter = departmentMatchFilter(departments);
   const [lookup, isMatrixAssignableCode, records, uploads] = await Promise.all([
     buildSopLookup(),
     buildMatrixAssignableCodeFilter(),
-    TrainingMatrixRecord.find({ status: { $ne: 'na' } })
+    // No DB sort: we keep the earliest month in JS (`isEarlier`). Sorting the
+    // full collection in Mongo exceeded Atlas M0 memory and timed out.
+    TrainingMatrixRecord.find({ status: { $ne: 'na' }, ...deptFilter })
       .select('employeeName department sopCode sopName month monthName year rawSymbol status')
-      .sort({ year: -1, month: 1, sopCode: 1 })
+      .maxTimeMS(20_000)
       .lean(),
-    TrainingMatrixUpload.find({
+    findLatestUploadsByDepartment(TrainingMatrixUpload, {
       fileType: 'main',
       'snapshot.employees': { $exists: true },
-    })
-      .sort({ uploadedAt: -1 })
-      .lean(),
+      ...deptFilter,
+    }),
   ]);
 
   const add = (department: string, name: string, assignment: EmployeeSopAssignment) => {
@@ -574,7 +614,7 @@ async function computeEmployeeAssignmentsMap(): Promise<Map<string, EmployeeSopA
     }
   }
 
-  await mergeInductionAssignments(map, lookup);
+  await mergeInductionAssignments(map, lookup, departments);
   await attachExamDates(map);
   // Runs last: a trainer-scheduled exam is authoritative over the matrix date.
   await mergeTrainerScheduledExams(map, lookup);
@@ -733,8 +773,14 @@ async function attachExamDates(
 async function mergeInductionAssignments(
   map: Map<string, EmployeeSopAssignment[]>,
   lookup: SopLookup,
+  departments?: string[],
 ): Promise<void> {
-  const flagged = await Employee.find({ inductionTrainingRequired: true, isActive: true })
+  const deptFilter = departmentMatchFilter(departments);
+  const flagged = await Employee.find({
+    inductionTrainingRequired: true,
+    isActive: true,
+    ...deptFilter,
+  })
     .select('name department designation dateOfJoining')
     .lean<Array<{ name: string; department: string; designation: string }>>();
 
@@ -761,8 +807,10 @@ async function mergeInductionAssignments(
 
   const inductionRecords = await InductionTrainingMatrixRecord.find({
     status: { $ne: 'na' },
+    ...deptFilter,
   })
     .select('employeeName department sopCode sopName month monthName year rawSymbol status')
+    .maxTimeMS(20_000)
     .lean();
 
   for (const r of inductionRecords as Array<{
@@ -791,12 +839,11 @@ async function mergeInductionAssignments(
   }
 
   // Fallback: dept induction matrix SOPs for flagged employees with no per-employee records yet.
-  const uploads = await InductionTrainingMatrixUpload.find({
+  const uploads = await findLatestUploadsByDepartment(InductionTrainingMatrixUpload, {
     fileType: 'main',
     'snapshot.sopMonthMap': { $exists: true },
-  })
-    .sort({ uploadedAt: -1 })
-    .lean();
+    ...deptFilter,
+  });
 
   const latestInductionByDept = new Map<string, {
     year: number;

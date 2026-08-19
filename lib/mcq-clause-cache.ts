@@ -27,7 +27,10 @@ export async function buildAndSaveClauseIndex(
     clauses,
     parsedAt: new Date(),
   };
-  await SOP.updateOne({ _id: sopId }, { $set: { mcqClauseCache } });
+  // timestamps: false — this is an internal parse cache. Bumping updatedAt
+  // would invalidate the grouped-registry signature and force a full SOP
+  // collection scan on the next dashboard / LMS / matrix load.
+  await SOP.updateOne({ _id: sopId }, { $set: { mcqClauseCache } }, { timestamps: false });
   return clauses;
 }
 

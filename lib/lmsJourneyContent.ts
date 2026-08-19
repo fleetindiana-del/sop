@@ -15,10 +15,6 @@ function toArray(val: string | string[] | undefined | null): string[] {
   return Array.isArray(val) ? val.filter(Boolean) : [val];
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function stripVersion(code: string): string {
   return String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
 }
@@ -206,75 +202,56 @@ export async function getJourneyContentBatch(
 
   await connectDB();
 
-  const sopOr = missing.flatMap((code) => [
-    { identifier: code },
-    { sopBaseId: code },
-    { identifier: { $regex: new RegExp(`^${escapeRegex(code)}`, 'i') } },
+  const bases = [...new Set(missing.map(stripVersion).filter(Boolean))];
+  const identSet = [...new Set([...missing, ...bases])];
+
+  // Indexed equality ($in on identifier / sopBaseId) instead of one prefix
+  // regex per assigned SOP — that $or list forced a collection scan on every
+  // LMS dashboard / trainer-monthly load.
+  const sopRows = await SOP.find({
+    isObsolete: { $ne: true },
+    $or: [
+      { identifier: { $in: identSet } },
+      { sopBaseId: { $in: bases } },
+    ],
+  })
+    .select('name identifier sopBaseId department fileUrl fileType language mediaLinks versionNum uploadedAt')
+    .lean<SopLean[]>();
+
+  const bankFamilies = [...new Set(missing.map((c) => stripVersion(c)).filter(Boolean))];
+  // Family regex — banks are stored under versioned ids (PRPA01-03) while
+  // assignments use the base code (PRPA01). Exact $in missed them, so monthly
+  // rows were dropped and trainer employee counts stayed at 0.
+  const bankOr = bankFamilies.flatMap((base) => [
+    { sopIdentifier: base },
+    { sopIdentifier: { $regex: sopFamilyIdentifierRegex(base) } },
   ]);
 
-  const [sopRows, bankDocs] = await Promise.all([
-    SOP.find({ isObsolete: { $ne: true }, $or: sopOr })
-      .select('name identifier sopBaseId department fileUrl fileType language mediaLinks versionNum uploadedAt')
-      .lean<SopLean[]>(),
-    // Count non-similar questions server-side so the (large) mcqs arrays never
-    // cross the wire — one aggregate for every requested code.
-    MCQBank.aggregate<BankCountRow>([
-      {
-        $match: {
-          isObsolete: { $ne: true },
-          // Mirror /api/lms/quiz: missing language = English masters.
-          $and: [
-            {
-              $or: [
-                { language: { $in: ['English', 'Gujarati'] } },
-                { language: { $exists: false } },
-                { language: null },
-                { language: '' },
-              ],
-            },
-            {
-              $or: missing.map((code) => ({
-                sopIdentifier: { $regex: sopFamilyIdentifierRegex(code) },
-              })),
-            },
+  const banks = bankOr.length
+    ? await MCQBank.find({
+        isObsolete: { $ne: true },
+        $or: bankOr,
+        $and: [{
+          $or: [
+            { language: { $in: ['English', 'Gujarati'] } },
+            { language: { $exists: false } },
+            { language: null },
+            { language: '' },
           ],
-        },
-      },
-      {
-        $project: {
-          _id: 0,
-          sopIdentifier: 1,
-          language: 1,
-          usableQuestions: {
-            $size: {
-              $filter: {
-                input: { $ifNull: ['$mcqs', []] },
-                as: 'q',
-                cond: { $ne: ['$$q.isSimilar', true] },
-              },
-            },
-          },
-          // Masters carrying a usable (non-stale) Gujarati translation. Mirrors
-          // the quiz route's translated-question match.
-          translatedGu: {
-            $size: {
-              $filter: {
-                input: { $ifNull: ['$mcqs', []] },
-                as: 'q',
-                cond: {
-                  $and: [
-                    { $ne: ['$$q.isSimilar', true] },
-                    { $ne: [{ $ifNull: ['$$q.translations.gu', null] }, null] },
-                    { $ne: ['$$q.translations.gu.isStale', true] },
-                  ],
-                },
-              },
-            },
-          },
-        },
-      },
-    ]),
-  ]);
+        }],
+      })
+        .select('sopIdentifier language totalQuestions')
+        .maxTimeMS(15_000)
+        .lean<Array<{ sopIdentifier?: string; language?: string; totalQuestions?: number }>>()
+    : [];
+
+  // Stored totalQuestions only — do not walk `$mcqs` on Atlas (45s timeout).
+  const bankDocs: BankCountRow[] = banks.map((b) => ({
+    sopIdentifier: b.sopIdentifier,
+    language: b.language || 'English',
+    usableQuestions: b.totalQuestions || 0,
+    translatedGu: 0,
+  }));
 
   for (const code of missing) {
     let best: SopLean | null = null;

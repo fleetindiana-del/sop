@@ -1,6 +1,7 @@
 import { connectDB } from '@/lib/mongodb';
 import SOP from '@/models/SOP';
 import { groupSOPRecords } from '@/lib/sop-utils';
+import { SOP_LIST_EXCLUDE } from '@/lib/sop-list-projection';
 import { getOrBuildServerGroupedCache } from "@/lib/server-cache";
 import {
   readPersistentGroupedCache,
@@ -47,17 +48,18 @@ async function loadGroupedRegistry(): Promise<RegistrySOP[]> {
     const persisted = await readPersistentGroupedCache();
     if (persisted) return persisted;
 
-    // Exclude the heavy `content` field (full extracted SOP text, ~30KB avg / up to
-    // 77KB per doc — ~56MB across the collection). Grouping never reads it, and on a
-    // free-tier (M0) cluster transferring the full collection gets throttled to
-    // minutes. Projecting it out drops the load to ~2s.
+    // Exclude extracted SOP text AND the later MCQ/compliance parse caches.
+    // `content` is ~30KB avg / up to 77KB (~56MB across the collection).
+    // `mcqClauseCache` stores per-clause full text (same magnitude) and was
+    // still coming back through `select('-content')`, reintroducing the
+    // multi-minute M0 scan. Grouping never reads any of these blobs.
     //
     // No DB-side sort: `groupSOPRecords` re-sorts each family by updatedAt itself
     // (sop-utils), and the dashboard sorts/paginates client-side, so ordering the
     // full scan here buys nothing. Worse, sorting an unindexed scan forces an
     // in-memory sort that exceeds M0's 32MB limit on this collection — that was the
     // ~31s cold-query penalty. Dropping it lets the scan stream straight through.
-    const records = await SOP.find({}).select('-content').lean();
+    const records = await SOP.find({}).select(SOP_LIST_EXCLUDE).lean();
     const grouped = groupSOPRecords(records as never[]);
 
     // Persist for the next cold container. Signature is taken from the records we

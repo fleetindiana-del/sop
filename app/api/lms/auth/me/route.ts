@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
-import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
+import { getEmployeeAssignmentsMap, employeeAssignmentDepartments } from '@/lib/employeeAssignments';
 import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
 import {
   getOrBuildLmsCache,
@@ -43,7 +43,9 @@ export async function GET() {
           return null;
         }
 
-        const assignmentsMap = await getEmployeeAssignmentsMap();
+        const assignmentsMap = await getEmployeeAssignmentsMap({
+          departments: employeeAssignmentDepartments(employee),
+        });
         const key = `${employee.department}||${employee.name}`.trim().toLowerCase();
         const raw = assignmentsMap.get(key) || [];
         const [ignoreRules, rescheduleRules] = await Promise.all([

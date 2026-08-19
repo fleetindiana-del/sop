@@ -64,7 +64,13 @@ export async function buildAndSaveComplianceStructureCache(
     parsedAt: new Date(),
   };
 
-  await SOP.updateOne({ _id: sopId }, { $set: { complianceStructureCache } });
+  // timestamps: false — internal parse cache; must not bust the registry
+  // signature (count + newest updatedAt) used by the persistent grouped cache.
+  await SOP.updateOne(
+    { _id: sopId },
+    { $set: { complianceStructureCache } },
+    { timestamps: false },
+  );
 
   return { parsed, sectionHashes, sectionSummary, contentHash, fromCache: false };
 }

@@ -12,7 +12,6 @@ import {
   listTrainerScopedEmployees,
 } from '@/lib/lmsTrainerEmployees';
 import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
-import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
 import { applyReschedulesToList, listTrainingReschedules } from '@/lib/lmsTrainingReschedule';
 import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTrainingIgnore';
 import {
@@ -164,7 +163,7 @@ export async function GET(req: NextRequest) {
         const employeeIds = employees.map((e) => e.employeeId);
         const [assignmentsMap, rescheduleRules, ignoreRules, progressMap, roster, schedules] =
           await Promise.all([
-            getEmployeeAssignmentsMap(),
+            getEmployeeAssignmentsMap({ departments: scopedDepts }),
             listTrainingReschedules(),
             // Same admin ignore rules the learner's own LMS applies.
             listTrainingIgnores(),
@@ -179,21 +178,6 @@ export async function GET(req: NextRequest) {
         // employeeId::SOPBASE → ScheduledExam, so rows can carry an action id.
         const scheduleByKey = new Map(
           schedules.map((s) => [`${s.employeeId}::${stripVersion(s.sopCode)}`, s]),
-        );
-
-        // Which SOPs actually have an exam (an MCQ bank in either language).
-        const uniqueCodes = new Set<string>();
-        for (const emp of employees) {
-          for (const a of assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || []) {
-            uniqueCodes.add(a.sopCode);
-          }
-        }
-        const contentByCode = await getJourneyContentBatch(uniqueCodes);
-        const hasExamByCode = new Map(
-          [...contentByCode.entries()].map(([code, c]) => [
-            code,
-            c.availableStepIds.includes('quiz') || c.availableStepIds.includes('quizGu'),
-          ]),
         );
 
         const rows: MonthlyExamRow[] = [];
@@ -220,9 +204,6 @@ export async function GET(req: NextRequest) {
             if (isInvalidSopAssignmentCode(a.sopCode)) continue;
             const code = stripVersion(a.sopCode);
             const scheduled = scheduleByKey.get(`${employeeId}::${code}`);
-            // Only rows that represent an actual exam: the SOP has an MCQ bank,
-            // or a trainer explicitly scheduled it.
-            if (!hasExamByCode.get(a.sopCode) && !scheduled) continue;
 
             yearSet.add(a.year);
             if (yearParam && a.year !== yearParam) continue;

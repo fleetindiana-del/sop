@@ -1397,8 +1397,12 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
         fetch('/api/lms/assets'),
       ]);
       if (meRes.status === 401) { router.push('/lms'); return; }
+      if (!meRes.ok) {
+        // Do not treat a 500 as "no trainings" and cache that empty list.
+        return;
+      }
       const meData    = await meRes.json();
-      const progData  = await progressRes.json();
+      const progData  = progressRes.ok ? await progressRes.json() : { progress: [] };
       const certData  = certRes.ok ? await certRes.json() : { certificates: [] };
       const assetData = assetsRes.ok ? await assetsRes.json() : { assets: {} };
       const assignments = validAssignments(meData.assignments || []);
@@ -1640,6 +1644,8 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
     const assignedAtByCode: Record<string, string> = {};
     for (const sop of trainerData.uniqueSops) {
       employeesByCode[sop.sopCode] = sop.employees;
+      const base = stripVersion(sop.sopCode);
+      if (base !== sop.sopCode) employeesByCode[base] = sop.employees;
       if (sop.assignedAt) assignedAtByCode[sop.sopCode] = sop.assignedAt;
     }
     return {
