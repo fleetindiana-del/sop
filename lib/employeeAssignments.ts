@@ -31,6 +31,7 @@ import {
   deptScheduleKey,
   employeeOverrideKey,
 } from '@/lib/trainingExamSchedule';
+import { canonTrainingMatrixDepartment } from '@/lib/trainingMatrixDepartments';
 
 const MONTH_NAMES = [
   '',
@@ -69,7 +70,40 @@ export interface EmployeeSopAssignment {
 }
 
 function empKey(department: string, name: string): string {
-  return `${department}||${name}`.trim().toLowerCase();
+  const dept = canonTrainingMatrixDepartment(department) || String(department || '').trim();
+  return `${dept}||${name}`.trim().toLowerCase();
+}
+
+/** Raw + canonical department keys so lookups survive QA vs "Quality Assurance". */
+function empKeys(department: string, name: string): string[] {
+  const raw = `${department}||${name}`.trim().toLowerCase();
+  const canon = empKey(department, name);
+  return raw === canon ? [canon] : [canon, raw];
+}
+
+export function employeeAssignmentMapKey(department: string, name: string): string {
+  return empKey(department, name);
+}
+
+function setAliasedAssignments(
+  map: Map<string, EmployeeSopAssignment[]>,
+  department: string,
+  name: string,
+  value: EmployeeSopAssignment[],
+): void {
+  for (const k of empKeys(department, name)) map.set(k, value);
+}
+
+function getAliasedAssignments(
+  map: Map<string, EmployeeSopAssignment[]>,
+  department: string,
+  name: string,
+): EmployeeSopAssignment[] | undefined {
+  for (const k of empKeys(department, name)) {
+    const hit = map.get(k);
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 // Each SOP counts once per employee — the same SOP scheduled across several
@@ -430,9 +464,14 @@ async function computeEmployeeAssignmentsMap(
 
   const add = (department: string, name: string, assignment: EmployeeSopAssignment) => {
     if (!isMatrixAssignableCode(assignment.sopCode)) return;
-    const key = empKey(department, name);
-    if (!byEmp.has(key)) byEmp.set(key, new Map());
-    const bySop = byEmp.get(key)!;
+    const keys = empKeys(department, name);
+    let bySop: Map<string, EmployeeSopAssignment> | undefined;
+    for (const k of keys) {
+      bySop = byEmp.get(k);
+      if (bySop) break;
+    }
+    if (!bySop) bySop = new Map();
+    for (const k of keys) byEmp.set(k, bySop);
     const dedupeKey = assignmentKey(assignment);
     const existing = bySop.get(dedupeKey);
     // Keep the earliest-scheduled occurrence of each SOP.
@@ -479,9 +518,9 @@ async function computeEmployeeAssignmentsMap(
     for (const emp of snapshot.employees || []) {
       const name = String(emp.name || '').trim();
       if (!name || !emp.training) continue;
-      const empLookupKey = empKey(dept, name);
       if (!snapshotEmployeeKeysByDept.has(dept)) snapshotEmployeeKeysByDept.set(dept, new Set());
-      snapshotEmployeeKeysByDept.get(dept)!.add(empLookupKey);
+      const snapSet = snapshotEmployeeKeysByDept.get(dept)!;
+      for (const k of empKeys(dept, name)) snapSet.add(k);
 
       // Only truthy flags count — Manage SOP removals set training[code]=false
       // (or unset). Treating every key as assigned left exams on unassigned staff.
@@ -516,11 +555,14 @@ async function computeEmployeeAssignmentsMap(
     const name = String(r.employeeName || '').trim();
     const department = String(r.department || '').trim();
     if (!name || !department || !r.sopCode || !isMatrixAssignableCode(r.sopCode)) continue;
-    const empLookupKey = empKey(department, name);
+    const empLookupKeys = empKeys(department, name);
     // Snapshot employees normally skip Excel-era records (snapshot is source of
     // truth). Manage-SOP manual rows are exceptions — they are the live edits
     // from Add SOP Matrix and must reach LMS trainer / All Exams views.
-    if (snapshotEmployeeKeysByDept.get(department)?.has(empLookupKey)) {
+    const snapSet =
+      snapshotEmployeeKeysByDept.get(department) ||
+      snapshotEmployeeKeysByDept.get(canonTrainingMatrixDepartment(department));
+    if (empLookupKeys.some((k) => snapSet?.has(k))) {
       if (String(r.sourceFile || '') !== 'manage-sop-manual') continue;
     }
     add(department, name, {
@@ -535,15 +577,22 @@ async function computeEmployeeAssignmentsMap(
   }
 
   // Materialize the deduped per-employee maps into the array shape callers expect.
+  // Alias keys (raw vs canonical department) share one array so we enrich once.
   const map = new Map<string, EmployeeSopAssignment[]>();
+  const innerToList = new Map<Map<string, EmployeeSopAssignment>, EmployeeSopAssignment[]>();
   for (const [key, bySop] of byEmp) {
-    map.set(
-      key,
-      [...bySop.values()].filter((a) => isMatrixAssignableCode(a.sopCode)),
-    );
+    let list = innerToList.get(bySop);
+    if (!list) {
+      list = [...bySop.values()].filter((a) => isMatrixAssignableCode(a.sopCode));
+      innerToList.set(bySop, list);
+    }
+    map.set(key, list);
   }
 
+  const enrichedLists = new Set<EmployeeSopAssignment[]>();
   for (const [key, list] of map) {
+    if (enrichedLists.has(list)) continue;
+    enrichedLists.add(list);
     const employeeDept = key.split('||')[0] || '';
     for (const a of list) enrichAssignment(a, employeeDept, lookup);
     list.sort((a, b) => {
@@ -576,8 +625,7 @@ async function computeEmployeeAssignmentsMap(
     });
     if (trainerDepts.length === 0) continue;
 
-    const homeKey = empKey(homeDept, name);
-    const existing = map.get(homeKey) || [];
+    const existing = getAliasedAssignments(map, homeDept, name) || [];
     const existingCodes = new Set(existing.map((a) => assignmentKey(a)));
 
     for (const dept of trainerDepts) {
@@ -619,7 +667,7 @@ async function computeEmployeeAssignmentsMap(
         if (a.month !== b.month) return a.month - b.month;
         return a.sopCode.localeCompare(b.sopCode);
       });
-      map.set(homeKey, existing);
+      setAliasedAssignments(map, homeDept, name, existing);
     }
   }
 
@@ -676,8 +724,7 @@ async function mergeTrainerScheduledExams(
     const code = stripVersion(s.sopCode);
     if (!department || !name || !code || isInvalidSopAssignmentCode(code)) continue;
 
-    const key = empKey(department, name);
-    const list = map.get(key) || [];
+    const list = getAliasedAssignments(map, department, name) || [];
     const examDate = toDateOnlyIso(new Date(s.scheduledDate));
     // Version-insensitive: a schedule for "ABC" owns an existing "ABC-00" row.
     const existing = list.find((a) => stripVersion(a.sopCode) === code);
@@ -705,7 +752,7 @@ async function mergeTrainerScheduledExams(
     };
     enrichAssignment(assignment, department, lookup);
     list.push(assignment);
-    map.set(key, list);
+    setAliasedAssignments(map, department, name, list);
   }
 
   for (const list of map.values()) {
@@ -797,9 +844,11 @@ async function mergeInductionAssignments(
 
   const add = (department: string, name: string, assignment: EmployeeSopAssignment) => {
     if (isInvalidSopAssignmentCode(assignment.sopCode)) return;
-    const key = empKey(department, name);
-    if (!map.has(key)) map.set(key, []);
-    const list = map.get(key)!;
+    let list = getAliasedAssignments(map, department, name);
+    if (!list) {
+      list = [];
+      setAliasedAssignments(map, department, name, list);
+    }
     const dedupeKey = assignmentKey(assignment);
     const existing = list.find((a) => assignmentKey(a) === dedupeKey);
     if (!existing || isEarlier(assignment, existing)) {
@@ -870,8 +919,7 @@ async function mergeInductionAssignments(
   }
 
   for (const emp of flagged) {
-    const key = empKey(emp.department, emp.name);
-    const existing = map.get(key) || [];
+    const existing = getAliasedAssignments(map, emp.department, emp.name) || [];
     const hasInduction = existing.some((a) => a.trainingType === 'induction');
     if (hasInduction) continue;
 

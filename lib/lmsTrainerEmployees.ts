@@ -16,6 +16,7 @@ import Employee from '@/models/Employee';
 import { connectDB } from '@/lib/mongodb';
 import { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
 import { syncEmployeesFromMatrixThrottled } from '@/lib/syncEmployeesFromMatrix';
+import { canonTrainingMatrixDepartment } from '@/lib/trainingMatrixDepartments';
 
 export interface TrainerScopedEmployee {
   employeeId: string;
@@ -53,9 +54,10 @@ export function departmentRegexes(departments: string[]): RegExp[] {
     .map((d) => new RegExp(`^${escapeRegex(d)}$`, 'i'));
 }
 
-/** Same identity key the assignment map uses: `department||name`, lowercased. */
+/** Same identity key the assignment map uses: canonical `department||name`, lowercased. */
 export function employeeAssignmentKey(department: string, name: string): string {
-  return `${department}||${name}`.trim().toLowerCase();
+  const dept = canonTrainingMatrixDepartment(department) || String(department || '').trim();
+  return `${dept}||${name}`.trim().toLowerCase();
 }
 
 function toScoped(emp: EmployeeLean): TrainerScopedEmployee {

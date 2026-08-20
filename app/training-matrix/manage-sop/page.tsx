@@ -119,6 +119,25 @@ function sortDesignations(list: string[]): string[] {
   });
 }
 
+function designationsOverlap(left: string, right: string): boolean {
+  const tokens = (input: string): string[] => {
+    const raw = String(input || '').trim();
+    if (!raw) return [];
+    const out = new Set<string>();
+    for (const part of raw.split(/[;,/|]/).map((p) => p.trim()).filter(Boolean)) {
+      const full = part.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (full) out.add(full);
+      const abbr = desigAbbr(part).toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (abbr) out.add(abbr);
+    }
+    return [...out];
+  };
+  const a = tokens(left);
+  if (a.length === 0) return false;
+  const b = new Set(tokens(right));
+  return a.some((t) => b.has(t));
+}
+
 // Strip the leading "CODE-VV_" prefix (e.g. "BSGE01-05_Handling..." -> "Handling...")
 // Match server manualAllocations / manualDesignations keys (stripVersion + uppercase).
 function sopCacheKey(code: string): string {
@@ -159,7 +178,7 @@ interface ManageSOPViewResponse {
   departments: string[];
   designationsByDept: Record<string, string[]>;
   employeeCountsByDeptDesig: Record<string, Record<string, number>>;
-  employeesByDept?: Record<string, Array<{ name: string; designation: string }>>;
+  employeesByDept?: Record<string, Array<{ name: string; designation: string; isTrainer?: boolean; assignedSopCodes?: string[] }>>;
   unassignedEmployees?: Array<{ name: string; designation: string; department: string }>;
   stats: { total: number; assigned: number; unassigned: number; unassignedEmployees?: number };
   sopCountsByDeptMonth?: Record<string, Record<number, number>>;
@@ -171,7 +190,7 @@ interface ManageSOPViewResponse {
   year: number | 'all';
 }
 
-const MANAGE_SOP_VIEW_LOCAL_CACHE_KEY = 'manage_sop_view_cache_v9';
+const MANAGE_SOP_VIEW_LOCAL_CACHE_KEY = 'manage_sop_view_cache_v10';
 const TRAINING_MATRIX_OVERVIEW_CACHE_KEY = 'training_matrix_overview_cache_v6';
 const TRAINING_MATRIX_NEEDS_REFRESH_KEY = 'training_matrix_needs_refresh_v1';
 const EMPLOYEE_DISPLAY_COLUMNS = 3;
@@ -325,7 +344,7 @@ function ManageSOPDashboard() {
   const EMPTY_INNER: Record<string, boolean> = useMemo(() => ({}), []);
   const EMPTY_MANUAL: Record<string, number[]> = useMemo(() => ({}), []);
   const EMPTY_MANUAL_DESIG: Record<string, string[]> = useMemo(() => ({}), []);
-  const EMPTY_EMP_BY_DEPT: Record<string, Array<{ name: string; designation: string }>> = useMemo(() => ({}), []);
+  const EMPTY_EMP_BY_DEPT: Record<string, Array<{ name: string; designation: string; assignedSopCodes?: string[] }>> = useMemo(() => ({}), []);
   const [overrides, setOverrides] = useState<PerSop>({});
   const [inductionOverrides, setInductionOverrides] = useState<PerSop>({});
   const [monthCells, setMonthCells] = useState<PerSop>({});
@@ -476,6 +495,14 @@ function ManageSOPDashboard() {
   } | null>(null);
   const [addEmpSearch, setAddEmpSearch] = useState('');
   const [addEmpSelected, setAddEmpSelected] = useState<Record<string, boolean>>({});
+  const [assignEmp, setAssignEmp] = useState<{
+    name: string;
+    designation: string;
+    department: string;
+  } | null>(null);
+  const [assignEmpSearch, setAssignEmpSearch] = useState('');
+  const [assignEmpSelected, setAssignEmpSelected] = useState<Record<string, boolean>>({});
+  const [assignEmpSaving, setAssignEmpSaving] = useState(false);
 
   const stripCodeVersion = useCallback((code: string) => code.split('-').shift() || code, []);
 
@@ -491,33 +518,86 @@ function ManageSOPDashboard() {
         overview = await res.json();
         setOverviewCache(overview);
       }
-      const empRow = overview?.perDept?.[dept]?.employees?.find((e: any) => e.name === name);
       const monthMap: Record<string, string> = overview?.sopMonthMapByDept?.[dept] || {};
       const sopStatusByCode: Record<string, any> = overview?.sopStatusByCode || {};
       const sops: EmpSopRow[] = [];
+      const seen = new Set<string>();
+
+      const pushRow = (code: string, sopName: string, month: string, assigned: boolean) => {
+        const key = (code.split('-')[0] || code).toUpperCase();
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        const status = sopStatusByCode[code] || sopStatusByCode[key] || {};
+        sops.push({
+          sopCode: code,
+          sopName: status.title || sopName || code,
+          month: month || monthMap[code] || monthMap[key] || '',
+          symbol: assigned ? '√' : 'X',
+          targetDate: status.targetDate || null,
+          expired: !!status.expired,
+          totalMcq: status.totalQuestions || 0,
+          approvedMcq: status.approvedCount || 0,
+        });
+      };
+
+      const roster = viewData?.employeesByDept?.[dept] || [];
+      const rosterEmp = roster.find((e) => e.name.trim().toLowerCase() === name.trim().toLowerCase());
+      for (const code of rosterEmp?.assignedSopCodes || []) {
+        const sop = viewData?.sops.find((s) => sopCacheKey(s.sopCode) === sopCacheKey(code));
+        const deptStat = sop?.deptStats.find((d) => d.department === dept);
+        const monthNum = deptStat?.scheduledMonth || 0;
+        pushRow(
+          sop?.displaySopCode || sop?.sopCode || code,
+          sop?.sopName || code,
+          monthNum ? MONTH_FULL[monthNum - 1] : '',
+          true,
+        );
+      }
+
+      for (const sop of viewData?.sops || []) {
+        const deptStat = sop.deptStats.find((d) => d.department === dept);
+        const manualDesigList = viewData?.manualDesignations?.[sopCacheKey(sop.sopCode)]?.[dept] || [];
+        const sopOverrides = overrides[sop.sopCode] || {};
+        const key = `${dept}|${designation}`;
+        const fallback =
+          (deptStat?.designations || []).some(
+            (d) => designationsOverlap(d.designation, designation) && (d.isAssigned || (d.count || 0) > 0),
+          ) || manualDesigList.some((d) => designationsOverlap(d, designation));
+        const checked = Object.keys(sopOverrides).some(
+          (k) => k.startsWith(`${dept}|`) && sopOverrides[k] && designationsOverlap(k.slice(dept.length + 1), designation),
+        )
+          ? true
+          : key in sopOverrides
+            ? !!sopOverrides[key]
+            : fallback;
+        if (!checked) continue;
+        const monthNum = deptStat?.scheduledMonth || 0;
+        pushRow(
+          sop.displaySopCode || sop.sopCode,
+          sop.sopName,
+          monthNum ? MONTH_FULL[monthNum - 1] : '',
+          true,
+        );
+      }
+
+      const empRow = overview?.perDept?.[dept]?.employees?.find(
+        (e: any) => String(e.name || '').trim().toLowerCase() === name.trim().toLowerCase(),
+      );
       if (empRow) {
         for (const [code, v] of Object.entries(empRow.training || {})) {
           const status = sopStatusByCode[code] || sopStatusByCode[stripCodeVersion(code)] || {};
-          sops.push({
-            sopCode: code,
-            sopName: status.title || code,
-            month: monthMap[code] || monthMap[stripCodeVersion(code)] || '',
-            symbol: v ? '√' : 'X',
-            targetDate: status.targetDate || null,
-            expired: !!status.expired,
-            totalMcq: status.totalQuestions || 0,
-            approvedMcq: status.approvedCount || 0,
-          });
+          pushRow(code, status.title || code, monthMap[code] || monthMap[stripCodeVersion(code)] || '', !!v);
         }
-        sops.sort((a, b) => a.sopCode.localeCompare(b.sopCode));
       }
+
+      sops.sort((a, b) => a.sopCode.localeCompare(b.sopCode));
       setEmpModal(prev => (prev ? { ...prev, sops, loading: false } : null));
     } catch (err) {
       setEmpModal(prev =>
         prev ? { ...prev, loading: false, error: err instanceof Error ? err.message : 'Failed to load' } : null
       );
     }
-  }, [overviewCache, stripCodeVersion]);
+  }, [overviewCache, stripCodeVersion, viewData, overrides]);
 
   const openAddEmployeeModal = useCallback((sopCode: string, sopName: string, dept: string) => {
     setAddEmpModal({ sopCode, sopName, dept });
@@ -1160,6 +1240,111 @@ function ManageSOPDashboard() {
       setUnassignedEmpModalOpen(false);
     } finally {
       setAutoAssigningEmployees(false);
+    }
+  };
+
+  const reloadManageSopView = useCallback(async () => {
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(MANAGE_SOP_VIEW_LOCAL_CACHE_KEY);
+        localStorage.removeItem(TRAINING_MATRIX_OVERVIEW_CACHE_KEY);
+        localStorage.setItem(TRAINING_MATRIX_NEEDS_REFRESH_KEY, String(Date.now()));
+        sessionStorage.removeItem('lms-portal-cache-v8');
+      }
+    } catch { /* storage unavailable */ }
+    setOverviewCache(null);
+    const freshRes = await fetch('/api/training-matrix/manage-sop-view?year=all&refresh=1', {
+      cache: 'no-store',
+    });
+    if (!freshRes.ok) throw new Error('Failed to refresh view');
+    const fresh = await freshRes.json();
+    if (isValidManageSopViewResponse(fresh)) {
+      setViewData(fresh);
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(MANAGE_SOP_VIEW_LOCAL_CACHE_KEY, JSON.stringify(fresh));
+        }
+      } catch { /* non-fatal */ }
+    }
+  }, []);
+
+  const assignEmpSops = useMemo(() => {
+    if (!assignEmp || !viewData) return [];
+    const dept = assignEmp.department;
+    const q = assignEmpSearch.trim().toLowerCase();
+    return viewData.sops.filter((sop) => {
+      const ds = sop.deptStats.find((d) => d.department === dept);
+      const relevant =
+        sop.primaryDepartment === dept ||
+        !!(ds && (ds.isScheduled || ds.isAssigned || ds.scheduledMonth || (ds.total || 0) > 0));
+      if (!relevant) return false;
+      if (!q) return true;
+      return (
+        sop.sopCode.toLowerCase().includes(q) ||
+        sop.sopName.toLowerCase().includes(q) ||
+        (sop.displaySopCode || '').toLowerCase().includes(q)
+      );
+    });
+  }, [assignEmp, assignEmpSearch, viewData]);
+
+  const openAssignEmployee = useCallback((emp: { name: string; designation: string; department: string }) => {
+    setAssignEmp(emp);
+    setAssignEmpSearch('');
+    const selected: Record<string, boolean> = {};
+    const roster = viewData?.employeesByDept?.[emp.department] || [];
+    const live = roster.find((e) => e.name.trim().toLowerCase() === emp.name.trim().toLowerCase());
+    for (const code of live?.assignedSopCodes || []) {
+      selected[sopCacheKey(code)] = true;
+    }
+    setAssignEmpSelected(selected);
+  }, [viewData]);
+
+  const saveAssignEmployee = async () => {
+    if (!assignEmp || assignEmpSaving || applying) return;
+    const selected = assignEmpSops.filter((sop) => assignEmpSelected[sopCacheKey(sop.sopCode)]);
+    if (selected.length === 0) {
+      setApplyMsg({ kind: 'err', text: 'Select at least one SOP to assign.' });
+      return;
+    }
+    setAssignEmpSaving(true);
+    setApplyMsg(null);
+    try {
+      const res = await fetch('/api/training-matrix/manage-sop-view', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeSopAssignments: [{
+            employeeName: assignEmp.name,
+            department: assignEmp.department,
+            designation: assignEmp.designation,
+            sops: selected.map((sop) => {
+              const ds = sop.deptStats.find((d) => d.department === assignEmp.department);
+              const months = ds?.scheduledMonth ? [ds.scheduledMonth] : [];
+              return {
+                sopCode: sop.sopCode,
+                sopName: sop.sopName,
+                months,
+              };
+            }),
+          }],
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Assign failed');
+      await reloadManageSopView();
+      setAssignEmp(null);
+      setUnassignedEmpModalOpen(false);
+      setApplyMsg({
+        kind: 'ok',
+        text: `Assigned ${selected.length} SOP${selected.length === 1 ? '' : 's'} to ${assignEmp.name}.`,
+      });
+    } catch (err) {
+      setApplyMsg({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Failed to assign SOPs',
+      });
+    } finally {
+      setAssignEmpSaving(false);
     }
   };
 
@@ -2497,6 +2682,7 @@ function ManageSOPDashboard() {
                       <th className="px-3 py-2.5">Name</th>
                       <th className="px-3 py-2.5">Designation</th>
                       <th className="px-3 py-2.5">Department</th>
+                      <th className="px-3 py-2.5 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -2513,6 +2699,15 @@ function ManageSOPDashboard() {
                             {deptAbbrLabel(emp.department)}
                           </span>
                         </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() => openAssignEmployee(emp)}
+                            className="px-2.5 py-1 text-xs font-semibold rounded bg-orange-600 text-white hover:bg-orange-700"
+                          >
+                            Assign
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2522,7 +2717,7 @@ function ManageSOPDashboard() {
 
             <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 rounded-b-lg flex items-center justify-between gap-3">
               <span className="text-xs text-gray-500">
-                Auto Assign ticks each employee&apos;s designation on SOPs already scheduled in their department.
+                Assign picks department SOPs for one employee. Auto Assign ticks each designation on SOPs already scheduled in their department.
               </span>
               <div className="flex items-center gap-2 shrink-0">
                 <button
@@ -2543,6 +2738,140 @@ function ManageSOPDashboard() {
                 >
                   <Wand2 className="w-3.5 h-3.5" />
                   {autoAssigningEmployees ? 'Assigning…' : 'Auto Assign Employees'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assign SOPs to one unassigned employee */}
+      {assignEmp && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4"
+          onClick={() => !assignEmpSaving && setAssignEmp(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-lg shadow-2xl flex flex-col w-full max-w-3xl"
+            style={{ maxHeight: '85vh' }}
+          >
+            <div className="flex items-start justify-between px-5 py-3 border-b border-orange-100 bg-orange-50 rounded-t-lg">
+              <div className="min-w-0">
+                <div className="text-base font-bold text-gray-900">Assign SOPs</div>
+                <div className="text-xs text-gray-600 mt-0.5">
+                  {assignEmp.name} · {assignEmp.designation} · {deptAbbrLabel(assignEmp.department)}
+                </div>
+              </div>
+              <button
+                onClick={() => !assignEmpSaving && setAssignEmp(null)}
+                className="text-gray-400 hover:text-gray-700 text-2xl leading-none p-1"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="px-5 py-3 border-b border-gray-200 bg-white">
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 text-gray-400 w-4 h-4" />
+                <input
+                  type="text"
+                  value={assignEmpSearch}
+                  onChange={(e) => setAssignEmpSearch(e.target.value)}
+                  placeholder="Search SOP code or name..."
+                  className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded text-sm"
+                />
+              </div>
+              <div className="mt-2 text-xs text-gray-500">
+                Showing SOPs already scheduled or owned by {deptAbbrLabel(assignEmp.department)}. Select the ones this employee should take.
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto">
+              {assignEmpSops.length === 0 ? (
+                <div className="px-5 py-10 text-center text-sm text-gray-500">
+                  No SOPs found for {deptAbbrLabel(assignEmp.department)}.
+                </div>
+              ) : (
+                <table className="w-full text-left text-sm">
+                  <thead className="sticky top-0 bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                    <tr>
+                      <th className="px-5 py-2.5 w-10">
+                        <input
+                          type="checkbox"
+                          checked={
+                            assignEmpSops.length > 0 &&
+                            assignEmpSops.every((sop) => assignEmpSelected[sopCacheKey(sop.sopCode)])
+                          }
+                          onChange={(e) => {
+                            const next: Record<string, boolean> = { ...assignEmpSelected };
+                            for (const sop of assignEmpSops) {
+                              next[sopCacheKey(sop.sopCode)] = e.target.checked;
+                            }
+                            setAssignEmpSelected(next);
+                          }}
+                          className="w-4 h-4"
+                          aria-label="Select all SOPs"
+                        />
+                      </th>
+                      <th className="px-3 py-2.5">SOP Code</th>
+                      <th className="px-3 py-2.5">SOP Name</th>
+                      <th className="px-3 py-2.5 w-24">Month</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {assignEmpSops.map((sop) => {
+                      const key = sopCacheKey(sop.sopCode);
+                      const ds = sop.deptStats.find((d) => d.department === assignEmp.department);
+                      const monthNum = ds?.scheduledMonth || 0;
+                      return (
+                        <tr key={key} className="hover:bg-orange-50/40">
+                          <td className="px-5 py-2">
+                            <input
+                              type="checkbox"
+                              checked={!!assignEmpSelected[key]}
+                              onChange={(e) =>
+                                setAssignEmpSelected((prev) => ({ ...prev, [key]: e.target.checked }))
+                              }
+                              className="w-4 h-4"
+                            />
+                          </td>
+                          <td className="px-3 py-2 font-mono font-bold text-blue-700 whitespace-nowrap">
+                            {sop.displaySopCode || sop.sopCode}
+                          </td>
+                          <td className="px-3 py-2 text-gray-800">{sop.sopName}</td>
+                          <td className="px-3 py-2 text-gray-700 whitespace-nowrap">
+                            {monthNum ? MONTH_SHORT[monthNum - 1] : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 rounded-b-lg flex items-center justify-between gap-3">
+              <span className="text-xs text-gray-500">
+                {Object.values(assignEmpSelected).filter(Boolean).length} selected
+              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setAssignEmp(null)}
+                  disabled={assignEmpSaving}
+                  className="px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded hover:bg-white disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveAssignEmployee}
+                  disabled={assignEmpSaving || applying || assignEmpSops.length === 0}
+                  className="px-3 py-1.5 bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-60 disabled:cursor-not-allowed text-sm font-medium"
+                >
+                  {assignEmpSaving ? 'Saving…' : 'Assign selected'}
                 </button>
               </div>
             </div>
@@ -2910,7 +3239,7 @@ interface SopRowsBodyProps {
   monthCells: Record<string, Record<string, boolean>>;
   manualAllocations?: ManageSOPViewResponse['manualAllocations'];
   manualDesignations?: ManageSOPViewResponse['manualDesignations'];
-  employeesByDept: Record<string, Array<{ name: string; designation: string }>>;
+  employeesByDept: Record<string, Array<{ name: string; designation: string; assignedSopCodes?: string[] }>>;
   emptyInner: Record<string, boolean>;
   emptyManual: Record<string, number[]>;
   emptyManualDesig: Record<string, string[]>;
@@ -3054,7 +3383,7 @@ interface SopRowProps {
   sopManualAllocations: Record<string, number[]>;
   sopManualDesignations: Record<string, string[]>;
   viewMode: 'designation' | 'employee';
-  employeesByDept: Record<string, Array<{ name: string; designation: string }>>;
+  employeesByDept: Record<string, Array<{ name: string; designation: string; assignedSopCodes?: string[] }>>;
   onEmployeeClick: (name: string, dept: string, designation: string) => void;
   onOpenAddEmployee: (sopCode: string, sopName: string, dept: string) => void;
   setDesigChecked: (sopCode: string, dept: string, abbr: string, value: boolean) => void;
@@ -3284,9 +3613,20 @@ const SopRow = memo(function SopRow({
                           return false;
                         })();
 
-                        const selectedEmployees = hasSelectedMonth
-                          ? (employeesByDept[dept] || []).filter((emp) => !!byDesignation.get(norm(emp.designation))?.trainingChecked)
-                          : [];
+                        const findDesigState = (empDesignation: string) => {
+                          const exact = byDesignation.get(norm(empDesignation));
+                          if (exact) return exact;
+                          return desigStates.find((s) => designationsOverlap(empDesignation, s.fullName));
+                        };
+                        const thisSopKey = sopCacheKey(sop.sopCode);
+                        const selectedEmployees = (employeesByDept[dept] || []).filter((emp) => {
+                          const assignedCodes = new Set((emp.assignedSopCodes || []).map((c) => sopCacheKey(c)));
+                          if (assignedCodes.has(thisSopKey)) return true;
+                          if (!hasSelectedMonth) return false;
+                          if (findDesigState(emp.designation)?.trainingChecked) return true;
+                          const overrideKey = desigKeyHelper(dept, emp.designation);
+                          return overrideKey in sopOverrides && !!sopOverrides[overrideKey];
+                        });
 
                         if (selectedEmployees.length === 0) {
                           return (
@@ -3303,8 +3643,11 @@ const SopRow = memo(function SopRow({
                                 className="flex flex-col gap-y-0.5 min-w-0"
                               >
                                 {colEmps.map((emp, empIdx) => {
-                                  const matched = byDesignation.get(norm(emp.designation));
-                                  const trainingChecked = !!matched?.trainingChecked;
+                                  const matched = findDesigState(emp.designation);
+                                  const assignedToSop = (emp.assignedSopCodes || []).some(
+                                    (c) => sopCacheKey(c) === thisSopKey,
+                                  );
+                                  const trainingChecked = !!matched?.trainingChecked || assignedToSop;
                                   const inductionChecked = !!matched?.inductionChecked;
                                   const fullName = matched?.fullName || emp.designation;
                                   return (

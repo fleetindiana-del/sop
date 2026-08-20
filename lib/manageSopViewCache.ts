@@ -1,6 +1,6 @@
 import SystemCache from '@/models/SystemCache';
 
-const CACHE_PREFIX = 'manage-sop-view:v8';
+const CACHE_PREFIX = 'manage-sop-view:v9';
 const MEMORY_CACHE_TTL_MS = 30 * 60 * 1000;
 
 type MemoryEntry = { cachedAt: number; payload: unknown };

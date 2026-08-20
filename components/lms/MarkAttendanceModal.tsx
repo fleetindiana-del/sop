@@ -85,18 +85,9 @@ export function MarkAttendanceModal({
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to load employees');
 
-      const seedIds = new Set(
-        seedEmployees
-          .filter((e) => !e.department || e.department.toLowerCase() === dept.toLowerCase())
-          .map((e) => e.employeeId),
-      );
       const all = (json.employees ?? []) as EligibleEmployee[];
-      // Prefer people on this SOP’s sitting; fall back to assigned-this-SOP, then all.
-      const scoped = seedIds.size > 0
-        ? all.filter((e) => seedIds.has(e.employeeId) || e.assignedThisSop)
-        : all.filter((e) => e.assignedThisSop);
-      const list = (scoped.length > 0 ? scoped : all)
-        .slice()
+      const list = all
+        .filter((e) => e.assignedThisSop)
         .sort((a, b) => a.name.localeCompare(b.name));
       setEmployees(list);
 
@@ -154,10 +145,10 @@ export function MarkAttendanceModal({
       setExistingId(null);
       setAbsent(new Set());
       setSavedMsg('Attendance record deleted');
-      onSaved?.();
+      setBusy(false);
+      return;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete');
-    } finally {
       setBusy(false);
     }
   };

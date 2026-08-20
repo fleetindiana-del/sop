@@ -60,21 +60,23 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: resolved.error }, { status: resolved.status });
     }
 
-    const employees = scoped.map((emp) => {
-      const assigned = (assignments.get(employeeAssignmentKey(emp.department, emp.name)) || [])
-        .some((a) => stripVersion(a.sopCode) === sopCode);
-      return {
-        employeeId: emp.employeeId,
-        name: emp.name,
-        designation: emp.designation,
-        department: emp.department,
-        employeeCode: emp.employeeCode,
-        isTrainer: emp.isTrainer,
-        hasLmsAccess: emp.hasLmsAccess,
-        assignedThisSop: assigned,
-        defaultStatus: 'present' as const,
-      };
-    });
+    const employees = scoped
+      .map((emp) => {
+        const assigned = (assignments.get(employeeAssignmentKey(emp.department, emp.name)) || [])
+          .some((a) => stripVersion(a.sopCode) === sopCode);
+        return {
+          employeeId: emp.employeeId,
+          name: emp.name,
+          designation: emp.designation,
+          department: emp.department,
+          employeeCode: emp.employeeCode,
+          isTrainer: emp.isTrainer,
+          hasLmsAccess: emp.hasLmsAccess,
+          assignedThisSop: assigned,
+          defaultStatus: 'present' as const,
+        };
+      })
+      .filter((e) => e.assignedThisSop);
 
     const existing = existingSheets[0] ? serializeAttendance(existingSheets[0]) : null;
 

@@ -16,6 +16,7 @@ import {
 import { invalidateInductionTrainingMatrixCache } from "@/lib/inductionTrainingMatrixCache";
 import {
   getEmployeeAssignmentsMap,
+  employeeAssignmentMapKey,
 } from "@/lib/employeeAssignments";
 import {
   getManageSopViewCacheEntry,
@@ -37,6 +38,7 @@ import {
 } from "@/lib/trainingMatrixDepartments.server";
 import {
   resolveTrainingMatrixDepartment,
+  canonTrainingMatrixDepartment,
 } from "@/lib/trainingMatrixDepartments";
 import { resolveTrainerDepartments } from "@/lib/employeeTrainer";
 import SOP from "@/models/SOP";
@@ -197,6 +199,49 @@ function designationSetsOverlap(
   return false;
 }
 
+type SnapshotEmployee = {
+  name?: string;
+  designation?: string;
+  training?: Record<string, boolean>;
+};
+
+function snapshotEmployeeNameKey(name: string): string {
+  return String(name || "").trim().toLowerCase();
+}
+
+function upsertSnapshotEmployeeTraining(
+  employees: SnapshotEmployee[],
+  name: string,
+  designation: string,
+  sopCode: string,
+  assigned: boolean,
+): void {
+  const key = snapshotEmployeeNameKey(name);
+  if (!key || !sopCode) return;
+  let emp = employees.find(
+    (row) => snapshotEmployeeNameKey(String(row?.name || "")) === key,
+  );
+  if (!emp) {
+    emp = {
+      name: String(name || "").trim(),
+      designation: String(designation || "").trim(),
+      training: {},
+    };
+    employees.push(emp);
+  }
+  if (!emp.training) emp.training = {};
+  if (assigned) emp.training[sopCode] = true;
+  else delete emp.training[sopCode];
+  if (designation && !emp.designation) emp.designation = designation;
+}
+
+type RosterEmployee = {
+  name: string;
+  designation: string;
+  isTrainer?: boolean;
+  assignedSopCodes?: string[];
+};
+
 export interface SOPViewDesignationStat {
   designation: string;
   isAssigned: boolean;
@@ -234,7 +279,7 @@ export interface ManageSOPViewResponse {
   employeeCountsByDeptDesig: Record<string, Record<string, number>>;
   // Resolved employee roster per department — name + designation, sorted by name.
   // Used by the page's Employees view to render names in place of designation abbreviations.
-  employeesByDept: Record<string, Array<{ name: string; designation: string; isTrainer?: boolean }>>;
+  employeesByDept: Record<string, RosterEmployee[]>;
   // Active employees with no SOP training assignments (same source as employee master).
   unassignedEmployees: Array<{ name: string; designation: string; department: string }>;
   stats: {
@@ -466,7 +511,7 @@ async function buildManageSopViewResponse(
         .select("department designation name isTrainer trainerDepartments")
         .lean(),
       TrainingMatrixUpload.find({ "snapshot.sopMonthMap": { $exists: true } })
-        .select("department snapshot.sopMonthMap uploadedAt year")
+        .select("department snapshot.sopMonthMap snapshot.employees uploadedAt year")
         .sort({ uploadedAt: -1 })
         .lean(),
       getDashboardSopsCache(),
@@ -642,10 +687,7 @@ async function buildManageSopViewResponse(
     // plus the resolved roster (name + designation) used by the Employees view.
     const designationsByDept = new Map<string, Set<string>>();
     const empCountMap = new Map<string, Map<string, number>>();
-    const empRoster = new Map<
-      string,
-      Array<{ name: string; designation: string; isTrainer?: boolean }>
-    >();
+    const empRoster = new Map<string, RosterEmployee[]>();
     for (const dept of departments) {
       designationsByDept.set(dept, new Set<string>());
       empCountMap.set(dept, new Map<string, number>());
@@ -715,6 +757,56 @@ async function buildManageSopViewResponse(
       list.sort((a, b) => a.name.localeCompare(b.name));
     }
 
+    // Excel-snapshot employees who are not (yet) in the Employee collection still
+    // belong on the Manage SOP roster — otherwise assigned names vanish from the list.
+    const snapshotRosterSeen = new Set<string>();
+    for (const up of scheduleUploads as Array<{
+      department?: string;
+      snapshot?: { employees?: Array<{ name?: string; designation?: string }> };
+    }>) {
+      const empDept =
+        resolveTrainingMatrixDepartment(up.department, departments) ||
+        String(up.department || "").trim();
+      if (!empDept) continue;
+      const seenKey = empDept.toLowerCase();
+      if (snapshotRosterSeen.has(seenKey)) continue;
+      snapshotRosterSeen.add(seenKey);
+      ensureDept(empDept);
+      if (!empRoster.has(empDept)) empRoster.set(empDept, []);
+      const roster = empRoster.get(empDept)!;
+      for (const snapEmp of up.snapshot?.employees || []) {
+        const name = String(snapEmp?.name || "").trim();
+        if (!name) continue;
+        if (roster.some((r) => r.name.toLowerCase() === name.toLowerCase())) continue;
+        roster.push({
+          name,
+          designation: String(snapEmp?.designation || "").trim() || "—",
+        });
+      }
+      roster.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    const lookupAssignedSops = (dept: string, name: string): string[] => {
+      const assigns =
+        employeeAssignmentsMap.get(employeeAssignmentMapKey(dept, name)) ||
+        employeeAssignmentsMap.get(`${dept}||${name}`.trim().toLowerCase()) ||
+        [];
+      return [
+        ...new Set(
+          assigns
+            .map((a) => stripVersion(a.sopCode))
+            .filter(Boolean),
+        ),
+      ];
+    };
+
+    for (const [dept, list] of empRoster) {
+      for (const emp of list) {
+        const codes = lookupAssignedSops(dept, emp.name);
+        if (codes.length) emp.assignedSopCodes = codes;
+      }
+    }
+
     // Employees with zero SOP assignments — powers the Unassigned Employees card.
     // Trainers (isTrainer=true) are excluded: they manage all SOPs in their department
     // and are auto-assigned to every scheduled SOP regardless of designation.
@@ -739,8 +831,12 @@ async function buildManageSopViewResponse(
       if (!empDept) continue;
       // Trainers manage all dept SOPs — skip them from unassigned list.
       if (emp.isTrainer) continue;
-      const key = `${empDept}||${name}`.trim().toLowerCase();
-      const assigned = employeeAssignmentsMap.get(key);
+      const assigned =
+        employeeAssignmentsMap.get(employeeAssignmentMapKey(empDept, name)) ||
+        employeeAssignmentsMap.get(`${empDept}||${name}`.trim().toLowerCase()) ||
+        employeeAssignmentsMap.get(
+          `${String(emp.department || "").trim()}||${name}`.trim().toLowerCase(),
+        );
       if (assigned && assigned.length > 0) continue;
       unassignedEmployees.push({ name, designation, department: empDept });
     }
@@ -1218,10 +1314,7 @@ async function buildManageSopViewResponse(
       employeeCountsByDeptDesigObj[dept] = Object.fromEntries(dMap);
     }
 
-    const employeesByDeptObj: Record<
-      string,
-      Array<{ name: string; designation: string; isTrainer?: boolean }>
-    > = {};
+    const employeesByDeptObj: Record<string, RosterEmployee[]> = {};
     for (const [dept, list] of empRoster) {
       employeesByDeptObj[dept] = list;
     }
@@ -1418,9 +1511,21 @@ export interface ManageSOPRemoveEntry {
   removeAllDesignations?: boolean;
 }
 
+export interface ManageSOPEmployeeSopAssignment {
+  employeeName: string;
+  department: string;
+  designation?: string;
+  sops: Array<{
+    sopCode: string;
+    sopName?: string;
+    months?: number[];
+  }>;
+}
+
 export interface ManageSOPApplyRequest {
   entries?: ManageSOPApplyEntry[];
   removals?: ManageSOPRemoveEntry[];
+  employeeSopAssignments?: ManageSOPEmployeeSopAssignment[];
 }
 
 async function getOrCreateManualUploadId(
@@ -1454,7 +1559,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const body = (await request.json()) as ManageSOPApplyRequest;
     const upsertEntries = Array.isArray(body?.entries) ? body.entries : [];
     const removalEntries = Array.isArray(body?.removals) ? body.removals : [];
-    if (!body || (upsertEntries.length === 0 && removalEntries.length === 0)) {
+    const employeeSopAssignments = Array.isArray(body?.employeeSopAssignments)
+      ? body.employeeSopAssignments
+      : [];
+    if (
+      !body ||
+      (upsertEntries.length === 0 &&
+        removalEntries.length === 0 &&
+        employeeSopAssignments.length === 0)
+    ) {
       console.info(
         `${MANAGE_SOP_API_LOG} POST /api/training-matrix/manage-sop-view source=manage-sop empty_payload dbConnectMs=${dbConnectMs} totalMs=${elapsedMs(reqStartMs)}`,
       );
@@ -1509,10 +1622,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ...new Set([
         ...normEntries.map((e) => e.department),
         ...normRemovals.map((r) => r.department),
+        ...employeeSopAssignments.map((a) => String(a.department || "").trim()).filter(Boolean),
       ]),
     ];
 
-    const [removalResults, employeeResults, mainUploads, uploadIdResults] = await Promise.all([
+    const [removalResults, allActiveEmployees, mainUploads, uploadIdResults] = await Promise.all([
       // All deletions in parallel
       Promise.all(normRemovals.map(async (r) => {
         const filter: Record<string, any> = {
@@ -1533,21 +1647,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (ids.length === 0) return { deletedCount: 0 };
         return TrainingMatrixRecord.deleteMany({ _id: { $in: ids } });
       })),
-      // Employees in the department whose designation matches (full name or abbr).
-      // Trainers are NOT auto-included — LMS exams must only go to assigned roles.
-      Promise.all(normEntries.map(async (e) => {
-        const emps = await Employee.find({
-          isActive: true,
-          department: e.department,
-        })
-          .select("name designation isTrainer trainerDepartments department")
-          .lean();
-        return (emps as Array<{ name?: string; designation?: string; isTrainer?: boolean }>).filter(
-          (emp) =>
-            !emp.isTrainer &&
-            designationSetsOverlap(emp.designation || "", e.designations),
-        );
-      })),
+      Employee.find({ isActive: true })
+        .select("name designation isTrainer trainerDepartments department")
+        .lean<Array<{
+          name?: string;
+          designation?: string;
+          isTrainer?: boolean;
+          department?: string;
+        }>>(),
       // All main-upload fetches in parallel (one per unique dept)
       Promise.all(uniqueDepts.map((dept) =>
         TrainingMatrixUpload.findOne({
@@ -1563,6 +1670,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       })),
     ]);
 
+    const employeesForDept = (dept: string) =>
+      allActiveEmployees.filter((emp) => {
+        if (emp.isTrainer) return false;
+        const empDept =
+          resolveTrainingMatrixDepartment(emp.department, uniqueDepts) ||
+          canonTrainingMatrixDepartment(String(emp.department || "")) ||
+          String(emp.department || "").trim();
+        return empDept.toLowerCase() === dept.toLowerCase();
+      });
+
+    const employeeResults = normEntries.map((e) =>
+      employeesForDept(e.department).filter((emp) =>
+        designationSetsOverlap(emp.designation || "", e.designations),
+      ),
+    );
+
     const totalRemoved = removalResults.reduce((s, r) => s + (r.deletedCount || 0), 0);
     const mainUploadByDept = new Map<string, any>(
       uniqueDepts.map((dept, i) => [dept, mainUploads[i]])
@@ -1577,7 +1700,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
 
     // ── Phase 2 (parallel): all bulkWrites + all snapshot updates ───────────
-    type SnapshotPatch = { sopCode: string; sopName: string; months: number[]; designations: string[] };
+    type SnapshotPatch = {
+      sopCode: string;
+      sopName: string;
+      months: number[];
+      designations: string[];
+      employees: Array<{ name: string; designation: string }>;
+      namedOnly?: boolean;
+    };
     const snapshotPatches = new Map<string, SnapshotPatch[]>(); // dept → patches
     const snapshotRemovalPatches = new Map<string, NormRemoval[]>(); // dept → removals
 
@@ -1610,7 +1740,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Accumulate snapshot patches per dept
       if (!snapshotPatches.has(e.department)) snapshotPatches.set(e.department, []);
       snapshotPatches.get(e.department)!.push({
-        sopCode: e.sopCode, sopName: e.sopName, months: e.months, designations: e.designations,
+        sopCode: e.sopCode,
+        sopName: e.sopName,
+        months: e.months,
+        designations: e.designations,
+        employees: (emps as Array<{ name?: string; designation?: string }>)
+          .map((emp) => ({
+            name: String(emp.name || "").trim(),
+            designation: String(emp.designation || "").trim(),
+          }))
+          .filter((emp) => emp.name),
       });
       return ops;
     });
@@ -1618,6 +1757,133 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     for (const r of normRemovals) {
       if (!snapshotRemovalPatches.has(r.department)) snapshotRemovalPatches.set(r.department, []);
       snapshotRemovalPatches.get(r.department)!.push(r);
+    }
+
+    const monthNameToNumber = (name: string): number | null => {
+      const idx = MONTH_NAMES.findIndex(
+        (m) => m && m.toLowerCase() === String(name || "").trim().toLowerCase(),
+      );
+      return idx > 0 ? idx : null;
+    };
+
+    const monthsFromDeptSnapshot = (dept: string, sopCode: string): number[] => {
+      const mainUpload: any = mainUploadByDept.get(dept);
+      const snapshotMonthMap: Record<string, string> = mainUpload?.snapshot?.sopMonthMap || {};
+      const base = stripVersion(sopCode);
+      const months: number[] = [];
+      for (const [k, v] of Object.entries(snapshotMonthMap)) {
+        if (stripVersion(String(k)) !== base || !v) continue;
+        for (const part of String(v).split(",").map((s) => s.trim()).filter(Boolean)) {
+          const n = monthNameToNumber(part);
+          if (n && !months.includes(n)) months.push(n);
+        }
+      }
+      return months;
+    };
+
+    type ResolvedEmpAssign = {
+      department: string;
+      year: number;
+      employeeName: string;
+      designation: string;
+      sopCode: string;
+      sopName: string;
+      months: number[];
+    };
+    const resolvedEmpAssigns: ResolvedEmpAssign[] = [];
+    for (const row of employeeSopAssignments) {
+      const department = String(row.department || "").trim();
+      const employeeName = String(row.employeeName || "").trim();
+      if (!department || !employeeName) {
+        warnings.push("Skipped an employee SOP assignment with no name or department.");
+        continue;
+      }
+      const live = employeesForDept(department).find(
+        (emp) => String(emp.name || "").trim().toLowerCase() === employeeName.toLowerCase(),
+      );
+      const designation = String(row.designation || live?.designation || "").trim();
+      const year = fallbackYear;
+      const sops = Array.isArray(row.sops) ? row.sops : [];
+      if (sops.length === 0) {
+        warnings.push(`No SOPs selected for ${employeeName} (${department}).`);
+        continue;
+      }
+      for (const sop of sops) {
+        const sopCode = String(sop.sopCode || "").trim();
+        if (!sopCode) continue;
+        let months = (sop.months || []).filter((m) => Number.isInteger(m) && m >= 1 && m <= 12);
+        if (months.length === 0) months = monthsFromDeptSnapshot(department, sopCode);
+        if (months.length === 0) months = [new Date().getMonth() + 1];
+        resolvedEmpAssigns.push({
+          department,
+          year,
+          employeeName,
+          designation,
+          sopCode,
+          sopName: String(sop.sopName || sopCode).trim() || sopCode,
+          months,
+        });
+        for (const m of months) uploadIdKeys.add(`${department}|${year}|${m}`);
+      }
+    }
+
+    const missingUploadKeys = [...uploadIdKeys].filter((k) => !uploadIdMap.has(k));
+    if (missingUploadKeys.length > 0) {
+      const extraIds = await Promise.all(
+        missingUploadKeys.map(async (key) => {
+          const [dept, yearStr, monthStr] = key.split("|");
+          const id = await getOrCreateManualUploadId(dept, Number(yearStr), Number(monthStr));
+          return [key, id] as const;
+        }),
+      );
+      for (const [key, id] of extraIds) uploadIdMap.set(key, id);
+    }
+
+    for (const item of resolvedEmpAssigns) {
+      const ops: any[] = [];
+      for (const month of item.months) {
+        const uploadId = uploadIdMap.get(`${item.department}|${item.year}|${month}`);
+        const monthName = MONTH_NAMES[month] || `Month ${month}`;
+        ops.push({
+          updateOne: {
+            filter: {
+              employeeName: item.employeeName,
+              sopCode: item.sopCode,
+              month,
+              year: item.year,
+              department: item.department,
+            },
+            update: {
+              $setOnInsert: {
+                uploadId,
+                department: item.department,
+                employeeName: item.employeeName,
+                designation: item.designation,
+                sopCode: item.sopCode,
+                sopName: item.sopName,
+                month,
+                year: item.year,
+                monthName,
+                rawSymbol: "✓",
+                sourceFile: "manage-sop-manual",
+                isAddendum: true,
+              },
+              $set: { status: "completed" },
+            },
+            upsert: true,
+          },
+        });
+      }
+      if (ops.length) bulkWriteOps.push(ops);
+      if (!snapshotPatches.has(item.department)) snapshotPatches.set(item.department, []);
+      snapshotPatches.get(item.department)!.push({
+        sopCode: item.sopCode,
+        sopName: item.sopName,
+        months: item.months,
+        designations: item.designation ? [item.designation] : [],
+        employees: [{ name: item.employeeName, designation: item.designation }],
+        namedOnly: true,
+      });
     }
 
     // Final designation applicability per (sop, dept) — drives Training Matrix assignment rows.
@@ -1662,8 +1928,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
           const snapshotCodes: string[] = Array.isArray(mainUpload?.snapshot?.sopCodes)
             ? mainUpload.snapshot.sopCodes : [];
-          const snapshotEmployees: Array<{ name?: string; designation?: string; training?: Record<string, boolean> }> =
-            Array.isArray(mainUpload?.snapshot?.employees) ? mainUpload.snapshot.employees : [];
+          const snapshotEmployees: SnapshotEmployee[] = Array.isArray(mainUpload?.snapshot?.employees)
+            ? (mainUpload.snapshot.employees as SnapshotEmployee[]).map((emp) => ({
+                name: emp?.name,
+                designation: emp?.designation,
+                training: { ...(emp?.training || {}) },
+              }))
+            : [];
 
           const newSopCodes: string[] = [];
           const update: any = { $set: {} };
@@ -1685,12 +1956,30 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             const newMonths = patch.months.map((m: number) => MONTH_NAMES[m] || `Month ${m}`);
             const allMonths = [...new Set([...existingMonths, ...newMonths])];
             update.$set[`snapshot.sopMonthMap.${patch.sopCode}`] = allMonths.join(',');
-            snapshotEmployees.forEach((emp, idx) => {
-              if (designationSetsOverlap(emp?.designation || "", patch.designations)) {
-                update.$set[`snapshot.employees.${idx}.training.${patch.sopCode}`] = true;
+            if (!patch.namedOnly) {
+              for (const emp of snapshotEmployees) {
+                if (designationSetsOverlap(emp?.designation || "", patch.designations)) {
+                  upsertSnapshotEmployeeTraining(
+                    snapshotEmployees,
+                    String(emp.name || ""),
+                    String(emp.designation || ""),
+                    patch.sopCode,
+                    true,
+                  );
+                }
               }
-            });
+            }
+            for (const emp of patch.employees || []) {
+              upsertSnapshotEmployeeTraining(
+                snapshotEmployees,
+                emp.name,
+                emp.designation,
+                patch.sopCode,
+                true,
+              );
+            }
           }
+          update.$set["snapshot.employees"] = snapshotEmployees;
           if (newSopCodes.length > 0) update.$addToSet = { "snapshot.sopCodes": { $each: newSopCodes } };
           await TrainingMatrixUpload.updateOne({ _id: mainUpload._id }, update);
         } catch (e) {
