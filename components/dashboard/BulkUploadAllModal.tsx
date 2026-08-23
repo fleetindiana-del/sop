@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { FolderUp } from "lucide-react";
 import { useDashboardStore } from "@/lib/store/dashboard-store";
-import { appendFilesWithPaths } from "@/lib/upload-form";
+import { uploadSopFiles } from "@/lib/client-sop-upload";
 import {
   BulkUploadDropZone,
   BulkUploadResults,
@@ -20,8 +20,6 @@ import { PostUploadPipelineModal } from "./PostUploadPipelineModal";
 
 type UploadResult = SopUploadResult;
 
-const BATCH_SIZE = 4;
-
 function isSystemFile(f: File) {
   return f.name.startsWith(".") || f.name.startsWith("~$");
 }
@@ -36,82 +34,13 @@ function initialProgress(total: number): UploadProgress {
   return { completed: 0, total };
 }
 
-function isNetworkError(error: string | undefined): boolean {
-  if (!error) return false;
-  const lower = error.toLowerCase();
-  return lower.includes("failed to fetch") || lower.includes("network") || lower.includes("load failed");
-}
-
-async function uploadBatchOnce(files: File[], language: string, department: string): Promise<UploadResult[]> {
-  const formData = new FormData();
-  formData.append("language", language);
-  if (department.trim()) formData.append("department", department.trim());
-  formData.append("generateMcq", "false");
-  appendFilesWithPaths(formData, files);
-
-  let res: Response;
-  try {
-    res = await fetch("/api/sop/bulk-folder-upload", { method: "POST", body: formData });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Network error";
-    return files.map((f) => ({ file: f.name, success: false, error: msg }));
-  }
-
-  let data: { results?: UploadResult[]; error?: string };
-  try {
-    data = await res.json();
-  } catch {
-    return files.map((f) => ({ file: f.name, success: false, error: `HTTP ${res.status}` }));
-  }
-
-  if (!res.ok) {
-    return [{ file: "Server", success: false, error: data.error ?? `HTTP ${res.status}` }];
-  }
-  return data.results ?? [];
-}
-
-async function uploadBatchWithRetry(files: File[], language: string, department: string): Promise<UploadResult[]> {
-  if (files.length === 1) {
-    const [first] = await uploadBatchOnce(files, language, department);
-    if (first.success || !isNetworkError(first.error)) return [first];
-    return uploadBatchOnce(files, language, department);
-  }
-
-  const results = await uploadBatchOnce(files, language, department);
-  const allNetworkFailed = results.every((r) => !r.success && isNetworkError(r.error));
-  if (!allNetworkFailed) return results;
-
-  const retried: UploadResult[] = [];
-  for (const file of files) {
-    const [result] = await uploadBatchOnce([file], language, department);
-    if (!result.success && isNetworkError(result.error)) {
-      const [retry] = await uploadBatchOnce([file], language, department);
-      retried.push(retry);
-    } else {
-      retried.push(result);
-    }
-  }
-  return retried;
-}
-
 async function uploadAll(
   files: File[],
   language: string,
   department: string,
   onProgress?: (completed: number, total: number) => void,
 ): Promise<UploadResult[]> {
-  const allResults: UploadResult[] = [];
-  const total = files.length;
-
-  for (let start = 0; start < total; start += BATCH_SIZE) {
-    const batch = files.slice(start, start + BATCH_SIZE);
-    const batchResults = await uploadBatchWithRetry(batch, language, department);
-    allResults.push(...batchResults);
-    const done = Math.min(start + batch.length, total);
-    onProgress?.(done, total);
-  }
-
-  return allResults;
+  return uploadSopFiles(files, { language, department, generateMcq: false, onProgress });
 }
 
 export function BulkUploadAllModal({

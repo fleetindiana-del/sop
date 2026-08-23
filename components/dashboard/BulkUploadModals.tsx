@@ -12,7 +12,7 @@ import {
   Video,
 } from "lucide-react";
 import { useDashboardStore } from "@/lib/store/dashboard-store";
-import { appendFilesWithPaths } from "@/lib/upload-form";
+import { uploadSopFiles } from "@/lib/client-sop-upload";
 import { MediaFilePicker } from "./MediaFilePicker";
 import {
   BulkUploadDropZone,
@@ -31,21 +31,25 @@ import { PostUploadPipelineModal } from "./PostUploadPipelineModal";
 
 type UploadResult = SopUploadResult;
 
-const SKIP_PATTERN = /annexure|appendix|cover\s*page|index/i;
+const SKIP_PATTERN = /cover\s*page|^index$/i;
 
 function isSystemFile(f: File) {
   return f.name.startsWith(".") || f.name.startsWith("~$");
 }
 
+function skipByName(name: string) {
+  return SKIP_PATTERN.test(name.replace(/\.[^.]+$/, ""));
+}
+
 function filterSopFiles(files: File[]) {
   return files.filter(
-    (f) => /\.(pdf|docx)$/i.test(f.name) && !isSystemFile(f) && !SKIP_PATTERN.test(f.name),
+    (f) => /\.(pdf|docx)$/i.test(f.name) && !isSystemFile(f) && !skipByName(f.name),
   );
 }
 
 function filterPdfFiles(files: File[]) {
   return files.filter(
-    (f) => /\.pdf$/i.test(f.name) && !isSystemFile(f) && !SKIP_PATTERN.test(f.name),
+    (f) => /\.pdf$/i.test(f.name) && !isSystemFile(f) && !skipByName(f.name),
   );
 }
 
@@ -59,86 +63,10 @@ function filterMediaFiles(files: File[]) {
   );
 }
 
-const SOP_UPLOAD_BATCH_SIZE = 4;
 const MEDIA_UPLOAD_BATCH_SIZE = 5;
 
 function initialProgress(total: number): UploadProgress {
   return { completed: 0, total };
-}
-
-function isNetworkError(error: string | undefined): boolean {
-  if (!error) return false;
-  const lower = error.toLowerCase();
-  return lower.includes("failed to fetch") || lower.includes("network") || lower.includes("load failed");
-}
-
-async function uploadSopBatchOnce(
-  files: File[],
-  language: string,
-  department: string,
-  generateMcq: boolean,
-): Promise<UploadResult[]> {
-  const formData = new FormData();
-  formData.append("language", language);
-  if (department.trim()) formData.append("department", department.trim());
-  formData.append("generateMcq", String(generateMcq));
-  appendFilesWithPaths(formData, files);
-
-  let res: Response;
-  try {
-    res = await fetch("/api/sop/bulk-folder-upload", { method: "POST", body: formData });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Network error";
-    return files.map((f) => ({ file: f.name, success: false, error: msg }));
-  }
-
-  let data: { results?: UploadResult[]; error?: string };
-  try {
-    data = await res.json();
-  } catch {
-    return files.map((f) => ({ file: f.name, success: false, error: `HTTP ${res.status} (non-JSON response)` }));
-  }
-
-  if (!res.ok) {
-    return [{ file: "Server", success: false, error: data.error ?? `HTTP ${res.status}` }];
-  }
-  return data.results ?? [];
-}
-
-// When a whole batch drops (connection reset / timeout), retry each file
-// one-at-a-time so a single large file cannot drag down the others.
-async function uploadSopBatchWithFallback(
-  files: File[],
-  language: string,
-  department: string,
-  generateMcq: boolean,
-): Promise<UploadResult[]> {
-  if (files.length === 1) {
-    // Single-file: one retry before giving up.
-    const [first] = await uploadSopBatchOnce(files, language, department, generateMcq);
-    if (first.success || !isNetworkError(first.error)) return [first];
-    return uploadSopBatchOnce(files, language, department, generateMcq);
-  }
-
-  const results = await uploadSopBatchOnce(files, language, department, generateMcq);
-
-  // If every result is a network failure the whole request was dropped — fall
-  // back to one file at a time so the others can still succeed.
-  const allNetworkFailed = results.every((r) => !r.success && isNetworkError(r.error));
-  if (!allNetworkFailed) return results;
-
-  const retried: UploadResult[] = [];
-  for (const file of files) {
-    const [result] = await uploadSopBatchOnce([file], language, department, generateMcq);
-    // One extra attempt for individual network errors.
-    if (!result.success && isNetworkError(result.error)) {
-      const [retry] = await uploadSopBatchOnce([file], language, department, generateMcq);
-      retried.push(retry);
-    } else {
-      retried.push(result);
-    }
-  }
-  return retried;
 }
 
 async function uploadSopBatch(
@@ -148,21 +76,7 @@ async function uploadSopBatch(
   generateMcq: boolean,
   onProgress?: (completed: number, total: number) => void,
 ): Promise<UploadResult[]> {
-  const allResults: UploadResult[] = [];
-  const total = files.length;
-  const batchCount = Math.ceil(total / SOP_UPLOAD_BATCH_SIZE);
-
-  for (let start = 0; start < total; start += SOP_UPLOAD_BATCH_SIZE) {
-    const batch = files.slice(start, start + SOP_UPLOAD_BATCH_SIZE);
-    const batchIndex = Math.floor(start / SOP_UPLOAD_BATCH_SIZE) + 1;
-    const batchResults = await uploadSopBatchWithFallback(batch, language, department, generateMcq);
-    allResults.push(...batchResults);
-    const done = Math.min(start + batch.length, total);
-    onProgress?.(done, total);
-    console.info(`[upload] batch ${batchIndex}/${batchCount} done — ${done}/${total} files`);
-  }
-
-  return allResults;
+  return uploadSopFiles(files, { language, department, generateMcq, onProgress });
 }
 
 /* ─── SOP folder upload ─────────────────────────────────────────────── */
@@ -458,7 +372,6 @@ export function GujaratiFolderUploadModal({
           Folder names should include the SOP code (e.g. <strong>QAGE01-10</strong>). Use
           department parent folders (QA, QC, Store, etc.) so metadata is detected correctly.
         </p>
-        <p>Annexure and appendix files are skipped during selection.</p>
       </HowItWorksBox>
       <ExpectedStructureBox />
       <BulkUploadDropZone
@@ -569,7 +482,7 @@ export function BulkPdfUploadModal({
           departments. Only <strong>PDF</strong> files are imported; existing{" "}
           <strong>DOCX</strong> links are not replaced.
         </p>
-        <p>Annexure/appendix files are skipped automatically.</p>
+        <p>Cover pages and index files are skipped automatically.</p>
       </HowItWorksBox>
       <BulkUploadDropZone
         accent="red"

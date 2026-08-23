@@ -4,12 +4,11 @@ import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Upload } from "lucide-react";
 import { useDashboardStore } from "@/lib/store/dashboard-store";
-import { appendFilesWithPaths } from "@/lib/upload-form";
+import { uploadSopFiles } from "@/lib/client-sop-upload";
 import { BulkUploadProgressBar, BulkUploadResults, sopUploadToastMessage, summarizeSopUploadResults, type SopUploadResult, type UploadProgress } from "./BulkUploadShell";
 import { Btn, Modal } from "./ui";
 import { PostUploadPipelineModal } from "./PostUploadPipelineModal";
 
-const UPLOAD_BATCH_SIZE = 8;
 
 const DEPARTMENTS = [
   "QA",
@@ -57,29 +56,17 @@ export function UploadSOPModal({
       setResults([]);
 
       try {
-        const allResults: SopUploadResult[] = [];
-
-        for (let start = 0; start < acceptedFiles.length; start += UPLOAD_BATCH_SIZE) {
-          const batch = acceptedFiles.slice(start, start + UPLOAD_BATCH_SIZE);
-          const formData = new FormData();
-          formData.append("department", department);
-          formData.append("language", language);
-          formData.append("version", version);
-          if (identifier) formData.append("identifier", identifier);
-          if (name) formData.append("name", name);
-          if (location) formData.append("location", location);
-          formData.append("generateMcq", "false");
-          appendFilesWithPaths(formData, batch);
-
-          const res = await fetch("/api/sop/upload-batch", { method: "POST", body: formData });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-          allResults.push(...(data.results ?? []));
-          setUploadProgress({
-            completed: Math.min(start + batch.length, acceptedFiles.length),
-            total: acceptedFiles.length,
-          });
-        }
+        const allResults = await uploadSopFiles(acceptedFiles, {
+          language,
+          department,
+          version,
+          identifier: identifier || undefined,
+          name: name || undefined,
+          location: location || undefined,
+          generateMcq: false,
+          endpoint: "/api/sop/upload-batch",
+          onProgress: (completed, total) => setUploadProgress({ completed, total }),
+        });
 
         setResults(allResults);
 

@@ -141,7 +141,7 @@ export function ExpectedStructureBox() {
         The first path segment is used for department keywords (QA, QC, Microbiology, Store,
         etc.). SOP number, title, and version (e.g. V8) are detected from folder names. Prior
         revisions are kept by default. Files are stored in Bunny and processed in batches.
-        Annexure/appendix files are skipped. Only <strong>.docx</strong> is checked for EFF. DATE /
+        Annexures are linked to their parent SOP. Only <strong>.docx</strong> is checked for EFF. DATE /
         REVIEW DT.; invalid DOCX files are skipped in red and do not block other files in the batch.
         After upload, prior versions are re-scanned and dashboard counts refresh.
       </p>
