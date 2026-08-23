@@ -59,9 +59,9 @@ export async function syncEmployeesFromMatrixThrottled(): Promise<boolean> {
  *
  * The matrix is the source of truth for *who* exists; this copies that roster
  * over so the Employee page always reflects it. It only ADDS new people and
- * UPDATES designation / re-activates matched ones — it never removes or
- * deactivates anybody, so manually-added employees and their learning-module
- * logins are preserved.
+ * UPDATES designation — it never removes, deactivates, or re-activates anybody.
+ * "Mark as Left" (isActive: false) must persist even if that person is still
+ * on the training-matrix roster. New inserts default to active.
  *
  * Source of truth, matching what the matrix page shows:
  *   1. TrainingMatrixRecord  (per-cell records, the live matrix)
@@ -126,14 +126,18 @@ export async function syncEmployeesFromMatrix(): Promise<SyncEmployeesResult> {
     // When the matrix has a designation, write it on both insert and update.
     // When it's blank, only seed it on insert so an existing one isn't wiped.
     // (A field may not appear in both $set and $setOnInsert.)
-    const set: Record<string, unknown> = { isActive: true };
-    const setOnInsert: Record<string, unknown> = { name, department };
-    if (designation) set.designation = designation;
-    else setOnInsert.designation = '';
+    // Never $set isActive — that was re-activating people marked Left.
+    const setOnInsert: Record<string, unknown> = { name, department, isActive: true };
+    const update: Record<string, unknown> = { $setOnInsert: setOnInsert };
+    if (designation) {
+      update.$set = { designation };
+    } else {
+      setOnInsert.designation = '';
+    }
     ops.push({
       updateOne: {
         filter: { name, department },
-        update: { $set: set, $setOnInsert: setOnInsert },
+        update,
         upsert: true,
       },
     });

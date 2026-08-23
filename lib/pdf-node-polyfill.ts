@@ -5,15 +5,23 @@
  * Install the polyfills on globalThis *before* importing pdf-parse.
  */
 
-type PdfDomGlobals = typeof globalThis & {
-  DOMMatrix?: unknown;
-  ImageData?: unknown;
-  Path2D?: unknown;
-};
+type PdfDomName = "DOMMatrix" | "ImageData" | "Path2D";
 
 let pending: Promise<void> | null = null;
 
-function installDomMatrixStub(g: PdfDomGlobals): void {
+function getPdfDomGlobal(name: PdfDomName): unknown {
+  return (globalThis as Record<string, unknown>)[name];
+}
+
+function setPdfDomGlobal(name: PdfDomName, value: unknown): void {
+  Object.defineProperty(globalThis, name, {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+
+function installDomMatrixStub(): void {
   class DOMMatrixStub {
     a = 1;
     b = 0;
@@ -39,6 +47,16 @@ function installDomMatrixStub(g: PdfDomGlobals): void {
     m44 = 1;
     is2D = true;
     isIdentity = true;
+
+    static fromMatrix() {
+      return new DOMMatrixStub();
+    }
+    static fromFloat32Array() {
+      return new DOMMatrixStub();
+    }
+    static fromFloat64Array() {
+      return new DOMMatrixStub();
+    }
 
     multiply() {
       return new DOMMatrixStub();
@@ -75,12 +93,11 @@ function installDomMatrixStub(g: PdfDomGlobals): void {
     }
   }
 
-  g.DOMMatrix = DOMMatrixStub;
+  setPdfDomGlobal("DOMMatrix", DOMMatrixStub);
 }
 
 export async function ensurePdfNodePolyfills(): Promise<void> {
-  const g = globalThis as PdfDomGlobals;
-  if (typeof g.DOMMatrix !== "undefined") return;
+  if (typeof getPdfDomGlobal("DOMMatrix") !== "undefined") return;
   if (pending) return pending;
 
   pending = (async () => {
@@ -90,15 +107,15 @@ export async function ensurePdfNodePolyfills(): Promise<void> {
         ImageData?: unknown;
         Path2D?: unknown;
       };
-      if (canvas.DOMMatrix) g.DOMMatrix = canvas.DOMMatrix;
-      if (canvas.ImageData) g.ImageData = canvas.ImageData;
-      if (canvas.Path2D) g.Path2D = canvas.Path2D;
+      if (canvas.DOMMatrix) setPdfDomGlobal("DOMMatrix", canvas.DOMMatrix);
+      if (canvas.ImageData) setPdfDomGlobal("ImageData", canvas.ImageData);
+      if (canvas.Path2D) setPdfDomGlobal("Path2D", canvas.Path2D);
     } catch (err) {
       console.warn("[pdf] @napi-rs/canvas unavailable; using DOMMatrix stub", err);
     }
 
-    if (typeof g.DOMMatrix === "undefined") {
-      installDomMatrixStub(g);
+    if (typeof getPdfDomGlobal("DOMMatrix") === "undefined") {
+      installDomMatrixStub();
     }
   })();
 

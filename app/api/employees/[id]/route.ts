@@ -9,6 +9,7 @@ import {
 } from '@/lib/employeeInduction';
 import { invalidateEmployeeAssignmentsCache } from '@/lib/employeeAssignments';
 import { parseTrainerDepartments } from '@/lib/employeeTrainer';
+import { bustTrainerScheduleCaches } from '@/lib/lmsTrainerCache';
 import { invalidateManageSopViewCache } from '@/lib/manageSopViewCache';
 import Employee from '@/models/Employee';
 
@@ -24,7 +25,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const update: Record<string, unknown> = {};
     for (const k of allowed) {
       if (body[k] !== undefined) {
-        if (k === 'isTrainer') {
+        if (k === 'isTrainer' || k === 'isActive') {
           update[k] = body[k] === true;
         } else {
           update[k] = typeof body[k] === 'string' ? body[k].trim() : body[k];
@@ -102,7 +103,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (Object.prototype.hasOwnProperty.call(update, 'trainerDepartments')) {
       existing.markModified('trainerDepartments');
     }
+    if (Object.prototype.hasOwnProperty.call(update, 'isActive')) {
+      existing.markModified('isActive');
+    }
     await existing.save();
+
+    // Confirm Left/active actually landed in MongoDB — do not trust in-memory state.
+    if (Object.prototype.hasOwnProperty.call(update, 'isActive')) {
+      const persisted = await Employee.findById(id).select('isActive').lean<{ isActive?: boolean } | null>();
+      const expected = update.isActive === true;
+      if (!persisted || persisted.isActive !== expected) {
+        return NextResponse.json(
+          { error: 'Failed to persist left/active status in the database. Please try again.' },
+          { status: 500 },
+        );
+      }
+      existing.isActive = persisted.isActive;
+      bustTrainerScheduleCaches();
+    }
 
     invalidateEmployeeAssignmentsCache();
     void invalidateManageSopViewCache();

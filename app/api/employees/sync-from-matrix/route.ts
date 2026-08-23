@@ -5,7 +5,8 @@ import { syncEmployeesFromMatrix } from '@/lib/syncEmployeesFromMatrix';
 export const dynamic = 'force-dynamic';
 
 // POST /api/employees/sync-from-matrix
-// Mirrors the training-matrix roster into the Employee collection.
+// Mirrors the training-matrix roster into the Employee collection (adds people
+// and updates designation; does not re-activate anyone marked Left).
 // Note: this now also runs automatically on every GET /api/employees, so the
 // employee page stays in sync without anyone pressing a button. Kept for
 // explicit/manual triggers and backwards compatibility.
