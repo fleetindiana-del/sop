@@ -3,6 +3,7 @@ import { connectDB } from '@/lib/mongodb';
 import InductionTrainingMatrixRecord from '@/models/InductionTrainingMatrixRecord';
 import InductionTrainingMatrixUpload from '@/models/InductionTrainingMatrixUpload';
 import SOP from '@/models/SOP';
+import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
 
 const STATUS_PRIORITY: Record<string, number> = {
   completed: 4,
@@ -45,12 +46,16 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const recordsRaw = await InductionTrainingMatrixRecord.find(match)
-      .sort({ department: 1, employeeName: 1, sopCode: 1 })
-      .lean();
-    const records = includeObsolete
+    const [recordsRaw, leftKeys] = await Promise.all([
+      InductionTrainingMatrixRecord.find(match)
+        .sort({ department: 1, employeeName: 1, sopCode: 1 })
+        .lean(),
+      getLeftEmployeeKeys(),
+    ]);
+    const records = (includeObsolete
       ? recordsRaw
-      : (recordsRaw as any[]).filter((r: any) => !obsoleteBaseSet.has(stripVersion(String(r?.sopCode || ''))));
+      : (recordsRaw as any[]).filter((r: any) => !obsoleteBaseSet.has(stripVersion(String(r?.sopCode || ''))))
+    ).filter((r: any) => !isLeftEmployee(leftKeys, r.department, r.employeeName));
 
     // Build employee map with SOP matrix
     // Key: department||employeeName

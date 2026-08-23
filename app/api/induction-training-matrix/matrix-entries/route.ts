@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import InductionMatrixEntryData from '@/models/InductionMatrixEntryData';
+import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,9 +25,15 @@ export async function GET(req: NextRequest) {
     if (sopCode)    filter.sopCode = sopCode.toUpperCase();
     if (!includeDeleted) filter.deletedAt = { $exists: false };
 
-    const entries = await InductionMatrixEntryData.find(filter)
-      .sort({ employeeName: 1, sopCode: 1 })
-      .lean();
+    const [entriesRaw, leftKeys] = await Promise.all([
+      InductionMatrixEntryData.find(filter)
+        .sort({ employeeName: 1, sopCode: 1 })
+        .lean<Array<{ department?: string; employeeName?: string }>>(),
+      getLeftEmployeeKeys(),
+    ]);
+    const entries = entriesRaw.filter(
+      (e) => !isLeftEmployee(leftKeys, e.department, e.employeeName),
+    );
 
     return NextResponse.json({ entries });
   } catch (err: unknown) {

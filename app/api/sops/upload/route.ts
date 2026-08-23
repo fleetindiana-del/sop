@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const formData = await request.formData();
-    return processSopUpload(formData);
+    return processSopUpload(formData, request);
   } catch (error) {
     console.error("POST /api/sops/upload error:", error);
     return NextResponse.json(

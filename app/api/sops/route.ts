@@ -11,6 +11,7 @@ import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { loadGroupedRegistry } from "@/lib/dashboardRegistrySource";
 import { attachRegistryCompliance } from "@/lib/registry-compliance-server";
 import { filterByAssignedDepartments, requireAuth } from "@/lib/withAuth";
+import { actorFromSession, logSopAudit, snapshotSop } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,12 @@ export async function POST(request: NextRequest) {
     );
     const sop = await SOP.create({ ...body, sopBaseId, versionNum, version: resolvedVersion });
     invalidateDashboardSopsCache();
+    await logSopAudit({
+      actor: actorFromSession(auth.session, request),
+      action: "created",
+      sop,
+      updated: snapshotSop(sop),
+    });
     return NextResponse.json(sop, { status: 201 });
   } catch (error) {
     console.error("POST /api/sops error:", error);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import MatrixEntryData from '@/models/MatrixEntryData';
+import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,9 +25,15 @@ export async function GET(req: NextRequest) {
     if (sopCode)    filter.sopCode = sopCode.toUpperCase();
     if (!includeDeleted) filter.deletedAt = { $exists: false };
 
-    const entries = await MatrixEntryData.find(filter)
-      .sort({ employeeName: 1, sopCode: 1 })
-      .lean();
+    const [entriesRaw, leftKeys] = await Promise.all([
+      MatrixEntryData.find(filter)
+        .sort({ employeeName: 1, sopCode: 1 })
+        .lean<Array<{ department?: string; employeeName?: string }>>(),
+      getLeftEmployeeKeys(),
+    ]);
+    const entries = entriesRaw.filter(
+      (e) => !isLeftEmployee(leftKeys, e.department, e.employeeName),
+    );
 
     return NextResponse.json({ entries });
   } catch (err: unknown) {

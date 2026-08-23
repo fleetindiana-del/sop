@@ -202,7 +202,7 @@ export async function GET(req: NextRequest) {
       async () => {
         await connectDB();
 
-        const empFilter: Record<string, unknown> = {};
+        const empFilter: Record<string, unknown> = { isActive: { $ne: false } };
         if (department) empFilter.department = { $regex: new RegExp(`^${department}$`, 'i') };
 
         const employees = await Employee.find(empFilter)

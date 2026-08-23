@@ -11,7 +11,10 @@ import { invalidateEmployeeAssignmentsCache } from '@/lib/employeeAssignments';
 import { parseTrainerDepartments } from '@/lib/employeeTrainer';
 import { bustTrainerScheduleCaches } from '@/lib/lmsTrainerCache';
 import { invalidateManageSopViewCache } from '@/lib/manageSopViewCache';
+import { invalidateTrainingMatrixCache } from '@/lib/trainingMatrixCache';
+import { invalidateInductionTrainingMatrixCache } from '@/lib/inductionTrainingMatrixCache';
 import Employee from '@/models/Employee';
+import TrainerEmployee from '@/models/lms/TrainerEmployee';
 
 export const dynamic = 'force-dynamic';
 
@@ -120,6 +123,34 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
       existing.isActive = persisted.isActive;
       bustTrainerScheduleCaches();
+      void invalidateTrainingMatrixCache();
+      void invalidateInductionTrainingMatrixCache();
+      if (expected === false) {
+        const identity = {
+          name: String(existing.name || '').trim(),
+          department: String(existing.department || '').trim(),
+        };
+        if (identity.name && identity.department) {
+          const twins = await Employee.find({
+            _id: { $ne: existing._id },
+            name: identity.name,
+            department: identity.department,
+            isActive: { $ne: false },
+          }).select('_id').lean<Array<{ _id: typeof existing._id }>>();
+          const twinIds = twins.map((t) => t._id);
+          if (twinIds.length > 0) {
+            await Employee.updateMany(
+              { _id: { $in: twinIds } },
+              { $set: { isActive: false } },
+            );
+          }
+          await TrainerEmployee.deleteMany({
+            employeeId: { $in: [id, ...twinIds.map((tid) => String(tid))] },
+          });
+        } else {
+          await TrainerEmployee.deleteMany({ employeeId: id });
+        }
+      }
     }
 
     invalidateEmployeeAssignmentsCache();

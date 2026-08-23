@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const formData = await request.formData();
-    return processSopUpload(formData);
+    return processSopUpload(formData, request);
   } catch (error) {
     console.error("upload-batch error:", error);
     return NextResponse.json(

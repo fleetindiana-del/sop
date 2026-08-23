@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import InductionTrainingMatrixRecord from '@/models/InductionTrainingMatrixRecord';
 import SOP from '@/models/SOP';
+import { getLeftEmployeeKeys, isLeftEmployee, isLeftEmployeeName } from '@/lib/leftEmployees';
 
 export async function GET(request: NextRequest) {
   try {
@@ -41,10 +42,14 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const recordsRaw = await InductionTrainingMatrixRecord.find(match).lean();
-    const records = includeObsolete
+    const [recordsRaw, leftKeys] = await Promise.all([
+      InductionTrainingMatrixRecord.find(match).lean(),
+      getLeftEmployeeKeys(),
+    ]);
+    const records = (includeObsolete
       ? recordsRaw
-      : recordsRaw.filter((r: any) => !obsoleteBaseSet.has(stripVersion(String(r?.sopCode || ''))));
+      : recordsRaw.filter((r: any) => !obsoleteBaseSet.has(stripVersion(String(r?.sopCode || ''))))
+    ).filter((r: any) => !isLeftEmployee(leftKeys, r.department, r.employeeName));
 
     // ── Fetch exam data from TrainingMatrix (linked test sessions) ────────────
     let examRows: Array<{
@@ -63,6 +68,7 @@ export async function GET(request: NextRequest) {
         employeeName: 1, department: 1, sopIdentifier: 1,
         passStatus: 1, trainingDate: 1,
       }).lean() as any[];
+      examRows = examRows.filter((e) => !isLeftEmployee(leftKeys, e.department, e.employeeName));
     } catch (_) { /* no exam data */ }
 
     // Build exam lookup: key = `dept|emp|sopCode` → passStatus
@@ -389,7 +395,12 @@ export async function GET(request: NextRequest) {
       { $sort: { '_id.year': 1, '_id.month': 1 } },
     ]);
     const months = monthsRaw.map(m => ({ month: m._id.month, monthName: m._id.monthName, year: m._id.year }));
-    const employees = await InductionTrainingMatrixRecord.distinct('employeeName', deptF !== 'all' ? { department: deptF } : {});
+    const employees = (await InductionTrainingMatrixRecord.distinct('employeeName', deptF !== 'all' ? { department: deptF } : {}))
+      .filter((name: string) =>
+        deptF !== 'all'
+          ? !isLeftEmployee(leftKeys, deptF, name)
+          : !isLeftEmployeeName(leftKeys, name),
+      );
 
     return NextResponse.json({
       success: true,

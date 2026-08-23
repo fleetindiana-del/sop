@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import TrainingMatrixUpload from '@/models/TrainingMatrixUpload';
 import TrainingMatrixRecord from '@/models/TrainingMatrixRecord';
+import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,7 +43,7 @@ type ScheduleAssignment = {
 type UploadSnap = {
   sopMonthMap?: Record<string, string>;
   sopCodes?: string[];
-  employees?: Array<{ training?: Record<string, boolean> }>;
+  employees?: Array<{ name?: string; training?: Record<string, boolean> }>;
 };
 
 // GET /api/training-matrix/monthly-schedule?sopCode=QAGE01-10
@@ -61,7 +62,7 @@ export async function GET(req: NextRequest) {
     const base = stripVersion(sopCode);
     const sopCodePattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-\\d+)?$`, 'i');
 
-    const [uploads, records] = await Promise.all([
+    const [uploads, records, leftKeys] = await Promise.all([
       TrainingMatrixUpload.find({ 'snapshot.sopMonthMap': { $exists: true } })
         .sort({ uploadedAt: -1 })
         .select('department year snapshot uploadedAt')
@@ -72,6 +73,7 @@ export async function GET(req: NextRequest) {
       })
         .select('department month monthName year')
         .lean(),
+      getLeftEmployeeKeys(),
     ]);
 
     const assignmentKeys = new Set<string>();
@@ -136,6 +138,7 @@ export async function GET(req: NextRequest) {
       if (monthNames.length > 0) {
         if (dept) excelAssignedDepts.add(dept);
         const empCount = snap.employees.filter((e) =>
+          !isLeftEmployee(leftKeys, dept, e.name) &&
           Object.entries(e.training || {}).some(([k, v]) => stripVersion(k) === base && v === true),
         ).length;
 

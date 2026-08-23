@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     complete.append("paths", relativePath);
     complete.set("deferReconcile", "true");
 
-    return processSopUpload(complete);
+    return processSopUpload(complete, request);
   } catch (error) {
     console.error("upload-chunk error:", error);
     return NextResponse.json(

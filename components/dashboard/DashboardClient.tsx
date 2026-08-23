@@ -39,6 +39,7 @@ import {
 import { BulkUploadAllModal } from "./BulkUploadAllModal";
 import { PipelineDock, ToastNotification } from "./PipelineDock";
 import { AdminToolsModal, ComplianceModal, GuidelinesPanel } from "./ExtraModals";
+import { AuditLogsModal } from "./AuditLogsModal";
 import GuidelinesComplianceWizard from "./GuidelinesComplianceWizard";
 import GuidelinesResultPanel, { type ComplianceResult } from "./GuidelinesResultPanel";
 import ComplianceFullViewer from "./ComplianceFullViewer";
@@ -96,6 +97,7 @@ export function DashboardClient() {
   const [complianceCache, setComplianceCache] = useState<Record<string, ComplianceResult>>({});
   const [viewingComplianceSopNo, setViewingComplianceSopNo] = useState<string | null>(null);
   const [viewingComplianceFullSopNo, setViewingComplianceFullSopNo] = useState<string | null>(null);
+  const [auditLogsOpen, setAuditLogsOpen] = useState(false);
 
   const registryRowsForWizard = useMemo(
     () =>
@@ -564,6 +566,7 @@ export function DashboardClient() {
               }
             : undefined
         }
+        onOpenAuditLogs={() => setAuditLogsOpen(true)}
       />
 
       {error && (
@@ -723,6 +726,7 @@ export function DashboardClient() {
         </>
       )}
       <ToastNotification />
+      <AuditLogsModal open={auditLogsOpen} onClose={() => setAuditLogsOpen(false)} />
     </div>
   );
 }

@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
       `[bulk-folder-upload] batch received: ${files.length} file(s), ${filtered.length} after skip-filter`,
     );
 
-    return processSopUpload(nextForm);
+    return processSopUpload(nextForm, request);
   } catch (error) {
     console.error("bulk-folder-upload error:", error);
     return NextResponse.json(

@@ -9,6 +9,7 @@ import {
   parseAssignedDepartments,
   requireAuth,
 } from "@/lib/withAuth";
+import { actorFromSession, logAuditEvent } from "@/lib/audit-log";
 
 // Password required to delete a department (also enforced in the UI).
 const DELETE_PASSWORD = "indiana132";
@@ -61,8 +62,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ department: trimmed, created: false });
     }
 
-    // Upsert into the Department collection so it persists even with 0 SOPs
-    await Department.updateOne({ name: trimmed }, { $setOnInsert: { name: trimmed } }, { upsert: true });
+    const result = await Department.updateOne(
+      { name: trimmed },
+      { $setOnInsert: { name: trimmed } },
+      { upsert: true },
+    );
+    const inserted = Boolean(result.upsertedCount || result.upsertedId);
+    if (inserted) {
+      await logAuditEvent({
+        actor: actorFromSession(auth.session, request),
+        entityType: "department",
+        entityId: trimmed,
+        entityLabel: trimmed,
+        department: trimmed,
+        action: "created",
+        fieldsChanged: ["name"],
+        updatedValues: { name: trimmed },
+      });
+    }
     return NextResponse.json({ department: trimmed, created: true });
   } catch (error) {
     return NextResponse.json(
@@ -101,6 +118,19 @@ export async function PATCH(request: NextRequest) {
       SOP.updateMany({ department: trimmedOld }, { $set: { department: trimmedNew } }),
     ]);
 
+    await logAuditEvent({
+      actor: actorFromSession(auth.session, request),
+      entityType: "department",
+      entityId: trimmedNew,
+      entityLabel: trimmedNew,
+      department: trimmedNew,
+      action: "renamed",
+      fieldsChanged: ["name"],
+      previousValues: { name: trimmedOld },
+      updatedValues: { name: trimmedNew },
+      summary: `Renamed department ${trimmedOld} → ${trimmedNew}`,
+    });
+
     return NextResponse.json({ oldName: trimmedOld, newName: trimmedNew, renamed: true });
   } catch (error) {
     return NextResponse.json(
@@ -136,6 +166,16 @@ export async function DELETE(request: NextRequest) {
     }
 
     await Department.deleteOne({ name: trimmed });
+    await logAuditEvent({
+      actor: actorFromSession(auth.session, request),
+      entityType: "department",
+      entityId: trimmed,
+      entityLabel: trimmed,
+      department: trimmed,
+      action: "deleted",
+      fieldsChanged: ["name"],
+      previousValues: { name: trimmed },
+    });
     return NextResponse.json({ department: trimmed, deleted: true });
   } catch (error) {
     return NextResponse.json(

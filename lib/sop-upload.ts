@@ -45,6 +45,12 @@ import { invalidateViewerUrlCache } from "@/lib/viewerHelper";
 import { invalidateDocxHtmlCache } from "@/lib/docxHtmlCache";
 import { refreshFamilyPriorHeaderDateFlags } from "@/lib/prior-header-dates";
 import { requireAuth } from "@/lib/withAuth";
+import {
+  logSopAudit,
+  resolveAuditActor,
+  runWithAuditActor,
+  snapshotSop,
+} from "@/lib/audit-log";
 
 export type SopFileInput = {
   buffer: Buffer;
@@ -305,6 +311,9 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
     ...(fileType === "docx" ? { headerDatesValid: true } : {}),
   };
 
+  const wasExisting = Boolean(existing);
+  const previous = existing ? snapshotSop(existing) : undefined;
+
   let sop = existing;
   if (existing) {
     sop = await SOP.findByIdAndUpdate(
@@ -335,6 +344,14 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
   if (!sop) {
     return { file: fileName, success: false, error: "Failed to save SOP record" };
   }
+
+  await logSopAudit({
+    action: wasExisting ? "uploaded" : "created",
+    sop,
+    previous,
+    updated: snapshotSop(sop),
+    comments: wasExisting ? `Replaced ${fileType.toUpperCase()} file: ${fileName}` : `Uploaded ${fileName}`,
+  });
 
   return {
     file: fileName,
@@ -425,7 +442,12 @@ async function processAnnexureFileInput(input: SopFileInput): Promise<SopFileRes
   };
 }
 
-export async function processSopUpload(formData: FormData) {
+export async function processSopUpload(formData: FormData, req?: NextRequest) {
+  const actor = await resolveAuditActor(req);
+  return runWithAuditActor(actor, () => processSopUploadInner(formData));
+}
+
+async function processSopUploadInner(formData: FormData) {
   resetBunnyUploadCircuit();
   await connectDB();
 
@@ -586,7 +608,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const formData = await request.formData();
-    return processSopUpload(formData);
+    return processSopUpload(formData, request);
   } catch (error) {
     console.error("Upload error:", error);
     return NextResponse.json(

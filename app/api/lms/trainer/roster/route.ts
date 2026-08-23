@@ -30,14 +30,13 @@ export async function GET() {
     ]);
 
     const byId = new Map(employees.map((e) => [e.employeeId, e]));
-    // Employees who left the trainer's departments (or were deactivated) stay
-    // listed but are flagged, so the trainer can clean them up deliberately.
+    // Left / out-of-scope people must not remain on the trainer's employee list.
     const seen = new Set<string>();
     const rosterRows = roster
       .filter((r) => {
         if (seen.has(r.employeeId)) return false;
         seen.add(r.employeeId);
-        return true;
+        return byId.has(r.employeeId);
       })
       .map((r) => {
         const emp = byId.get(r.employeeId);

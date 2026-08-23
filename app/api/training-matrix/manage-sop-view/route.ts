@@ -42,6 +42,7 @@ import {
 } from "@/lib/trainingMatrixDepartments";
 import { resolveTrainerDepartments } from "@/lib/employeeTrainer";
 import SOP from "@/models/SOP";
+import { getLeftEmployeeKeys, isLeftEmployee } from "@/lib/leftEmployees";
 
 const MONTH_NAMES = [
   "",
@@ -503,6 +504,7 @@ async function buildManageSopViewResponse(
       dashboardCached,
       overviewCached,
       employeeAssignmentsMap,
+      leftKeys,
     ] = await Promise.all([
       MatrixSOPAssignment.find({ isActive: true })
         .select("sopCode sopName department designationApplicability")
@@ -517,6 +519,7 @@ async function buildManageSopViewResponse(
       getDashboardSopsCache(),
       getTrainingMatrixOverviewCached(),
       getEmployeeAssignmentsMap(),
+      getLeftEmployeeKeys(),
     ]);
 
     const activeYear = resolveActiveMatrixYear(
@@ -534,6 +537,7 @@ async function buildManageSopViewResponse(
               department: "$department",
               designation: "$designation",
               month: "$month",
+              employeeName: "$employeeName",
             },
             count: { $sum: 1 },
           },
@@ -777,6 +781,7 @@ async function buildManageSopViewResponse(
       for (const snapEmp of up.snapshot?.employees || []) {
         const name = String(snapEmp?.name || "").trim();
         if (!name) continue;
+        if (isLeftEmployee(leftKeys, empDept, name)) continue;
         if (roster.some((r) => r.name.toLowerCase() === name.toLowerCase())) continue;
         roster.push({
           name,
@@ -853,6 +858,7 @@ async function buildManageSopViewResponse(
     >();
     for (const record of trainingAgg) {
       const id = record._id as any;
+      if (isLeftEmployee(leftKeys, id.department, id.employeeName)) continue;
       const stripCode = stripVersion(id.sopCode || "");
       const trainDept =
         resolveTrainingMatrixDepartment(id.department, departments) ||

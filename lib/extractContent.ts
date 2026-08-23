@@ -69,10 +69,9 @@ export async function extractTextFromBuffer(
     console.warn("[extractContent] PDF parse failed; storing file without extracted text", err);
   }
 
-  const asText = buffer.toString("utf8");
-  const readable = asText.replace(/[^\x20-\x7E\n\r\t]/g, " ").replace(/\s+/g, " ").trim();
-  if (readable.length > 200) return readable.slice(0, 50000);
-  return "";
+  // Scanned/image-only SOPs have no text layer. Keep a non-empty marker so
+  // Mongoose `content` validation succeeds (empty string is rejected).
+  return "[PDF has no extractable text layer]";
 }
 
 export function getContentType(filename: string): string {

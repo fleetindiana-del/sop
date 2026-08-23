@@ -14,6 +14,12 @@ import { clearImportStateAfterPermanentDelete } from "@/lib/sop-files-import";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { markMcqBanksObsoleteForIdentifier, reviveMcqBanksForIdentifier } from "@/lib/mcq-bank-sync";
 import { forbidUnlessDepartmentAccess, requireAuth } from "@/lib/withAuth";
+import {
+  actorFromSession,
+  diffAuditValues,
+  logSopAudit,
+  snapshotSop,
+} from "@/lib/audit-log";
 
 type RouteContext = { params: Promise<{ identifier: string }> };
 
@@ -72,9 +78,23 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       );
     }
 
+    const previous = snapshotSop(group[0]);
     await applyRegistryUpdate(group, body);
     invalidateDashboardSopsCache();
     const refreshed = await loadGroup(body.identifier.trim());
+    const after = refreshed[0] ?? group[0];
+    const updated = snapshotSop(after);
+    const diff = diffAuditValues(previous, updated);
+    await logSopAudit({
+      actor: actorFromSession(auth.session, request),
+      action: "updated",
+      sop: after,
+      previous,
+      updated,
+      comments: diff.fieldsChanged.length
+        ? `Edited registry fields: ${diff.fieldsChanged.join(", ")}`
+        : "Registry saved",
+    });
     return NextResponse.json(buildEditFormData(refreshed));
   } catch (error) {
     return NextResponse.json(
@@ -85,7 +105,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 }
 
 // Revive an obsolete SOP family — move it back to the active registry.
-export async function POST(_request: NextRequest, context: RouteContext) {
+export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -96,9 +116,18 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "SOP not found" }, { status: 404 });
     }
 
+    const previous = snapshotSop(group[0]);
     await reviveRegistryGroup(group);
     await reviveMcqBanksForIdentifier(group[0].identifier);
     invalidateDashboardSopsCache();
+    const revived = { ...group[0].toObject(), isObsolete: false, obsoleteReason: undefined };
+    await logSopAudit({
+      actor: actorFromSession(auth.session, request),
+      action: "restored",
+      sop: revived,
+      previous,
+      updated: snapshotSop(revived),
+    });
     return NextResponse.json({ success: true, revived: true, identifier: group[0].identifier });
   } catch (error) {
     return NextResponse.json(
@@ -152,14 +181,35 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         console.warn("[permanent-delete] import-state cleanup failed:", err);
       }
 
+      await logSopAudit({
+        actor: actorFromSession(auth.session, request),
+        action: "deleted",
+        sop: group[0],
+        previous: snapshotSop(group[0]),
+        updated: {},
+        comments: `Permanently deleted family (${identifiers.join(", ")})`,
+      });
       await deleteRegistryGroup(group);
       invalidateDashboardSopsCache();
       return NextResponse.json({ success: true, deleted: true, identifier: group[0].identifier });
     }
 
+    const previous = snapshotSop(group[0]);
     await markRegistryObsolete(group);
     await markMcqBanksObsoleteForIdentifier(group[0].identifier);
     invalidateDashboardSopsCache();
+    const obsoleted = {
+      ...group[0].toObject(),
+      isObsolete: true,
+      obsoleteReason: "Moved to Obsolete SOPs",
+    };
+    await logSopAudit({
+      actor: actorFromSession(auth.session, request),
+      action: "obsoleted",
+      sop: obsoleted,
+      previous,
+      updated: snapshotSop(obsoleted),
+    });
     return NextResponse.json({ success: true, identifier: group[0].identifier });
   } catch (error) {
     return NextResponse.json(

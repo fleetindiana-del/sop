@@ -231,6 +231,10 @@ function deptAccToCapsule(
   };
 }
 
+function onlyActiveEmployees(recs: EmployeeTrainingRecord[]): EmployeeTrainingRecord[] {
+  return recs.filter((r) => r.isActive !== false);
+}
+
 function buildSopTrainingRows(records: EmployeeTrainingRecord[], dept: string): SopTrainingRow[] {
   const byKey = new Map<string, SopTrainingRow>();
   for (const emp of records) {
@@ -430,7 +434,7 @@ export default function EmployeeTrainingDashboardPage() {
     const field = lmsClientFields.adminEmployeeTraining('all');
     const cached = !force ? readLmsClientCache<{ records: EmployeeTrainingRecord[] }>(field) : null;
     if (cached?.value) {
-      setRecords(cached.value.records || []);
+      setRecords(onlyActiveEmployees(cached.value.records || []));
       if (!force && Date.now() - cached.cachedAt <= LMS_CLIENT_FRESH_MS) {
         setLoading(false);
       }
@@ -441,7 +445,7 @@ export default function EmployeeTrainingDashboardPage() {
       const trainingRes = await fetch('/api/lms/admin/employee-training', { cache: 'no-store' });
       if (trainingRes.ok) {
         const json = await trainingRes.json();
-        const recs = json.records || [];
+        const recs = onlyActiveEmployees(json.records || []);
         setRecords(recs);
         setMonthExamCounts(Array.isArray(json.monthExamCounts) ? json.monthExamCounts : Array(12).fill(0));
         if (json.trainingCycleStart) setCycleStart(String(json.trainingCycleStart));
@@ -468,6 +472,7 @@ export default function EmployeeTrainingDashboardPage() {
     const q = search.trim().toLowerCase();
     return records
       .filter((r) => {
+        if (r.isActive === false) return false;
         if (dept !== 'All' && (r.department || 'Unknown') !== dept) return false;
         if (learnerFilter === 'employees' && r.isTrainer) return false;
         if (learnerFilter === 'pending' && (r.isTrainer || r.notCompletedSops <= 0)) return false;
@@ -511,6 +516,7 @@ export default function EmployeeTrainingDashboardPage() {
 
   const employeeOptions = useMemo(() => {
     const scoped = records.filter((r) => {
+      if (r.isActive === false) return false;
       if (r.isTrainer) return false;
       if (dept !== 'All' && (r.department || 'Unknown') !== dept) return false;
       return true;

@@ -6,15 +6,13 @@ const nextConfig: NextConfig = {
   // Keep native canvas binaries and pdfjs worker files in serverless traces.
   // pdfjs-dist loads pdf.worker.mjs via a dynamic import that NFT does not follow.
   outputFileTracingIncludes: {
-    "/api/**/*": [
+    "/*": [
       "./node_modules/@napi-rs/canvas/**/*",
       "./node_modules/@napi-rs/canvas-linux-x64-gnu/**/*",
       "./node_modules/@napi-rs/canvas-linux-x64-musl/**/*",
       "./node_modules/@napi-rs/canvas-linux-arm64-gnu/**/*",
       "./node_modules/@napi-rs/canvas-linux-arm64-musl/**/*",
       "./node_modules/@napi-rs/canvas-win32-x64-msvc/**/*",
-      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
-      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs",
       "./node_modules/pdf-parse/dist/worker/**/*",
     ],
   },

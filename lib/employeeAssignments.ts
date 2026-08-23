@@ -32,6 +32,7 @@ import {
   employeeOverrideKey,
 } from '@/lib/trainingExamSchedule';
 import { canonTrainingMatrixDepartment } from '@/lib/trainingMatrixDepartments';
+import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
 
 const MONTH_NAMES = [
   '',
@@ -446,7 +447,7 @@ async function computeEmployeeAssignmentsMap(
   // empKey → (sopCode → kept assignment). One entry per SOP per employee.
   const byEmp = new Map<string, Map<string, EmployeeSopAssignment>>();
   const deptFilter = departmentMatchFilter(departments);
-  const [lookup, isMatrixAssignableCode, records, uploads] = await Promise.all([
+  const [lookup, isMatrixAssignableCode, records, uploads, leftKeys] = await Promise.all([
     buildSopLookup(),
     buildMatrixAssignableCodeFilter(),
     // No DB sort: we keep the earliest month in JS (`isEarlier`). Sorting the
@@ -460,9 +461,11 @@ async function computeEmployeeAssignmentsMap(
       'snapshot.employees': { $exists: true },
       ...deptFilter,
     }),
+    getLeftEmployeeKeys(),
   ]);
 
   const add = (department: string, name: string, assignment: EmployeeSopAssignment) => {
+    if (isLeftEmployee(leftKeys, department, name)) return;
     if (!isMatrixAssignableCode(assignment.sopCode)) return;
     const keys = empKeys(department, name);
     let bySop: Map<string, EmployeeSopAssignment> | undefined;
@@ -518,6 +521,7 @@ async function computeEmployeeAssignmentsMap(
     for (const emp of snapshot.employees || []) {
       const name = String(emp.name || '').trim();
       if (!name || !emp.training) continue;
+      if (isLeftEmployee(leftKeys, dept, name)) continue;
       if (!snapshotEmployeeKeysByDept.has(dept)) snapshotEmployeeKeysByDept.set(dept, new Set());
       const snapSet = snapshotEmployeeKeysByDept.get(dept)!;
       for (const k of empKeys(dept, name)) snapSet.add(k);

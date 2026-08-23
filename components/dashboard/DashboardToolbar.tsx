@@ -14,6 +14,7 @@ import {
   FileUp,
   FolderUp,
   GraduationCap,
+  History,
   Languages,
   MapPin,
   Plus,
@@ -39,6 +40,7 @@ interface DashboardToolbarProps {
   isAdmin: boolean;
   onOpenGuidelinesWizard?: () => void;
   onFilesImportComplete?: () => void;
+  onOpenAuditLogs?: () => void;
 }
 
 export function DashboardToolbar({
@@ -49,6 +51,7 @@ export function DashboardToolbar({
   isAdmin,
   onOpenGuidelinesWizard,
   onFilesImportComplete,
+  onOpenAuditLogs,
 }: DashboardToolbarProps) {
   const router = useRouter();
   const {
@@ -104,6 +107,16 @@ export function DashboardToolbar({
           >
             <GraduationCap className="h-3 w-3" /> LMS
           </Btn>
+          {onOpenAuditLogs && (
+            <Btn
+              size="sm"
+              className="border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100"
+              onClick={onOpenAuditLogs}
+              title="View dashboard change history"
+            >
+              <History className="h-3 w-3" /> Audit Logs
+            </Btn>
+          )}
         </div>
       </div>
     );
@@ -285,6 +298,17 @@ export function DashboardToolbar({
         >
           <GraduationCap className="h-3 w-3" /> LMS
         </Btn>
+
+        {onOpenAuditLogs && (
+          <Btn
+            size="sm"
+            className="border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100"
+            onClick={onOpenAuditLogs}
+            title="View dashboard change history"
+          >
+            <History className="h-3 w-3" /> Audit Logs
+          </Btn>
+        )}
 
         {/* Developer Tools – consolidates developer-only buttons into one menu */}
         <div className="group relative ml-auto">

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import InductionTrainingMatrixUpload from '@/models/InductionTrainingMatrixUpload';
 import InductionTrainingMatrixRecord from '@/models/InductionTrainingMatrixRecord';
+import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
     const base = stripVersion(sopCode);
     const sopCodePattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-\\d+)?$`, 'i');
 
-    const [uploads, records] = await Promise.all([
+    const [uploads, records, leftKeys] = await Promise.all([
       InductionTrainingMatrixUpload.find(
         { 'snapshot.sopMonthMap': { $exists: true } },
         { department: 1, year: 1, snapshot: 1 },
@@ -66,6 +67,7 @@ export async function GET(req: NextRequest) {
       })
         .select('department month monthName year')
         .lean(),
+      getLeftEmployeeKeys(),
     ]);
 
     const assignmentKeys = new Set<string>();
@@ -99,7 +101,7 @@ export async function GET(req: NextRequest) {
     for (const upload of uploads) {
       const snap = (upload as any).snapshot as {
         sopMonthMap?: Record<string, string>;
-        employees?: Array<{ training?: Record<string, boolean> }>;
+        employees?: Array<{ name?: string; training?: Record<string, boolean> }>;
       } | undefined;
 
       if (!snap?.sopMonthMap || !snap?.employees) continue;
@@ -128,7 +130,11 @@ export async function GET(req: NextRequest) {
         if (!monthNum) continue;
 
         const key = `${monthNum}-${year}`;
-        const empCount = snap.employees.filter((e) => e.training?.[rawKey] === true).length;
+        const empCount = snap.employees.filter(
+          (e) =>
+            !isLeftEmployee(leftKeys, dept, e.name) &&
+            e.training?.[rawKey] === true,
+        ).length;
 
         const existing = byMonthYear.get(key);
         if (existing) {

@@ -23,6 +23,7 @@ export async function POST() {
   try {
     await connectDB();
     const pending = await Employee.find({
+      isActive: { $ne: false },
       $or: [{ lmsPasswordHash: { $exists: false } }, { lmsPasswordHash: null }, { lmsPasswordHash: '' }],
     }).select('_id name lmsUsername');
 
