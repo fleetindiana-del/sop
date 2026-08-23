@@ -7,6 +7,7 @@ import {
   sopVersionFields,
 } from "@/lib/sop-utils";
 import { groupRecordsByBase } from "@/lib/reconcile-sop-versions";
+import { logSopAudit, snapshotSop } from "@/lib/audit-log";
 import type { ISOP } from "@/models/SOP";
 
 function ownFileDocument(record: ISOP) {
@@ -45,7 +46,15 @@ export async function clearAllPriorVersionRecords() {
 
     for (const record of family) {
       if (!currentIds.has(record._id.toString())) {
+        const previous = snapshotSop(record);
         await SOP.deleteOne({ _id: record._id });
+        await logSopAudit({
+          action: "deleted",
+          sop: record,
+          previous,
+          summary: `Removed prior version ${record.version ?? ""} of ${record.identifier}`.replace(/\s+/g, " "),
+          comments: "Prior-version cleanup",
+        });
         deleted++;
         continue;
       }

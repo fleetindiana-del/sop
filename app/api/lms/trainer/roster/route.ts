@@ -4,8 +4,10 @@ import { requireLmsTrainer } from '@/lib/lmsTrainerAuth';
 import { bustTrainerScheduleCaches } from '@/lib/lmsTrainerCache';
 import {
   checkEmployeeSelection,
+  filterEmployeesWithAssignments,
   listTrainerScopedEmployees,
 } from '@/lib/lmsTrainerEmployees';
+import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
 import TrainerEmployee from '@/models/lms/TrainerEmployee';
 
 export const dynamic = 'force-dynamic';
@@ -22,12 +24,17 @@ export async function GET() {
   try {
     await connectDB();
     const depts = auth.trainer.trainerDepartments;
-    const [employees, roster] = await Promise.all([
+    const [scopedEmployees, assignmentsMap, roster] = await Promise.all([
       listTrainerScopedEmployees(depts),
+      getEmployeeAssignmentsMap({ departments: depts }),
       TrainerEmployee.find({ trainerId: auth.trainer.employeeId })
         .sort({ employeeName: 1 })
         .lean<Array<{ _id: unknown; employeeId: string; createdAt?: Date }>>(),
     ]);
+
+    // The employee list mirrors the Manage SOPs assignments: someone with no
+    // assigned SOP has nothing to train and must not be listed here.
+    const employees = filterEmployeesWithAssignments(scopedEmployees, assignmentsMap);
 
     const byId = new Map(employees.map((e) => [e.employeeId, e]));
     // Left / out-of-scope people must not remain on the trainer's employee list.

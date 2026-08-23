@@ -10,7 +10,10 @@ import { requireLmsTrainer, deptMatchesTrainerScope } from '@/lib/lmsTrainerAuth
 import SOP from '@/models/SOP';
 import LearningProgress from '@/models/lms/LearningProgress';
 import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
-import { listTrainerScopedEmployees } from '@/lib/lmsTrainerEmployees';
+import {
+  filterEmployeesWithAssignments,
+  listTrainerScopedEmployees,
+} from '@/lib/lmsTrainerEmployees';
 import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
 import {
   hasGujaratiScript,
@@ -139,7 +142,7 @@ export async function GET(req: NextRequest) {
         }
 
         const employeesRaw = await listTrainerScopedEmployees(scopedDepts, { skipSync: true });
-        const employees = employeesRaw.map((e) => ({
+        const scopedEmployees = employeesRaw.map((e) => ({
           _id: e.employeeId,
           name: e.name,
           designation: e.designation,
@@ -148,7 +151,7 @@ export async function GET(req: NextRequest) {
           isTrainer: e.isTrainer,
         }));
 
-        const employeeIds = employees.map((e) => e._id);
+        const employeeIds = scopedEmployees.map((e) => e._id);
         const [assignmentsMap, rescheduleRules, ignoreRules, progressList] = await Promise.all([
           getEmployeeAssignmentsMap({ departments: scopedDepts }),
           listTrainingReschedules(),
@@ -159,6 +162,10 @@ export async function GET(req: NextRequest) {
             .select('employeeId sopCode steps status overallPercentage')
             .lean(),
         ]);
+
+        // Only staff assigned an SOP on the Manage SOPs page belong on the
+        // trainer's board — everyone else in the department has nothing to train.
+        const employees = filterEmployeesWithAssignments(scopedEmployees, assignmentsMap);
 
         const progressMap = new Map<string, {
           steps: Record<string, unknown>;

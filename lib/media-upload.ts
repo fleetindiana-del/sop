@@ -3,6 +3,7 @@ import SOP from "@/models/SOP";
 import { asMediaArray, extractIdentifierFromFilename } from "@/lib/sop-utils";
 import { detectLanguageFromFilename, saveMediaFile } from "@/lib/upload";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
+import { logSopAudit, snapshotSop } from "@/lib/audit-log";
 
 type MediaResult = {
   file: string;
@@ -24,6 +25,17 @@ function langKey(language: string): "en" | "gu" {
   return language === "Gujarati" ? "gu" : "en";
 }
 
+/** One audit entry per SOP for a media change — the registry shows one row per SOP. */
+async function logMediaChange(
+  recordId: unknown,
+  previous: Record<string, unknown>,
+  comments: string,
+) {
+  const after = await SOP.findById(recordId).lean();
+  if (!after) return;
+  await logSopAudit({ action: "updated", sop: after, previous, comments });
+}
+
 async function attachMedia(
   identifier: string,
   language: "English" | "Gujarati",
@@ -34,6 +46,7 @@ async function attachMedia(
   const group = await findSopGroup(identifier);
   if (!group.length) return false;
 
+  const auditPrevious = snapshotSop(group[0]);
   const key = langKey(language);
   const mediaField = mediaKind === "video" ? "videos" : "slides";
 
@@ -67,6 +80,12 @@ async function attachMedia(
     });
   }
 
+  await logMediaChange(
+    group[0]._id,
+    auditPrevious,
+    `Attached ${mediaKind === "video" ? "video" : "slide"} (${language}): ${fileName}`,
+  );
+
   return true;
 }
 
@@ -74,6 +93,7 @@ async function attachThumbnail(identifier: string, fileUrl: string) {
   const group = await findSopGroup(identifier);
   if (!group.length) return false;
 
+  const auditPrevious = snapshotSop(group[0]);
   await Promise.all(
     group.map((record) =>
       record.updateOne({
@@ -84,6 +104,8 @@ async function attachThumbnail(identifier: string, fileUrl: string) {
       }),
     ),
   );
+
+  await logMediaChange(group[0]._id, auditPrevious, "Updated thumbnail");
 
   return true;
 }

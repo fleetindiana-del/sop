@@ -1,0 +1,90 @@
+
+
+1.0
+OBJECTIVE                       :
+To define the procedure of information, investigation and control for any kind of non-conformance noticed or confirmed in Production, Quality Control, Store or in other areas during any processing stages.
+
+
+
+2.0
+RESPONSIBILITY            :
+All Department Head
+
+
+
+3.0
+ACCOUNTABILITY        :
+QA Head
+
+
+
+4.0
+PROCEDURE                    :
+  
+
+
+
+4.1
+Whenever any non-conformance of procedure, result and activity observed at any processing or analysis stages with respect to the predetermined standard, it shall be immediately bring to the notice of the concerned department Head and QA Head.
+
+4.2
+Concerned department personnel shall fill-up details of non-conformance as mentioned in “Non-conformance Form” as per Annexure-I.
+
+4.3
+Filled “Non-conformance Form” shall be forwarded to the QA Head through the Dept. Head.
+
+4.4
+On receipt of the “Non-conformance Form”, QA Head shall take an early step to the non-conformance and shall advise for the future course of action.
+
+4.5
+QA Head shall discuss and investigate the non-conformance observed in detail and an ideal solution of the non-conformance shall be worked out and the same shall be written on the non-conformance report.
+
+4.6
+QA Head shall suggest the action / plan of the observed non-conformance and shall write in respective column of “Non-conformance Form”. Then non-conformance form shall be given back to the concerned dept. for implementation.
+
+4.7
+QA Head shall ensure that the action / plan suggested are implemented correctly.
+
+4.8
+Concerned department shall write the details of the action taken in the column of execution details on the non-conformance form and then same shall be returned to QA Head.
+
+4.9
+QA Head shall check that action suggested has been complied with and if satisfactory, the Quarantine status shall be lifted.
+4.10
+In case of any critical observations, a joint decision may be taken. 
+
+5.0
+ANNEXURES:-
+
+
+5.1
+Annexure-I  	 :  Non-Conformance Form 
+
+
+6.0
+REFERENCES:- NA
+
+
+7.0
+REVISION HISTORY:-
+
+Sr.
+No.
+Revision No.
+Date of Revision 
+SOP No.
+Supersedes No.
+Reason for Revision
+
+05
+24/07/2024
+QAGE10-05
+QAGE10-4
+Change in Firm Name from “Indiana Ophthalmics” to “Indiana Ophthalmics LLP”.
+Addition of Annexures, References and Revision History as Section 5.0, 6.0 and 7.0 respectively in the SOP.
+
+
+
+
+
+

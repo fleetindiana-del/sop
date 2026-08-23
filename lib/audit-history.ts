@@ -10,7 +10,10 @@ import {
   toAuditDate,
 } from "@/lib/audit-log";
 
-const BACKFILL_KEY = "audit-history-backfill-v1";
+const BACKFILL_KEY = "audit-history-backfill-v2";
+
+/** Live and reconstructed rows for the same event can drift by a few seconds. */
+const REDUNDANT_WINDOW_MS = 60_000;
 
 const HISTORICAL = {
   userId: "historical",
@@ -69,6 +72,68 @@ function ms(value: Date | undefined, fallback: number) {
   return value?.getTime() ?? fallback;
 }
 
+/** `created` and `uploaded` describe the same ingest event, so they collapse together. */
+function actionFamily(action: AuditAction): string {
+  return action === "created" || action === "uploaded" ? "ingest" : action;
+}
+
+function eventKey(entityType: string, entityLabel: string, action: AuditAction) {
+  return `${entityType}|${entityLabel.trim().toUpperCase()}|${actionFamily(action)}`;
+}
+
+type LiveEventIndex = Map<string, number[]>;
+
+/** Timestamps of every non-reconstructed audit row, keyed by entity + action family. */
+async function loadLiveEventIndex(): Promise<LiveEventIndex> {
+  const rows = await AuditLog.find({ source: { $ne: "historical" } })
+    .select("entityType entityLabel action timestamp")
+    .lean();
+  const index: LiveEventIndex = new Map();
+  for (const row of rows) {
+    const key = eventKey(row.entityType, String(row.entityLabel ?? ""), row.action);
+    const list = index.get(key) ?? [];
+    list.push(new Date(row.timestamp).getTime());
+    index.set(key, list);
+  }
+  return index;
+}
+
+function isCoveredByLive(
+  index: LiveEventIndex,
+  entityType: string,
+  entityLabel: string,
+  action: AuditAction,
+  timestamp: number,
+): boolean {
+  const list = index.get(eventKey(entityType, entityLabel, action));
+  if (!list) return false;
+  return list.some((time) => Math.abs(time - timestamp) <= REDUNDANT_WINDOW_MS);
+}
+
+/**
+ * Drop reconstructed rows that duplicate a real audit entry — the same entity and
+ * action family recorded by live logging at (near enough) the same moment.
+ */
+async function pruneRedundantHistory(index: LiveEventIndex): Promise<number> {
+  const rows = await AuditLog.find({ source: "historical" })
+    .select("entityType entityLabel action timestamp")
+    .lean();
+  const redundant = rows
+    .filter((row) =>
+      isCoveredByLive(
+        index,
+        row.entityType,
+        String(row.entityLabel ?? ""),
+        row.action,
+        new Date(row.timestamp).getTime(),
+      ),
+    )
+    .map((row) => row._id);
+  if (!redundant.length) return 0;
+  const result = await AuditLog.deleteMany({ _id: { $in: redundant } });
+  return result.deletedCount ?? 0;
+}
+
 function historyDoc(params: Omit<HistoryDoc, keyof typeof HISTORICAL | "dedupeKey"> & { timestamp: Date }): HistoryDoc {
   return {
     ...HISTORICAL,
@@ -82,7 +147,7 @@ function historyDoc(params: Omit<HistoryDoc, keyof typeof HISTORICAL | "dedupeKe
   };
 }
 
-function buildSopHistory(records: LeanSop[]): HistoryDoc[] {
+function buildSopHistory(records: LeanSop[], live: LiveEventIndex): HistoryDoc[] {
   const groups = new Map<string, LeanSop[]>();
   for (const row of records) {
     const key = String(row.identifier ?? "").trim().toUpperCase();
@@ -177,7 +242,10 @@ function buildSopHistory(records: LeanSop[]): HistoryDoc[] {
     }
   }
 
-  return docs;
+  return docs.filter(
+    (doc) =>
+      !isCoveredByLive(live, doc.entityType, doc.entityLabel, doc.action, doc.timestamp.getTime()),
+  );
 }
 
 async function insertHistory(docs: HistoryDoc[]) {
@@ -214,15 +282,27 @@ export async function ensureAuditHistoryBackfill(): Promise<void> {
       .createIndex({ dedupeKey: 1 }, { unique: true, sparse: true, background: true })
       .catch(() => undefined);
 
-    const [sopCount, deptCount] = await Promise.all([
+    const [sopCount, deptCount, liveCount] = await Promise.all([
       SOP.estimatedDocumentCount(),
       Department.estimatedDocumentCount(),
+      AuditLog.countDocuments({ source: { $ne: "historical" } }),
     ]);
     const flag = await SystemCache.findOne({ key: BACKFILL_KEY }).lean();
-    const prev = flag?.payload as { sopCount?: number; deptCount?: number } | undefined;
-    if (prev && prev.sopCount === sopCount && prev.deptCount === deptCount) return;
+    const prev = flag?.payload as
+      | { sopCount?: number; deptCount?: number; liveCount?: number }
+      | undefined;
+    if (
+      prev &&
+      prev.sopCount === sopCount &&
+      prev.deptCount === deptCount &&
+      prev.liveCount === liveCount
+    ) {
+      return;
+    }
 
     const started = Date.now();
+    const live = await loadLiveEventIndex();
+    const pruned = await pruneRedundantHistory(live);
     const [sops, departments] = await Promise.all([
       SOP.find({})
         .select(
@@ -232,11 +312,12 @@ export async function ensureAuditHistoryBackfill(): Promise<void> {
       Department.find({}).select("name createdAt").lean(),
     ]);
 
-    const docs = buildSopHistory(sops as LeanSop[]);
+    const docs = buildSopHistory(sops as LeanSop[], live);
     for (const dept of departments as { name?: string; createdAt?: Date }[]) {
       const name = String(dept.name ?? "").trim();
       if (!name) continue;
       const timestamp = toAuditDate(dept.createdAt) ?? new Date(0);
+      if (isCoveredByLive(live, "department", name, "created", timestamp.getTime())) continue;
       docs.push(
         historyDoc({
           timestamp,
@@ -256,11 +337,16 @@ export async function ensureAuditHistoryBackfill(): Promise<void> {
     await insertHistory(docs);
     await SystemCache.updateOne(
       { key: BACKFILL_KEY },
-      { $set: { payload: { sopCount, deptCount, events: docs.length }, computedAt: Date.now() } },
+      {
+        $set: {
+          payload: { sopCount, deptCount, liveCount, events: docs.length },
+          computedAt: Date.now(),
+        },
+      },
       { upsert: true },
     );
     console.log(
-      `[audit-history] backfilled ${docs.length} event(s) from ${sops.length} SOP record(s) in ${Date.now() - started}ms`,
+      `[audit-history] backfilled ${docs.length} event(s) from ${sops.length} SOP record(s), pruned ${pruned} redundant row(s) in ${Date.now() - started}ms`,
     );
   })().finally(() => {
     inFlight = null;

@@ -7,6 +7,7 @@ import { saveUploadedBuffer, detectFileType } from "@/lib/upload";
 import { resolveUploadLanguage } from "@/lib/sop-filename";
 import { languageFromContentScript } from "@/lib/sop-name-resolution";
 import { extractTextFromBuffer } from "@/lib/extractContent";
+import { logSopAudit, snapshotSop } from "@/lib/audit-log";
 
 export type AnnexureLinkResult = {
   success: boolean;
@@ -161,9 +162,21 @@ export async function linkAnnexureToParent(opts: {
     parentIdentifier: parent.identifier,
   };
 
-  await SOP.findByIdAndUpdate(parent._id, {
-    $push: { sopDocuments: docEntry },
-  });
+  const auditPrevious = snapshotSop(parent);
+  const updatedParent = await SOP.findByIdAndUpdate(
+    parent._id,
+    { $push: { sopDocuments: docEntry } },
+    { returnDocument: "after" },
+  ).lean();
+
+  if (updatedParent) {
+    await logSopAudit({
+      action: "updated",
+      sop: updatedParent,
+      previous: auditPrevious,
+      comments: `Linked annexure ${opts.annexureLabel ?? ""}: ${opts.fileName}`.trim(),
+    });
+  }
 
   return {
     success: true,

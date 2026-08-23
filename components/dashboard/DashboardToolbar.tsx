@@ -103,7 +103,7 @@ export function DashboardToolbar({
           <Btn
             size="sm"
             className="border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-            onClick={() => router.push("/lms/admin")}
+            onClick={() => router.push("/lms")}
           >
             <GraduationCap className="h-3 w-3" /> LMS
           </Btn>
@@ -294,7 +294,7 @@ export function DashboardToolbar({
         <Btn
           size="sm"
           className="border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-          onClick={() => router.push("/lms/admin")}
+          onClick={() => router.push("/lms")}
         >
           <GraduationCap className="h-3 w-3" /> LMS
         </Btn>

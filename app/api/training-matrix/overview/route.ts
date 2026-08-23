@@ -285,7 +285,12 @@ export async function GET(request: NextRequest) {
   }
 }
 
-async function computeOverviewPayload(forceFresh: boolean) {
+/**
+ * Exported so callers already inside the server (the Manage SOP view rebuild)
+ * can recompute the overview directly instead of paying for an HTTP loopback
+ * and a full JSON round trip of a large payload.
+ */
+export async function computeOverviewPayload(forceFresh: boolean) {
     await connectDB();
 
     if (forceFresh) invalidateDashboardSopsCache();

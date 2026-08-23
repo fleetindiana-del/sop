@@ -12,7 +12,9 @@ import {
 import {
   getTrainingMatrixCached as getTrainingMatrixOverviewCached,
   invalidateTrainingMatrixCache,
+  setTrainingMatrixCached,
 } from "@/lib/trainingMatrixCache";
+import { computeOverviewPayload } from "@/app/api/training-matrix/overview/route";
 import { invalidateInductionTrainingMatrixCache } from "@/lib/inductionTrainingMatrixCache";
 import {
   getEmployeeAssignmentsMap,
@@ -210,6 +212,10 @@ function snapshotEmployeeNameKey(name: string): string {
   return String(name || "").trim().toLowerCase();
 }
 
+function escapeRegExp(value: string): string {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function upsertSnapshotEmployeeTraining(
   employees: SnapshotEmployee[],
   name: string,
@@ -234,6 +240,27 @@ function upsertSnapshotEmployeeTraining(
   if (assigned) emp.training[sopCode] = true;
   else delete emp.training[sopCode];
   if (designation && !emp.designation) emp.designation = designation;
+}
+
+/**
+ * Clear one named employee's training flag for a SOP, matching on the version-
+ * stripped code so "QAGE115-02" also clears a flag stored as "QAGE115".
+ */
+function clearSnapshotEmployeeTraining(
+  employees: SnapshotEmployee[],
+  name: string,
+  sopCode: string,
+): void {
+  const key = snapshotEmployeeNameKey(name);
+  const base = stripVersion(sopCode);
+  if (!key || !base) return;
+  const emp = employees.find(
+    (row) => snapshotEmployeeNameKey(String(row?.name || "")) === key,
+  );
+  if (!emp?.training) return;
+  for (const code of Object.keys(emp.training)) {
+    if (stripVersion(code) === base) delete emp.training[code];
+  }
 }
 
 type RosterEmployee = {
@@ -632,11 +659,12 @@ async function buildManageSopViewResponse(
     let overviewData: any = forceFresh ? null : overviewCached;
     if (!overviewData?.totalCard?.dbSopsByDept) {
       try {
-        const overviewRes = await fetch(
-          `${request.nextUrl.origin}/api/training-matrix/overview${forceFresh ? "?refresh=1" : ""}`,
-          { cache: "no-store" },
-        );
-        if (overviewRes.ok) overviewData = await overviewRes.json();
+        // In-process rather than fetching our own /overview route: the loopback
+        // request and the JSON round trip of a large payload were pure overhead
+        // on the Update path. Caching it here also means the client's follow-up
+        // overview GET is a cache hit instead of another recompute.
+        overviewData = await computeOverviewPayload(forceFresh);
+        await setTrainingMatrixCached(overviewData);
       } catch {
         // Non-fatal; fallbacks below still apply.
       }
@@ -1528,10 +1556,22 @@ export interface ManageSOPEmployeeSopAssignment {
   }>;
 }
 
+/**
+ * Un-tick one named employee from a SOP without touching their colleagues.
+ * The designation-level `removals` channel cannot express this: it clears every
+ * employee sharing that designation.
+ */
+export interface ManageSOPEmployeeSopRemoval {
+  employeeName: string;
+  department: string;
+  sops: Array<{ sopCode: string }>;
+}
+
 export interface ManageSOPApplyRequest {
   entries?: ManageSOPApplyEntry[];
   removals?: ManageSOPRemoveEntry[];
   employeeSopAssignments?: ManageSOPEmployeeSopAssignment[];
+  employeeSopRemovals?: ManageSOPEmployeeSopRemoval[];
 }
 
 async function getOrCreateManualUploadId(
@@ -1568,11 +1608,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const employeeSopAssignments = Array.isArray(body?.employeeSopAssignments)
       ? body.employeeSopAssignments
       : [];
+    const employeeSopRemovals = Array.isArray(body?.employeeSopRemovals)
+      ? body.employeeSopRemovals
+      : [];
     if (
       !body ||
       (upsertEntries.length === 0 &&
         removalEntries.length === 0 &&
-        employeeSopAssignments.length === 0)
+        employeeSopAssignments.length === 0 &&
+        employeeSopRemovals.length === 0)
     ) {
       console.info(
         `${MANAGE_SOP_API_LOG} POST /api/training-matrix/manage-sop-view source=manage-sop empty_payload dbConnectMs=${dbConnectMs} totalMs=${elapsedMs(reqStartMs)}`,
@@ -1629,15 +1673,45 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ...normEntries.map((e) => e.department),
         ...normRemovals.map((r) => r.department),
         ...employeeSopAssignments.map((a) => String(a.department || "").trim()).filter(Boolean),
+        ...employeeSopRemovals.map((r) => String(r.department || "").trim()).filter(Boolean),
       ]),
     ];
 
+    // The client emits one removal per (SOP, dept, month) — up to twelve per
+    // department for a single row edit, each previously costing its own query
+    // pair. Same-designation removals are merged so each (SOP, dept, year)
+    // resolves in one round trip over all its months.
+    type MergedRemoval = {
+      sopCode: string; department: string; year: number;
+      months: Set<number>; designations: string[]; removeAllDesignations: boolean;
+    };
+    const mergedRemovals = new Map<string, MergedRemoval>();
+    for (const r of normRemovals) {
+      const desigKey = r.removeAllDesignations
+        ? "*"
+        : [...r.designations].sort().join("");
+      const key = `${r.sopCode}|${r.department}|${r.year}|${desigKey}`;
+      const existing = mergedRemovals.get(key);
+      if (existing) {
+        for (const m of r.months) existing.months.add(m);
+        continue;
+      }
+      mergedRemovals.set(key, {
+        sopCode: r.sopCode,
+        department: r.department,
+        year: r.year,
+        months: new Set(r.months),
+        designations: r.designations,
+        removeAllDesignations: r.removeAllDesignations,
+      });
+    }
+
     const [removalResults, allActiveEmployees, mainUploads, uploadIdResults] = await Promise.all([
       // All deletions in parallel
-      Promise.all(normRemovals.map(async (r) => {
+      Promise.all([...mergedRemovals.values()].map(async (r) => {
         const filter: Record<string, any> = {
           sopCode: r.sopCode, department: r.department, year: r.year,
-          month: { $in: r.months }, sourceFile: "manage-sop-manual",
+          month: { $in: [...r.months] }, sourceFile: "manage-sop-manual",
         };
         if (r.removeAllDesignations) {
           return TrainingMatrixRecord.deleteMany(filter);
@@ -1692,7 +1766,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ),
     );
 
-    const totalRemoved = removalResults.reduce((s, r) => s + (r.deletedCount || 0), 0);
+    let totalRemoved = removalResults.reduce((s, r) => s + (r.deletedCount || 0), 0);
     const mainUploadByDept = new Map<string, any>(
       uniqueDepts.map((dept, i) => [dept, mainUploads[i]])
     );
@@ -1716,6 +1790,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     };
     const snapshotPatches = new Map<string, SnapshotPatch[]>(); // dept → patches
     const snapshotRemovalPatches = new Map<string, NormRemoval[]>(); // dept → removals
+    // dept → named employees to un-tick from a SOP, leaving same-designation
+    // colleagues assigned. Applied alongside the designation removals below.
+    const snapshotEmployeeRemovals = new Map<
+      string,
+      Array<{ employeeName: string; sopCode: string }>
+    >();
 
     const bulkWriteOps = validEntries.map((e, idx) => {
       const emps = employeeResults[normEntries.indexOf(e)] as any[];
@@ -1892,6 +1972,97 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     }
 
+    // ── Per-employee un-ticks ───────────────────────────────────────────────
+    // Drop this one person's manual records for the SOP and clear their
+    // snapshot training flag. Everyone else on the designation stays assigned.
+    const employeeRemovalDeletes: Array<Promise<{ deletedCount?: number }>> = [];
+    // An employee listed in the dept snapshot is excluded by clearing their
+    // training flag, so only their manual rows are deleted. Someone absent from
+    // the snapshot is assigned purely through records, so the un-tick has to
+    // delete those records or it would silently reappear on the next load.
+    const snapshotHasEmployee = (dept: string, name: string): boolean => {
+      const mainUpload: any = mainUploadByDept.get(dept);
+      const emps: SnapshotEmployee[] = Array.isArray(mainUpload?.snapshot?.employees)
+        ? mainUpload.snapshot.employees
+        : [];
+      const key = snapshotEmployeeNameKey(name);
+      return emps.some((e) => snapshotEmployeeNameKey(String(e?.name || "")) === key);
+    };
+    // Targets are collected first and then resolved with ONE query per department.
+    // Querying per (employee, SOP) meant a separate scan of the department's
+    // records for every tick in the batch.
+    type EmpRemovalTarget = { nameKey: string; base: string; manualOnly: boolean };
+    const removalTargetsByDept = new Map<string, EmpRemovalTarget[]>();
+    const removalNamesByDept = new Map<string, Set<string>>();
+    for (const row of employeeSopRemovals) {
+      const department = String(row.department || "").trim();
+      const employeeName = String(row.employeeName || "").trim();
+      if (!department || !employeeName) {
+        warnings.push("Skipped an employee SOP removal with no name or department.");
+        continue;
+      }
+      const inSnapshot = snapshotHasEmployee(department, employeeName);
+      for (const sop of Array.isArray(row.sops) ? row.sops : []) {
+        const sopCode = String(sop.sopCode || "").trim();
+        if (!sopCode) continue;
+        if (!removalTargetsByDept.has(department)) {
+          removalTargetsByDept.set(department, []);
+          removalNamesByDept.set(department, new Set());
+        }
+        removalTargetsByDept.get(department)!.push({
+          nameKey: employeeName.toLowerCase(),
+          base: stripVersion(sopCode),
+          manualOnly: inSnapshot,
+        });
+        removalNamesByDept.get(department)!.add(employeeName);
+        if (!snapshotEmployeeRemovals.has(department)) {
+          snapshotEmployeeRemovals.set(department, []);
+        }
+        snapshotEmployeeRemovals.get(department)!.push({ employeeName, sopCode });
+      }
+    }
+
+    for (const [department, targets] of removalTargetsByDept) {
+      const names = [...(removalNamesByDept.get(department) || [])];
+      employeeRemovalDeletes.push(
+        (async () => {
+          // Narrowed by department + the exact names, which the
+          // (employeeName, department) index serves. Case-insensitive regexes
+          // ride along so a casing drift between snapshot and records still
+          // matches; SOP codes are compared on the stripped base in JS.
+          const candidates = await TrainingMatrixRecord.find({
+            department,
+            employeeName: {
+              $in: [
+                ...names,
+                ...names.map((n) => new RegExp(`^${escapeRegExp(n)}$`, "i")),
+              ],
+            },
+          })
+            .select("_id employeeName sopCode sourceFile")
+            .lean<Array<{ _id: unknown; employeeName?: string; sopCode?: string; sourceFile?: string }>>();
+          const ids = candidates
+            .filter((r) => {
+              const nameKey = String(r.employeeName || "").trim().toLowerCase();
+              const base = stripVersion(String(r.sopCode || ""));
+              return targets.some(
+                (t) =>
+                  t.nameKey === nameKey &&
+                  t.base === base &&
+                  (!t.manualOnly || String(r.sourceFile || "") === "manage-sop-manual"),
+              );
+            })
+            .map((r) => r._id);
+          if (ids.length === 0) return { deletedCount: 0 };
+          return TrainingMatrixRecord.deleteMany({ _id: { $in: ids } });
+        })(),
+      );
+    }
+    if (employeeRemovalDeletes.length > 0) {
+      const results = await Promise.all(employeeRemovalDeletes);
+      totalRemoved += results.reduce((s, r) => s + (r?.deletedCount || 0), 0);
+    }
+
     // Final designation applicability per (sop, dept) — drives Training Matrix assignment rows.
     const assignmentDesigByKey = new Map<
       string,
@@ -1918,12 +2089,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const [bulkResults, ...snapshotResults] = await Promise.all([
-      // All bulkWrites in parallel
-      Promise.all(bulkWriteOps.map((ops) =>
-        ops.length > 0
-          ? TrainingMatrixRecord.bulkWrite(ops, { ordered: false })
-          : Promise.resolve(null)
-      )),
+      // One unordered bulkWrite for every entry and named assignment. These were
+      // issued as a separate round trip per entry, which multiplied latency on a
+      // multi-dept save; the ops all target one collection on distinct filters,
+      // so the driver batches them just as safely in a single call.
+      (async () => {
+        const allOps = bulkWriteOps.flat();
+        if (allOps.length === 0) return [];
+        return [await TrainingMatrixRecord.bulkWrite(allOps, { ordered: false })];
+      })(),
       // All snapshot updates in parallel (one per unique dept)
       ...[...snapshotPatches.entries()].map(async ([dept, patches]) => {
         try {
@@ -1985,6 +2159,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               );
             }
           }
+          // This task rewrites the whole employees array, so any per-employee
+          // un-tick for this dept must be folded in here rather than issued as a
+          // competing $unset — otherwise whichever write lands last wins.
+          for (const rm of snapshotEmployeeRemovals.get(dept) || []) {
+            clearSnapshotEmployeeTraining(snapshotEmployees, rm.employeeName, rm.sopCode);
+          }
           update.$set["snapshot.employees"] = snapshotEmployees;
           if (newSopCodes.length > 0) update.$addToSet = { "snapshot.sopCodes": { $each: newSopCodes } };
           await TrainingMatrixUpload.updateOne({ _id: mainUpload._id }, update);
@@ -1993,13 +2173,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
       }),
       // Clear training flags in snapshot when designations/months are removed.
-      ...[...snapshotRemovalPatches.entries()].map(async ([dept, removals]) => {
+      ...[...new Set([
+        ...snapshotRemovalPatches.keys(),
+        ...snapshotEmployeeRemovals.keys(),
+      ])].map(async (dept) => {
+        const removals = snapshotRemovalPatches.get(dept) || [];
+        // Depts with additive patches already folded their per-employee un-ticks
+        // into the full-array rewrite above; re-issuing them here would race it.
+        const employeeRemovals = snapshotPatches.has(dept)
+          ? []
+          : snapshotEmployeeRemovals.get(dept) || [];
+        if (removals.length === 0 && employeeRemovals.length === 0) return;
         try {
           const mainUpload: any = mainUploadByDept.get(dept);
           if (!mainUpload?._id) return;
-          const snapshotEmployees: Array<{ designation?: string; training?: Record<string, boolean> }> =
+          const snapshotEmployees: Array<{ name?: string; designation?: string; training?: Record<string, boolean> }> =
             Array.isArray(mainUpload?.snapshot?.employees) ? mainUpload.snapshot.employees : [];
           const unsetFields: Record<string, string> = {};
+
+          for (const rm of employeeRemovals) {
+            const target = snapshotEmployeeNameKey(rm.employeeName);
+            const base = stripVersion(rm.sopCode);
+            snapshotEmployees.forEach((emp, idx) => {
+              if (snapshotEmployeeNameKey(String(emp?.name || "")) !== target) return;
+              for (const code of Object.keys(emp?.training || {})) {
+                if (stripVersion(code) === base) {
+                  unsetFields[`snapshot.employees.${idx}.training.${code}`] = "";
+                }
+              }
+            });
+          }
 
           for (const removal of removals) {
             if (removal.removeAllDesignations) {
@@ -2102,15 +2305,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       invalidateManageSopViewCache(),
     ]).catch(() => {});
 
-    // Warm the training-matrix overview cache so assigned-SOP counts are fresh
-    // when the user navigates back from Manage SOPs.
-    try {
-      await fetch(`${request.nextUrl.origin}/api/training-matrix/overview?refresh=1`, {
-        cache: "no-store",
-      });
-    } catch {
-      // Non-fatal — the next overview GET will recompute after invalidation.
-    }
+    // The overview is deliberately NOT recomputed here. The client's follow-up
+    // GET /manage-sop-view?refresh=1 rebuilds it synchronously as part of its own
+    // build, so warming it here just put a second full recompute on the critical
+    // path of every Update. It stays invalidated above, so any other caller's
+    // next overview GET recomputes correctly.
 
     console.info(
       `${MANAGE_SOP_API_LOG} POST /api/training-matrix/manage-sop-view source=manage-sop dbConnectMs=${dbConnectMs} upsertEntries=${upsertEntries.length} removalEntries=${removalEntries.length} inserted=${totalInserted} removed=${totalRemoved} updated=${totalMatched} unchanged=${totalUnchanged} warnings=${warnings.length} totalMs=${elapsedMs(reqStartMs)}`,

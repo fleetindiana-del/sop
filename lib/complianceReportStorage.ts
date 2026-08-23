@@ -10,9 +10,61 @@ import { computeWeightedScoreBreakdown } from "@/lib/complianceClassification";
 import { attachGuidelineSourceFields } from "@/lib/guidelineClauseDisplay";
 import mongoose from "mongoose";
 import { completeMatchingComplianceRunRequests } from "@/lib/complianceRunRequests";
+import { logAuditEvent, resolveAuditActor } from "@/lib/audit-log";
+import { COMPLIANCE_PASS_SCORE } from "@/lib/registry-compliance";
 
 function isObjectId(value?: string): boolean {
   return !!value && mongoose.Types.ObjectId.isValid(value);
+}
+
+/**
+ * Registry SCORE / COMPLIANCE DONE are derived from the current report, so an
+ * analysis run is the mutation that changes those columns — audit it here.
+ */
+async function logComplianceScoreAudit(params: {
+  sopId: string;
+  sopIdentifier: string;
+  sopName: string;
+  department: string;
+  before: { overallScore?: number; complianceStatus?: string } | null;
+  afterScore: number;
+  afterStatus: string;
+}): Promise<void> {
+  try {
+    const previousScore = params.before?.overallScore ?? null;
+    const previousDone = previousScore == null ? null : previousScore >= COMPLIANCE_PASS_SCORE;
+    const nextDone = params.afterScore >= COMPLIANCE_PASS_SCORE;
+    if (previousScore === params.afterScore && previousDone === nextDone) return;
+
+    const fieldsChanged = ["complianceScore", "complianceDone", "complianceStatus"];
+    const scoreText = `${Math.round(params.afterScore * 10)}%`;
+    await logAuditEvent({
+      actor: await resolveAuditActor(),
+      entityType: "sop",
+      entityId: params.sopId,
+      entityLabel: params.sopIdentifier,
+      sopName: params.sopName,
+      department: params.department,
+      action: "updated",
+      fieldsChanged,
+      previousValues: {
+        complianceScore: previousScore,
+        complianceDone: previousDone,
+        complianceStatus: params.before?.complianceStatus ?? null,
+      },
+      updatedValues: {
+        complianceScore: params.afterScore,
+        complianceDone: nextDone,
+        complianceStatus: params.afterStatus,
+      },
+      summary:
+        previousScore == null
+          ? `Compliance analysed for ${params.sopIdentifier} — score ${scoreText}`
+          : `Compliance score for ${params.sopIdentifier} changed ${Math.round(previousScore * 10)}% → ${scoreText}`,
+    });
+  } catch (err) {
+    console.error("[compliance] audit log failed:", err);
+  }
 }
 
 export async function saveComplianceReport(data: {
@@ -144,11 +196,26 @@ export async function saveComplianceReport(data: {
     analyzedAt: new Date(),
   };
 
+  const before = await ComplianceReport.findOne({ sopId: new mongoose.Types.ObjectId(data.sopId) })
+    .select("overallScore complianceStatus analysisStatus")
+    .lean();
+
   const saved = await ComplianceReport.findOneAndUpdate(
     { sopId: new mongoose.Types.ObjectId(data.sopId) },
     { $set: reportData },
     { upsert: true, returnDocument: 'after' },
   );
+
+  await logComplianceScoreAudit({
+    sopId: data.sopId,
+    sopIdentifier: data.sopIdentifier,
+    sopName: data.sopName,
+    department: data.department,
+    before,
+    afterScore: reportData.overallScore,
+    afterStatus: data.complianceStatus,
+  });
+
   try {
     await completeMatchingComplianceRunRequests({
       _id: saved?._id,

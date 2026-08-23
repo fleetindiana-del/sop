@@ -10,6 +10,19 @@ export const maxDuration = 300;
 const MAX_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_CHUNKS = 50;
 
+/**
+ * `.lean()` returns the raw BSON `Binary`, not a Buffer. `Buffer.from(binary)`
+ * must NOT be used: `Binary.length` is a method, so Node reads it as an
+ * array-like of length 0 and silently returns an empty buffer — which is how
+ * every chunked (>3.2 MB) upload ended up stored as a 0-byte file.
+ */
+function chunkToBuffer(data: unknown): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  const inner = (data as { buffer?: Uint8Array } | null | undefined)?.buffer;
+  if (inner) return Buffer.from(inner);
+  return Buffer.from(data as Uint8Array);
+}
+
 export async function POST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
@@ -56,9 +69,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const buffer = Buffer.concat(
-      stored.map((row) => (Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data))),
-    );
+    const buffer = Buffer.concat(stored.map((row) => chunkToBuffer(row.data)));
+    if (!buffer.length) {
+      await SopUploadChunk.deleteMany({ uploadId });
+      return NextResponse.json(
+        { error: "Assembled upload was empty — please retry" },
+        { status: 500 },
+      );
+    }
     await SopUploadChunk.deleteMany({ uploadId });
 
     const assembled = new File([new Uint8Array(buffer)], fileName, {

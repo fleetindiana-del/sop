@@ -1,0 +1,179 @@
+ 
+ 1.0 
+ OBJECTIVE : 
+ To describe the procedure for avoiding mix-up between different product labels and different product cartons . 
+ 
+ 
+ 
+ 2.0 
+ RESPONSIBILITY : 
+ Artwork in-charge, PM store in-charge, P acking in-charge 
+ 
+ 
+ 
+ 3.0 
+ ACCOUNTABILITY : 
+ Q A Head 
+ 
+ 
+ 
+ 4.0 
+ PROCEDURE : 
+ 
+ 
+ 
+ 
+ 4.1 
+ Printed Product Label Control:- 
+ 
+ 
+ 4.1 .1 
+ At Artwork Development Stage:- 
+ 
+ 4.1.1 .1 
+ While finalizing the artwork, artwork in-charge shall confirm that the colour selected for label of particular product is different in colour / design / size from other product labels. 
+ 
+ 4.1. 1. 2 
+ No repetition of the colour and design for same size label is accepted. The label shall be easily distinguishable from other different product labels. 
+ 
+ 4. 1. 2 
+ At Printer’s Premises:- 
+ 
+ 4. 1. 2.1 
+ Ensure that there is an enough space at printer’s premises to segregate different packaging materials product wise as well as company wise. 
+ 
+ 4. 1. 2.2 
+ While giving order for printed labels to the printers, care shall be taken that order of same sized product label of different products are not given to the same printer. 
+ 
+ 4. 1. 2.3 
+ Ensure that bundles of labels are counted manually in random way at printer’s premises to ensure exact number of labels in the particular bundle. 
+ 
+ 4. 1. 2.4 
+ Random checks of bundles after packing shall be done by printer in-charge at printer’s premises to confirm the quantity and quality. 
+ 
+ 4. 1. 3 
+ At Packing Material Store after Receiving Printed Label of Product:- 
+ 
+ 4. 1. 3.1 
+ Packing material store in-charge shall arrange printed label of different products in appropriate manner. 
+ 4. 1. 3.2 
+ Printed labels of different products shall be stored in designated area in such a way that they can easily identifiable by QC sampling person. 
+ 
+ 4. 1. 3.3 
+ Product labels are kept in the under test area until QC analysis results received. After receiving testing results, product labels are transferred to either approved area or rejection area based on the testing result. 
+ 
+ 4. 1. 3.4 
+ After receiving material requisition slip of product, store in-charge shall issue labels and other packing materials to production department in the presence of IPQA officer. During each and every activity of issue and receipt of printed product label, proper care shall be taken by PM store in-charge to avoid any chance of label mix-up. 
+ 
+ 4. 1. 4 
+ At Packing Department:- 
+ 
+ 4. 1. 4.1 
+ After receipt of printed product labels from PM store, Packing Chemist shall store them at proper designated place to avoid any mix-ups until batch packing starts. 
+ 
+ 4. 1. 4.2 
+ During packing activity, in-process checks of product label shall be done by packing supervisor and IPQA personnel to confirm the quality. 
+ 
+ 4. 1. 4.3 
+ Any rejected labels shall be kept separately and at end of the particular product batch, reconciliation of labels shall be done and recorded in respective batch records. 
+ 
+ 4. 1. 4.4 
+ After completion of the batch activity, if any product label remains unused, the same shall be returned to the packing material store with proper handling. 
+ 
+ 4.2 
+ Printed Product Carton Control:- 
+ 
+ 4. 2. 1 
+ At Artwork Development Stage:- 
+ 
+ 4. 2. 1.1 
+ While finalizing the artwork, artwork in-charge shall confirm that the colour selected for carton of particular product is different in colour / design / size from other product cartons. 
+ 
+ 4. 2. 1.2 
+ No repetition of the colour and design for same size carton is accepted. The carton of the particular product shall be easily distinguishable in colour / design / size from other different product cartons. 
+ 
+ 
+ 4. 2. 2 
+ At Printer’s Premises:- 
+ 
+ 4. 2. 2.1 
+ Ensure that there is an enough space at printer’s premises to segregate different packaging materials product wise as well as company wise. 
+ 
+ 4. 2. 2.2 
+ While giving order for printed cartons to the printers, care shall be taken that order of same looking product cartons of different products are not given to the same printer. 
+ 
+ 4. 2. 2.3 
+ Ensure that boxes / bunches of cartons are counted manually in random way at printer’s premises to ensure exact number of cartons in the particular box / bunch. 
+ 
+ 4. 2. 2.4 
+ Random checks of boxes after packing shall be done by printer in-charge at printer’s premises to confirm the quantity and quality. 
+ 
+ 4. 2. 3 
+ At Packing Material Store after Receiving Printed Carton of Product:- 
+ 
+ 4. 2. 3.1 
+ Packing material store in-charge shall arrange printed cartons of different products in appropriate manner. 
+ 
+ 4. 2. 3.2 
+ Printed cartons of different products shall be stored in designated area in such a way that they can easily identifiable by QC sampling person. 
+ 
+ 4. 2. 3.3 
+ Product cartons are kept in the under test area until QC analysis report received. After receiving testing results, product cartons are transferred to either approved area or rejection area based on the testing result. 
+ 
+ 4. 2. 3.4 
+ After receiving material requisition slip of product, store in-charge shall issue cartons and other packing materials to production department in the presence of IPQA officer. During each and every activity of issue and receipt of printed product cartons, proper care shall be taken by PM store in-charge to avoid any chance of label mix-up. 
+ 
+ 4. 2. 4 
+ At Overprinting Stage:- 
+ 
+ 4. 2. 4.1 
+ At a time, overprinting activity of only one batch product shall be allowed. Packing supervisor and IPQA personnel shall approve line clearance for carton coding. 
+ 
+ 4. 2. 4.2 
+ Any coding rejection of carton during overprinting activity shall be kept separately and number of rejected cartons shall be identified and recorded in the respective batch record. 
+ 
+ 4. 2. 5 
+ At Packing Department:- 
+ 
+ 4. 2. 5.1 
+ After receipt of printed product labels from PM store or after completion of overprinting activity of particular batch product carton, Packing Chemist shall store them at proper designated place to avoid any mix-ups until batch overprinting / packing starts. 
+ 
+ 4. 2. 5 .2 
+ During packing activity, in-process checks of product cartons shall be done by packing supervisor and IPQA personnel to confirm the quality and coding. 
+ 
+ 4. 2.5 .3 
+ Any rejected cartons shall be kept separately and at end of the particular product batch, reconciliation of cartons shall be done and recorded in respective batch records. 
+ 
+ 4. 2.5 .4 
+ After completion of the batch activity, if any product carton remains unused, the same shall be returned to the packing material store with proper handling. 
+ 
+ 5.0 
+ ANNEXURES:- NA 
+ 
+ 
+ 6.0 
+ REFERENCES:- NA 
+ 
+ 
+ 7.0 
+ REVISION HISTORY:- 
+ 
+ 
+ Sr. 
+ No. 
+ Revision No. 
+ Date of Revision 
+ SOP No. 
+ Supersedes No. 
+ Reason for Revision 
+ 
+ 05 
+ 05/08/2024 
+ QAGE22-05 
+ QAGE22-4 
+ Change in Firm Name from “Indiana Ophthalmics” to “Indiana Ophthalmics LLP”. 
+ Addition of Annexures, References and Revision History as Section 5.0, 6.0 and 7.0 respectively in the SOP. 
+ 
+ 
+ 
+ 

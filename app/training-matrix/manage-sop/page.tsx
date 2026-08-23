@@ -205,6 +205,82 @@ function chunkIntoColumns<T>(items: T[], columnCount: number): T[][] {
 
 const desigKeyHelper = (dept: string, abbr: string) => `${dept}|${abbr}`;
 const cellInnerKeyHelper = (dept: string, month: number) => `${dept}|${month}`;
+// Employee-view ticks are per person, not per designation — names are stored as
+// typed, so the key is lowercased to survive casing drift between sources.
+const empOverrideKeyHelper = (dept: string, employeeName: string) =>
+  `${dept}|${String(employeeName || '').trim().toLowerCase()}`;
+
+type EmployeeSopEdit = {
+  employeeName: string;
+  department: string;
+  designation?: string;
+  sops: Array<{ sopCode: string; sopName?: string; months?: number[] }>;
+};
+
+/**
+ * Turn the pending per-employee ticks into save payloads, dropping ticks that
+ * already match what is stored. Shared by the Update button's pending count and
+ * by the save itself so the badge can never disagree with what gets sent.
+ */
+function buildEmployeeSopEdits(
+  employeeOverrides: Record<string, Record<string, boolean>>,
+  viewData: ManageSOPViewResponse | null,
+): {
+  employeeSopAssignments: EmployeeSopEdit[];
+  employeeSopRemovals: Array<{ employeeName: string; department: string; sops: Array<{ sopCode: string }> }>;
+  employeeSopCodes: Set<string>;
+} {
+  const assignByKey = new Map<string, EmployeeSopEdit>();
+  const removeByKey = new Map<string, EmployeeSopEdit>();
+  const employeeSopCodes = new Set<string>();
+  if (!viewData) {
+    return { employeeSopAssignments: [], employeeSopRemovals: [], employeeSopCodes };
+  }
+
+  for (const [sopCode, inner] of Object.entries(employeeOverrides)) {
+    const sop = viewData.sops.find((s) => s.sopCode === sopCode);
+    if (!sop) continue;
+    for (const [key, value] of Object.entries(inner || {})) {
+      const sepIdx = key.indexOf('|');
+      if (sepIdx < 0) continue;
+      const dept = key.slice(0, sepIdx);
+      const nameKey = key.slice(sepIdx + 1);
+      const emp = (viewData.employeesByDept?.[dept] || []).find(
+        (e) => e.name.trim().toLowerCase() === nameKey,
+      );
+      if (!emp) continue;
+      const assigned = (emp.assignedSopCodes || []).some(
+        (c) => sopCacheKey(c) === sopCacheKey(sopCode),
+      );
+      // Ticks that already match what is stored are not edits.
+      if (value === assigned) continue;
+      const target = value ? assignByKey : removeByKey;
+      const bucketKey = `${dept}|${emp.name}`;
+      let bucket = target.get(bucketKey);
+      if (!bucket) {
+        bucket = { employeeName: emp.name, department: dept, designation: emp.designation, sops: [] };
+        target.set(bucketKey, bucket);
+      }
+      const ds = sop.deptStats.find((d) => d.department === dept);
+      bucket.sops.push({
+        sopCode,
+        sopName: sop.sopName,
+        months: ds?.scheduledMonth ? [ds.scheduledMonth] : [],
+      });
+      employeeSopCodes.add(sopCode);
+    }
+  }
+
+  return {
+    employeeSopAssignments: [...assignByKey.values()],
+    employeeSopRemovals: [...removeByKey.values()].map((b) => ({
+      employeeName: b.employeeName,
+      department: b.department,
+      sops: b.sops.map((x) => ({ sopCode: x.sopCode })),
+    })),
+    employeeSopCodes,
+  };
+}
 
 function isValidManageSopViewResponse(parsed: unknown): parsed is ManageSOPViewResponse {
   if (!parsed || typeof parsed !== 'object') return false;
@@ -348,6 +424,10 @@ function ManageSOPDashboard() {
   const [overrides, setOverrides] = useState<PerSop>({});
   const [inductionOverrides, setInductionOverrides] = useState<PerSop>({});
   const [monthCells, setMonthCells] = useState<PerSop>({});
+  // employeeOverrides[sopCode]["dept|employee name"] -> per-person training tick.
+  // The employee view needs its own buffer: writing employee ticks into
+  // `overrides` toggled every colleague sharing that designation.
+  const [employeeOverrides, setEmployeeOverrides] = useState<PerSop>({});
 
   // Applied (committed) snapshots — used to derive displayed counts/totals
   const [appliedOverrides, setAppliedOverrides] = useState<PerSop>({});
@@ -397,6 +477,19 @@ function ManageSOPDashboard() {
       return { ...prev, [sopCode]: { ...inner, [desigKey(dept, fullName)]: value } };
     });
   }, []);
+
+  const setEmployeeChecked = useCallback(
+    (sopCode: string, dept: string, employeeName: string, value: boolean) => {
+      setEmployeeOverrides(prev => {
+        const inner = prev[sopCode] || {};
+        return {
+          ...prev,
+          [sopCode]: { ...inner, [empOverrideKeyHelper(dept, employeeName)]: value },
+        };
+      });
+    },
+    [],
+  );
 
   const setInductionChecked = useCallback((sopCode: string, dept: string, fullName: string, value: boolean) => {
     setInductionOverrides(prev => {
@@ -758,7 +851,14 @@ function ManageSOPDashboard() {
       }
     }
 
-    if (sopCodesToProcess.size === 0) {
+    // Per-employee ticks travel on their own channel: the designation payload
+    // below cannot express "this one person only" without moving colleagues.
+    const { employeeSopAssignments, employeeSopRemovals, employeeSopCodes } =
+      buildEmployeeSopEdits(employeeOverrides, viewData);
+    const hasEmployeeEdits =
+      employeeSopAssignments.length > 0 || employeeSopRemovals.length > 0;
+
+    if (sopCodesToProcess.size === 0 && !hasEmployeeEdits) {
       setApplyMsg({ kind: 'ok', text: 'No changes to apply.' });
       return;
     }
@@ -892,7 +992,7 @@ function ManageSOPDashboard() {
       year: currentYear,
     }));
 
-    if (entries.length === 0 && removals.length === 0) {
+    if (entries.length === 0 && removals.length === 0 && !hasEmployeeEdits) {
       setAppliedOverrides({ ...overridesArg });
       setAppliedMonthCells({ ...monthCellsArg });
       setApplyMsg({ kind: 'ok', text: 'No changes to apply.' });
@@ -904,7 +1004,12 @@ function ManageSOPDashboard() {
       const res = await fetch('/api/training-matrix/manage-sop-view', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries, removals }),
+        body: JSON.stringify({
+          entries,
+          removals,
+          ...(employeeSopAssignments.length > 0 ? { employeeSopAssignments } : {}),
+          ...(employeeSopRemovals.length > 0 ? { employeeSopRemovals } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Apply failed');
@@ -959,10 +1064,13 @@ function ManageSOPDashboard() {
           }
         } catch { /* non-fatal */ }
 
-        // Pre-warm the training-matrix overview cache so assigned-SOP counts match
+        // Prime the training-matrix overview cache so assigned-SOP counts match
         // manage-sops when the user navigates back to the main matrix page.
+        // No ?refresh=1: the manage-sop-view rebuild above already recomputed the
+        // overview server-side, so this reads that warm result instead of paying
+        // for a third full recompute.
         try {
-          const overviewRes = await fetch('/api/training-matrix/overview?refresh=1', {
+          const overviewRes = await fetch('/api/training-matrix/overview', {
             cache: 'no-store',
           });
           if (overviewRes.ok && typeof window !== 'undefined') {
@@ -988,6 +1096,7 @@ function ManageSOPDashboard() {
         };
         setOverrides((prev) => clearSopLocalState(prev, sopCodesToProcess));
         setMonthCells((prev) => clearSopLocalState(prev, sopCodesToProcess));
+        setEmployeeOverrides((prev) => clearSopLocalState(prev, employeeSopCodes));
         setAppliedOverrides((prev) => clearSopLocalState(prev, sopCodesToProcess));
         setAppliedMonthCells((prev) => clearSopLocalState(prev, sopCodesToProcess));
       } else {
@@ -1347,6 +1456,19 @@ function ManageSOPDashboard() {
       setAssignEmpSaving(false);
     }
   };
+
+  // Pending per-employee ticks waiting for Update — shown on the button so a
+  // click is confirmed as queued even before the row is saved.
+  const pendingEmployeeEdits = useMemo(() => {
+    const { employeeSopAssignments, employeeSopRemovals } = buildEmployeeSopEdits(
+      employeeOverrides,
+      viewData,
+    );
+    let count = 0;
+    for (const b of employeeSopAssignments) count += b.sops.length;
+    for (const b of employeeSopRemovals) count += b.sops.length;
+    return count;
+  }, [employeeOverrides, viewData]);
 
   // Has the user toggled any designation in (sop, dept) — used for "highlighted" state.
   // Checks the full global union so cross-dept assignments are also reflected.
@@ -2231,6 +2353,11 @@ function ManageSOPDashboard() {
                     title="Persist checked designation × month selections into the training matrix"
                   >
                     {applying ? 'Saving…' : 'Update'}
+                    {!applying && pendingEmployeeEdits > 0 && (
+                      <span className="rounded-full bg-white/25 px-1.5 text-[11px] font-bold">
+                        {pendingEmployeeEdits}
+                      </span>
+                    )}
                   </button>
                   {applyMsg && (
                     <span
@@ -2393,6 +2520,7 @@ function ManageSOPDashboard() {
                 allDesignations={allDesignationsRef.current}
                 overrides={overrides}
                 inductionOverrides={inductionOverrides}
+                employeeOverrides={employeeOverrides}
                 monthCells={monthCells}
                 manualAllocations={viewData.manualAllocations}
                 manualDesignations={viewData.manualDesignations}
@@ -2404,6 +2532,7 @@ function ManageSOPDashboard() {
                 onEmployeeClick={openEmployeeModal}
                 onOpenAddEmployee={openAddEmployeeModal}
                 setDesigChecked={setDesigChecked}
+                setEmployeeChecked={setEmployeeChecked}
                 setInductionChecked={setInductionChecked}
                 setDeptChecked={setDeptChecked}
                 setDeptInductionChecked={setDeptInductionChecked}
@@ -3236,6 +3365,7 @@ interface SopRowsBodyProps {
   allDesignations: string[];
   overrides: Record<string, Record<string, boolean>>;
   inductionOverrides: Record<string, Record<string, boolean>>;
+  employeeOverrides: Record<string, Record<string, boolean>>;
   monthCells: Record<string, Record<string, boolean>>;
   manualAllocations?: ManageSOPViewResponse['manualAllocations'];
   manualDesignations?: ManageSOPViewResponse['manualDesignations'];
@@ -3247,6 +3377,7 @@ interface SopRowsBodyProps {
   onEmployeeClick: (name: string, dept: string, designation: string) => void;
   onOpenAddEmployee: (sopCode: string, sopName: string, dept: string) => void;
   setDesigChecked: (sopCode: string, dept: string, fullName: string, value: boolean) => void;
+  setEmployeeChecked: (sopCode: string, dept: string, employeeName: string, value: boolean) => void;
   setInductionChecked: (sopCode: string, dept: string, fullName: string, value: boolean) => void;
   setDeptChecked: (sopCode: string, dept: string, value: boolean) => void;
   setDeptInductionChecked: (sopCode: string, dept: string, value: boolean) => void;
@@ -3264,6 +3395,7 @@ const SopRowsBody = memo(function SopRowsBody({
   allDesignations,
   overrides,
   inductionOverrides,
+  employeeOverrides,
   monthCells,
   manualAllocations,
   manualDesignations,
@@ -3275,6 +3407,7 @@ const SopRowsBody = memo(function SopRowsBody({
   onEmployeeClick,
   onOpenAddEmployee,
   setDesigChecked,
+  setEmployeeChecked,
   setInductionChecked,
   setDeptChecked,
   setDeptInductionChecked,
@@ -3310,6 +3443,7 @@ const SopRowsBody = memo(function SopRowsBody({
             primaryDept={getPrimaryDept(sop)}
             sopOverrides={overrides[sop.sopCode] || emptyInner}
             sopInductionOverrides={inductionOverrides[sop.sopCode] || emptyInner}
+            sopEmployeeOverrides={employeeOverrides[sop.sopCode] || emptyInner}
             sopMonthCells={monthCells[sop.sopCode] || emptyInner}
             sopManualAllocations={manualAllocations?.[sopCodeKey] || emptyManual}
             sopManualDesignations={manualDesignations?.[sopCodeKey] || emptyManualDesig}
@@ -3318,6 +3452,7 @@ const SopRowsBody = memo(function SopRowsBody({
             onEmployeeClick={onEmployeeClick}
             onOpenAddEmployee={onOpenAddEmployee}
             setDesigChecked={setDesigChecked}
+            setEmployeeChecked={setEmployeeChecked}
             setInductionChecked={setInductionChecked}
             setDeptChecked={setDeptChecked}
             setDeptInductionChecked={setDeptInductionChecked}
@@ -3379,6 +3514,7 @@ interface SopRowProps {
   primaryDept: string;
   sopOverrides: Record<string, boolean>;
   sopInductionOverrides: Record<string, boolean>;
+  sopEmployeeOverrides: Record<string, boolean>;
   sopMonthCells: Record<string, boolean>;
   sopManualAllocations: Record<string, number[]>;
   sopManualDesignations: Record<string, string[]>;
@@ -3387,6 +3523,7 @@ interface SopRowProps {
   onEmployeeClick: (name: string, dept: string, designation: string) => void;
   onOpenAddEmployee: (sopCode: string, sopName: string, dept: string) => void;
   setDesigChecked: (sopCode: string, dept: string, abbr: string, value: boolean) => void;
+  setEmployeeChecked: (sopCode: string, dept: string, employeeName: string, value: boolean) => void;
   setInductionChecked: (sopCode: string, dept: string, abbr: string, value: boolean) => void;
   setDeptChecked: (sopCode: string, dept: string, value: boolean) => void;
   setDeptInductionChecked: (sopCode: string, dept: string, value: boolean) => void;
@@ -3405,6 +3542,7 @@ const SopRow = memo(function SopRow({
   primaryDept,
   sopOverrides,
   sopInductionOverrides,
+  sopEmployeeOverrides,
   sopMonthCells,
   sopManualAllocations,
   sopManualDesignations,
@@ -3413,6 +3551,7 @@ const SopRow = memo(function SopRow({
   onEmployeeClick,
   onOpenAddEmployee,
   setDesigChecked,
+  setEmployeeChecked,
   setInductionChecked,
   setDeptChecked,
   setDeptInductionChecked,
@@ -3516,8 +3655,12 @@ const SopRow = memo(function SopRow({
                 (deptStat?.designations || []).some(d => d.designation === fullName && (d.count || 0) > 0) ||
                 manualDesigList.some(d => d === fullName);
               const trainingChecked = key in sopOverrides ? sopOverrides[key] : fallback;
+              // Pending (unsaved) designation tick, when the user has touched it.
+              // The employee view needs to tell "the user just ticked this
+              // designation" apart from "this designation is assigned on record".
+              const pendingTrainingChecked = key in sopOverrides ? !!sopOverrides[key] : undefined;
               const inductionChecked = !!sopInductionOverrides[key];
-              return { fullName, abbr: desigAbbr(fullName), isNative, trainingChecked, inductionChecked };
+              return { fullName, abbr: desigAbbr(fullName), isNative, trainingChecked, pendingTrainingChecked, inductionChecked };
             });
 
             const trainCheckedCount = desigStates.filter(s => s.trainingChecked).length;
@@ -3599,7 +3742,12 @@ const SopRow = memo(function SopRow({
                         const byDesignation = new Map(
                           desigStates.map((s) => [
                             norm(s.fullName),
-                            { trainingChecked: s.trainingChecked, inductionChecked: s.inductionChecked, fullName: s.fullName },
+                            {
+                              trainingChecked: s.trainingChecked,
+                              pendingTrainingChecked: s.pendingTrainingChecked,
+                              inductionChecked: s.inductionChecked,
+                              fullName: s.fullName,
+                            },
                           ]),
                         );
                         const hasSelectedMonth = (() => {
@@ -3647,21 +3795,46 @@ const SopRow = memo(function SopRow({
                                   const assignedToSop = (emp.assignedSopCodes || []).some(
                                     (c) => sopCacheKey(c) === thisSopKey,
                                   );
-                                  const trainingChecked = !!matched?.trainingChecked || assignedToSop;
+                                  // Baseline tick is per person: whether THEY are
+                                  // assigned this SOP. A pending designation tick
+                                  // still sweeps the whole designation, but a saved
+                                  // one must not re-tick someone removed by name.
+                                  const persistedChecked = matched?.pendingTrainingChecked !== undefined
+                                    ? matched.pendingTrainingChecked
+                                    : assignedToSop;
+                                  const empOverrideKey = empOverrideKeyHelper(dept, emp.name);
+                                  // A pending per-person tick always wins, so
+                                  // un-ticking an individually assigned employee
+                                  // no longer snaps straight back to checked.
+                                  const trainingChecked = empOverrideKey in sopEmployeeOverrides
+                                    ? !!sopEmployeeOverrides[empOverrideKey]
+                                    : persistedChecked;
                                   const inductionChecked = !!matched?.inductionChecked;
                                   const fullName = matched?.fullName || emp.designation;
+                                  // Unsaved edit — flagged so a click is visibly
+                                  // registered and queued for Update, not silent.
+                                  const pendingEmpEdit =
+                                    empOverrideKey in sopEmployeeOverrides &&
+                                    !!sopEmployeeOverrides[empOverrideKey] !== assignedToSop;
                                   return (
                                     <div
                                       key={`emp-${sop.sopCode}-${dept}-${emp.name}-${colIdx}-${empIdx}`}
-                                      className="inline-flex items-center gap-1 whitespace-nowrap"
-                                      title={`${emp.name} (${emp.designation}) — left: Training Check · right: Induction Training`}
+                                      className={`inline-flex items-center gap-1 whitespace-nowrap rounded px-0.5 ${
+                                        pendingEmpEdit ? 'bg-amber-50 ring-1 ring-amber-300' : ''
+                                      }`}
+                                      title={
+                                        pendingEmpEdit
+                                          ? `${emp.name} — ${trainingChecked ? 'will be assigned' : 'will be removed'} on Update`
+                                          : `${emp.name} (${emp.designation}) — left: Training Check · right: Induction Training`
+                                      }
                                     >
                                       <input
                                         type="checkbox"
                                         checked={trainingChecked}
                                         onChange={(ev) => {
-                                          ev.stopPropagation();
-                                          setDesigChecked(sop.sopCode, dept, fullName, ev.target.checked);
+                                          // Per person — toggling one employee must
+                                          // not move their same-designation colleagues.
+                                          setEmployeeChecked(sop.sopCode, dept, emp.name, ev.target.checked);
                                         }}
                                         className="w-3 h-3 cursor-pointer shrink-0"
                                         aria-label={`Training: ${emp.name}`}
@@ -3672,7 +3845,11 @@ const SopRow = memo(function SopRow({
                                           ev.stopPropagation();
                                           onEmployeeClick(emp.name, dept, emp.designation);
                                         }}
-                                        className="font-medium text-[11px] text-blue-700 hover:underline cursor-pointer truncate"
+                                        className={`font-medium text-[11px] hover:underline cursor-pointer truncate ${
+                                          pendingEmpEdit && !trainingChecked
+                                            ? 'text-amber-700 line-through'
+                                            : 'text-blue-700'
+                                        }`}
                                         title={`${emp.name} (${emp.designation})`}
                                       >
                                         {highlightText(emp.name, searchQuery)}
@@ -3681,7 +3858,6 @@ const SopRow = memo(function SopRow({
                                         type="checkbox"
                                         checked={inductionChecked}
                                         onChange={(ev) => {
-                                          ev.stopPropagation();
                                           setInductionChecked(sop.sopCode, dept, fullName, ev.target.checked);
                                         }}
                                         className="w-3 h-3 cursor-pointer accent-orange-500 shrink-0"

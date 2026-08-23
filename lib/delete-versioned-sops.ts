@@ -5,6 +5,7 @@ import SOP from "@/models/SOP";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { groupRecordsByBase } from "@/lib/reconcile-sop-versions";
 import { recordsForVersion, maxVersionInGroup, versionFromIdentifier } from "@/lib/sop-utils";
+import { logSopAudit, snapshotSop } from "@/lib/audit-log";
 
 function resolveUploadPath(fileUrl: string): string | null {
   try {
@@ -80,7 +81,15 @@ export async function deleteVersionedSopFamilies() {
         }
       }
 
+      const previous = snapshotSop(record);
       await SOP.deleteOne({ _id: record._id });
+      await logSopAudit({
+        action: "deleted",
+        sop: record,
+        previous,
+        summary: `Deleted version ${record.version ?? ""} record of ${record.identifier}`.replace(/\s+/g, " "),
+        comments: "Versioned SOP family cleanup",
+      });
       deletedRecords.push(record._id.toString());
     }
   }

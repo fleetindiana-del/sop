@@ -1,0 +1,120 @@
+ 
+ 
+ 1.0 
+ OBJECTIVE : 
+ To define the procedure for development, revision and verification of art works as per the organizational and legal requirements. 
+ 
+ 
+ 
+ 2.0 
+ RESPONSIBILITY : 
+ Artwork in-charge / Production Head 
+ 
+ 
+ 
+ 3.0 
+ ACCOUNTABILITY : 
+ QA Head 
+ 
+ 
+ 
+ 4.0 
+ PROCEDURE : 
+ 
+ 
+ 
+ 
+ 4.1 
+ Development of New Artwork : - 
+ 
+ 
+ 4.1.1 
+ New artworks shall be prepared at the time of introduction of new products. 
+ 
+ 
+ 4.1.2 
+ QA Head and artwork in-charge shall initiate to send the draft label to printer for preparation of artwork. 
+ 
+ 
+ 4.1.3 
+ Production Head shall decide design and colour scheme for packaging materials. 
+ 
+ 
+ 4.1.4 
+ Printer will prepare the artwork as per the text ma tter given in the draft label. The Production Head shall approve design and colour of the artwork. 
+ 
+ 
+ 4.1.5 
+ The prepared artwork will be sent to QA for necessary checking, correction and approval. 
+ 
+ 
+ 4.1.6 
+ QA Head along with the Production Head will finalized the dimensions of the dummy pack and will give the approval. 
+ 
+ 
+ 4.1.7 
+ After thorough checking with respect to the legal / company’s requirements, the artwork will be approved by QA Head and to be forward to the Printer for preparation of the positive. The approved artwork should accompany the approved dummy pack. 
+ 
+ 
+ 4.1.8 
+ Printer will make photocopy of the approved artwork and forward three copies along with the original to QA as a reference for releasing the same . 
+ 
+ 
+ 4.1.9 
+ Printer will make positive and the first print out of the same will be sent to the QA Dept. 
+ 
+ 
+ 
+ 4.2 
+ Revision of Artwork :- 
+ 
+ 
+ 4.2.1 
+ Revision of artwork will be made in the following cases. 
+ Any pharmacopoeia change affecting the composition or generic name of the product. 
+ Any change in formulation of the product required changing in the text matter. 
+ Any legal requirement or Govt. Notification affecting the change in text matter. 
+ Any change in pack size / design / colour scheme. 
+ 
+ 
+ 4.2.2 
+ In all the above cases, QA Head will take the initiative to change the existing artwork. 
+ 
+ 
+ 4.2.3 
+ The preparation and approval of the revised artwork shall be done as same procedure as described in step 4.1. 
+ 
+ 
+ 4.3 
+ The first supply of any printed packaging material will be checked with the approved artwork and if found ok then the same shall be released for use. 
+ 
+ 5.0 
+ ANNEXURES:- NA 
+ 
+ 
+ 6.0 
+ REFERENCES:- NA 
+ 
+ 
+ 7.0 
+ REVISION HISTORY:- 
+ 
+ 
+ Sr. 
+ No. 
+ Revision No. 
+ Date of Revision 
+ SOP No. 
+ Supersedes No. 
+ Reason for Revision 
+ 
+ 0 5 
+ 01/08/2024 
+ QAGE13 - 0 5 
+ QAGE13 - 4 
+ Change in Firm Name from “Indiana Ophthalmics” to “Indiana Ophthalmics LLP”. 
+ Addition of Annexures, References and Revision History as Section 5.0, 6.0 and 7.0 respectively in the SOP. 
+ 
+ 
+ 
+ 

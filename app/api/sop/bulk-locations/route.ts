@@ -3,6 +3,7 @@ import { connectDB } from "@/lib/mongodb";
 import SOP from "@/models/SOP";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { requireAuth } from "@/lib/withAuth";
+import { actorFromSession, logSopAudit, snapshotSop } from "@/lib/audit-log";
 import * as XLSX from "xlsx";
 
 /**
@@ -110,7 +111,20 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
+      const changed = group.filter((sop) => (sop.location ?? "") !== row.location);
+      const previous = changed.length ? snapshotSop(changed[0]) : null;
+
       await Promise.all(group.map((sop) => sop.updateOne({ location: row.location })));
+
+      if (previous && changed.length) {
+        await logSopAudit({
+          actor: actorFromSession(auth.session, request),
+          action: "updated",
+          sop: { ...changed[0].toObject(), location: row.location },
+          previous,
+          comments: `Location imported from ${file.name}`,
+        });
+      }
       results.push({ identifier: row.identifier, success: true });
     }
 

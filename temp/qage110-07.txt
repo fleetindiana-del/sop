@@ -1,0 +1,1154 @@
+STANDARD OPERATING PROCEDURE INDIANA OPHTHALMICS LLP DEPARTMENT : QUALITY ASSURANCE SOP NO. QAGE110-07 AREA : GENERAL PAGE NO. 013 OF 13 SUBJECT : ANNUAL PRODUCT QUALITY REVIEW EFF. DATE 19/07/2024 REVIEW DT. 18/07/2026 SUPERSEDES QAGE110-06 PREPARED BY CHECKED BY APPROVED BY SIGNATURE NAME DATE
+
+1.0
+
+OBJECTIVE                    :
+
+To lay down the procedure to ensure that APQR is carried out for verifying the consistency of existing process, appropriateness of current specification for both starting materials and finished product to highlight any trends and to identify procedure and process improvement to ensure that the review is consistent.
+
+
+
+
+
+
+
+2.0
+
+SCOPE                              :
+
+This procedure is applicable for APQR to be prepared for all products.
+
+
+
+
+
+
+
+3.0
+
+RESPONSIBILITY         :
+
+QA-Officer / QA-Executive 
+
+
+
+
+
+
+
+4.0
+
+ACCOUNTABILITY      :
+
+QA Head
+
+
+
+
+
+
+
+5.0
+
+PROCEDURE                  :
+
+
+
+
+
+
+
+
+
+5.1
+
+APQR :- It is defined as a total study of a procedure including starting materials and finished products for all the critical parameters to review the trend of analytical and process related data, change control, market complaints, deviation etc.
+
+
+
+
+
+5.2
+
+Each APQR shall be numbered as,
+
+               IO/APQR/XXED/YYYY/NNN for Eye Drops, 
+
+               IO/APQR/XXEO/YYYY/NNN for Eye Ointments
+
+               IO/APQR/XXVP/YYYY/NNN for Veterinary Products.
+
+Where,
+
+IO Stands for Indiana Ophthalmics LLP,
+
+APQR Stands for Annual Product Quality Review,
+
+XX Stands for short form of the product name like NH for Naphazoline Hydrochloride,
+
+ED Stands for Eye Drops,
+
+EO Stands for Eye Ointment,
+
+VP stands for Veterinary Products,
+
+YYYY Stands for Calendar year,
+
+NNN Stands for the serial number starts with 001.
+
+
+
+
+
+5.3
+
+The APQR shall be carried out for all the batches of each product manufactured with different batch sizes, different strengths and with different dosage forms.
+
+
+
+
+
+5.4
+
+The annual product review report shall be prepared annually for the period it can be a calendar year from January to December. i.e., For example, batches manufactured during 1st January to 31st December will be included in the APQR for that Calendar year.
+
+
+
+
+
+5.5
+
+The APQRs for all the products for one calendar year shall be prepared, compiled and approved within the time period of 03 months after the closing of the calendar year and on the basis of the inferences of APQR, CAPA shall be initiated within 06 month after the end of the financial year, if required.   
+
+
+
+
+
+5.6
+
+APQR shall be prepared for all the products of which minimum 03 batches are manufactured in a calendar year and shall be prepared as per APQR template (Annexure-I). For products less than 03 batches shall be consider in next year APQR.
+
+
+
+
+
+5.7
+
+If no any batch is manufactured in the review period then there is no need to prepare trend and mention that no batch is manufactured during the review period. APQR shall be prepared with the review of all available documentary data like:-
+
+
+
+
+
+
+
+Complaint Review,
+
+Stability Data,
+
+Observation of Retain Sample,
+
+Product Recall etc.
+
+
+
+
+
+5.8
+
+The APQR record shall contain the compiled data of all the critical parameters of active raw materials, in-process controls, finished product and also the quality issues pertaining to the selected product.
+
+
+
+
+
+5.9
+
+The review and compilation of all the critical parameter results of raw materials shall be done annually.
+
+
+
+
+
+5.10
+
+Quality characteristics of raw materials shall be compiled, considering the following :-
+
+
+
+
+
+
+
+Critical parameters: Physical Parameter and Chemical Parameter.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Raw Materials
+
+General Parameter
+
+Physical Parameter
+
+Chemical Parameter
+
+List of Approved Vendor for Raw Material,
+
+Material Code,
+
+AR Number
+
+Description
+
+Assay,
+
+LOD / Water /
+
+pH (if applicable)
+
+
+
+
+
+
+
+5.11
+
+The trend data of all the batches under review shall be tabulated in respective formulation format. Averages, Ranges and Standard Deviation shall be derived where appropriate and results shall be trended, analyzed statistically and shall be presented graphically for the measurable (containing numerical values) parameters.
+
+
+
+
+
+5.12
+
+The review and compilation of all the critical parameter results shall be done annually. Physical Parameter, Chemical Parameter and Microbial Parameter shall be reviewed as per below :-
+
+
+
+
+
+
+
+Physical Parameter
+
+Chemical Parameter
+
+Microbial Parameter
+
+Eye Drops
+
+Description,
+
+Uniformity of Volume,
+
+Osmolality (if applicable)
+
+pH,
+
+Assay,
+
+RS (if applicable)
+
+Sterility Test
+
+Ointment / Gel
+
+Description,
+
+Average net filled wt. per tube
+
+Assay,
+
+Uniformity of Weight,
+
+RS (if applicable)
+
+Sterility Test
+
+Veterinary Products
+
+Description,
+
+Uniformity of Volume/weight
+
+Assay,
+
+Water Content
+
+Sterility Test
+
+
+
+
+
+
+
+5.13
+
+The results of the identified critical parameters for the trend of active raw materials shall be collected from analytical reports and for each type of formulation of each batch size shall be collected from the executed batch records and analytical reports.
+
+
+
+
+
+
+
+
+
+
+
+
+
+5.14
+
+Process Capability & Performance Parameters (Cp, Cpk and Pp, Ppk) :-
+
+
+
+
+
+5.14.1
+
+Cp, Pp, Cpk, and Ppk are capability and performance indicators for process.
+
+
+
+
+
+5.14.2
+
+Cp, Cpk, Pp and Ppk are all parameters that can help us to understand how our process is operating relative to the specifications, or in other words, they measure how close our process is running to its specification limits.
+
+
+
+
+
+5.14.3
+
+Process Capability Parameters (Short-Term Statistics) (Cp & Cpk) :-
+
+
+
+
+
+5.14.3.1
+
+Process Capability (Cp) = USL – LSL
+
+                                                 6σ
+
+
+
+Where, USL = Upper Specification Limit
+
+             LSL = Lower Specification Limit
+
+                  σ = Estimated Standard Deviation obtained from range control chart.
+
+
+
+
+
+5.14.3.2
+
+Process Capability for Lower Specification Limit :-
+
+
+
+Cpkl = Average – LSL
+
+                       3σ
+
+
+
+Where, LSL= Lower Specification Limit
+
+                 σ = Estimated Standard Deviation obtained from range control chart.
+
+
+
+
+
+5.14.3.3
+
+Process Capability for Upper Specification Limit :-
+
+Cpku = USL – Average
+
+                        3σ
+
+
+
+Where, USL= Upper Specification Limit
+
+                  σ = Estimated Standard Deviation obtained from range control chart.
+
+
+
+
+
+5.14.3.4
+
+Estimated Standard Deviation (σ) :-
+
+          _
+
+σ =   _R_
+
+          d2
+
+             _
+
+Where, R= R Bar comes from the Moving range.
+
+R1 = Maximum – Minimum value [Xn – Xn+1]
+
+ R = (R1 + R2 + ….. + Rn)
+
+                      W-1
+
+W = the number of observation used in the moving range
+
+d2 reflects values derived from integrating the area under the normal curve. We often use d2 value based on how many subgroups were in the sample. (d2 = 1.128)
+
+
+
+σ = Estimated Standard Deviation obtained from range control chart.
+
+
+
+
+
+5.14.3.5
+
+Process Capability Index (Cpk) = Min (Cpkl & Cpku)
+
+
+
+
+
+5.14.4
+
+Process Performance Parameters (Long-Term Statistics) (Pp and Ppk) :-
+
+
+
+
+
+5.14.4.1
+
+Process Performance (Pp) = USL – LSL
+
+                                                    6S
+
+
+
+Where, USL = Upper Specification Limit
+
+             LSL = Lower Specification Limit
+
+                S   = Standard Deviation
+
+
+
+
+
+5.14.4.2
+
+Process Performance for Lower Specification Limit :-
+
+Ppkl = Average – LSL
+
+                       3S
+
+
+
+Where, LSL= Lower Specification Limit
+
+               S   = Standard Deviation
+
+
+
+
+
+5.14.4.3
+
+Process Performance for Upper Specification Limit :-
+
+Ppku = USL – Average
+
+                        3S
+
+
+
+Where, USL= Upper Specification Limit
+
+                S   = Standard Deviation
+
+
+
+
+
+5.14.4.4
+
+Process Performance Index (Ppk) = Min (Ppkl & Ppku)
+
+
+
+
+
+5.14.5
+
+Evaluation of process capability shall be done by considering following limits:
+
+
+
+If Cpk < 1: Cpk value obtained less than 1 then the process is not capable. So, the assessment required to identify the cause to improve the process/method/specification etc. 
+
+If 1 < Cpk < 1.33: Cpk value obtained between 1 & 1.33 then process is capable to reproduce products within the specification limit.
+
+If Cpk > 1.33: Cpk value obtained more than 1.33 then process is very excellent / very capable. The process is consistent and capable to reproduce products/ results within the specification limit.
+
+
+
+
+
+
+
+Note :- it is recommended that Cp / Cpk values shall be targeted at 1.33 or above for very capable process.
+
+
+
+
+
+5.14.6
+
+Statistical Evaluation of Data :-
+
+
+
+
+
+5.14.6.1
+
+Data for in-process testing (bulk product) and finish product testing should statistically evaluated to determine the average, maximum, minimum and standard deviation values.
+
+
+
+
+
+5.14.6.2
+
+Upper Control Limits and Lower Control Limits are very important, because these limits are effective control to the process.
+
+
+
+
+
+5.14.6.3
+
+Upper Control Limits and Lower Control Limits are in house limits, these limits must be less than guideline limits or define limits.
+
+
+
+
+
+5.14.6.4
+
+Upper Control Limits and Lower Control Limits are defined based on trend analysis.
+
+
+
+
+
+5.14.6.5
+
+Upper Control Limits and Lower Control Limits are like a barrier before the guideline limits.
+
+
+
+
+
+5.14.6.6
+
+These limits should be decided by statistical trend evaluation 3 sigma, 4 sigma, 5 sigma.
+
+
+
+
+
+5.14.6.7
+
+Upper Control Limits (UCL) and Lower Control Limits (LCL) :-
+
+
+
+
+
+5.14.6.7.1
+
+The Upper Control Limits (UCL) and Lower Control Limits (LCL)  are the level of a parameter set by the user giving early warning of a drift from normal conditions, which, when exceeded, requires intervention, including investigation of cause, and corrective action.
+
+5.14.6.7.2
+
+Calculation Formula for Upper Control Limits (UCL) and Lower Control Limits (LCL) :-
+
+Upper Control Limits (UCL) = Average + 3 x S
+
+Lower Control Limits (LCL) = Average - 3 x S
+
+            Where, S = Standard Deviation
+
+
+
+
+
+5.14.6.8
+
+If any abnormal trend of data observed during the compilation and review, it shall be commented on in the report under section 32 (Recommendation / Action plan), if required the investigation shall be done as per action plan. 
+
+
+
+
+
+5.15
+
+Following parameters of product batches manufactured during the annual product quality review period shall be included. Each individual activity/section shall be signed by respective person who is responsible for preparation and review of respective section. APQR shall contains but not limited to the following details :-
+
+
+
+
+
+5.16
+
+Product Details :-
+
+
+
+
+
+5.16.1
+
+Brief Description of Product :- It shall contain the details such as Product name, Generic name, Product code, Dosage form, Label claim, Therapeutic category, Storage condition, Shelf life, Mfg. Lic. No and packing style.
+
+
+
+
+
+5.16.2
+
+Batches Manufactured During the Year :- Total Number of Batches Manufactured during the Year shall be included in this section. Details of batch number, batch size, manufacturing date and expiry date shall be provided.
+
+
+
+
+
+5.16.3
+
+Material Vendor Details :- It shall contain the details such as material name, material code, AR No. and name of approved vendor for raw materials & primary packing materials. It shall contain details of material name, material code, name of approved vendor and artwork approval details for secondary and tertiary packing materials.
+
+
+
+
+
+5.16.4
+
+Current Manufacturing Formula :- It shall contain the quantitative formula and process flow diagram for the product manufactured during the year.
+
+
+
+
+
+5.17
+
+Trend Analysis :- Trend analysis shall be evaluated to define alert and action limits at every stage.
+
+
+
+
+
+5.17.1
+
+Review of Active Raw Material :- It shall contain the summary result of the critical analytical parameters such as % assay, pH, LOD/ water etc. of the active raw materials used in the manufacturing of all the batches of the selected product. The details such as the least and highest results obtained for each parameter, variation with respect to in-house and Pharmacopoeial limits if any, details of the vendor, new sources used, evaluation comments and recommendations if any shall also be drawn. It shall also include no. of consignments which are received/released/rejected.
+
+
+
+
+
+5.17.2
+
+Review of Primary Packaging Material :- It shall include name of primary packing material, AR No. and batch number in which material is used. It shall also include no. of consignments which are received/released/rejected.
+
+
+
+
+
+5.17.3
+
+Review of Critical In-Process Controls and Finished Product Test Results :- Compilations and analysis of in-process test results obtained from the total number of batches manufactured in that particular year e.g.  Description, pH, assay etc. shall be included. Compilations and analysis of finished product test results obtained from the total number of batches manufactured in that particular year e.g.  Description, RS, pH, uniformity of volume, assay etc. shall be included.
+
+
+
+
+
+5.17.3.1
+
+In-Process Analysis Results at Bulk Stage :- It shall contain the summary result of the statistical trend data of the critical parameters of the bulk product. The details such as % assay, pH etc. shall be compiled and trend shall be prepared.
+
+
+
+
+
+5.17.3.2
+
+Finished Product :- It shall contain the summary result of the statistical trend data of the critical parameters such as description, assay, pH, uniformity of volume, osmolality, RS, Sterility etc. The trend results of critical parameters, variation with respect to in-house and pharmacopoeial limits if any, revision / modification to the process and product quality parameters shall be reviewed and recommended. It shall also include finished product specification No.
+
+
+
+
+
+5.17.4
+
+Review of Yield at Various Stages (Bulk & Finish) :- % yield at various stages shall be compiled and trend shall be attached.
+
+
+
+
+
+5.18
+
+Batch Release / Reject Status :- It shall include total number of batched manufactured, total number of batches released and total number of batches rejected of the product during particular year.
+
+
+
+
+
+5.19
+
+Review of Control Samples :- Periodic observation of control samples for respective year shall be summarized in review report.
+
+
+
+
+
+5.20
+
+Review of Stability Data :- Stability data generated for the selected product during the review period shall be reviewed and evaluated to support the recommendations of shelf life, storage conditions and overages. Any failures or discrepancies or any adverse trend identified shall be highlighted in the review report along with the evaluation comments.
+
+
+
+
+
+5.21
+
+Review of Deviations :- It shall contain the details of significant discrepancies recorded against the normal procedures of any aspect during the manufacturing and analysis of the selected product. CAPA taken to the event and the root cause identified shall be summarized. Deviation No. (If any) for all the selected batches shall be reflected. Revision if required and if appropriate shall be recommended for the limits or procedures with corrective actions.
+
+
+
+
+
+5.22
+
+Review of Change Controls :- Change controls generated for the selected batches shall be reviewed for their status and implementation of the approved change shall also be reviewed and summarized.  
+
+
+
+
+
+5.22.1
+
+Significant changes to product composition, manufacturing and critical packaging process, equipment, facility/area, change in API vendor, change in nature of primary packaging material, change in pack style, change in batch size and specifications, which have a direct impact on product quality shall be summarized in the APQR report.
+
+
+
+
+
+5.22.2
+
+Change control no. (if any) for the selected batches shall be reflected. Review comments from the post implementation of approved change and status of necessary corrective actions shall be reviewed and concluded.
+
+
+
+
+
+5.23
+
+Review of Market Complaints :- Market complaints received for the selected product during the review period shall be reviewed and summarized with associated investigations carried out. Nature of complaint, actions taken and batches for which complaint have been received and resolved shall be listed.
+
+
+
+
+
+5.24
+
+Review of Incident :- An incident received for the selected product during the review period shall be reviewed and summarized with associated investigations carried out. Description of incident, actions taken and batches for which incident has been reported and status shall be listed.
+
+
+
+
+
+5.25
+
+Review of Batch Rejection :- The list of batches for the selected product which are rejected during the review period failing to specifications or set limits including reason for rejection / failure and corrective action taken shall be summarized in the review report.
+
+
+
+
+
+5.26
+
+Review of Product Recalls :- Product recalls carried out for the selected product during the review period shall be listed and reason of each recall, quantity and status of product recall in the review report shall be included.
+
+5.27
+
+Review of Returned Goods :- All returned batches (if any) for the selected product during the reviewed period shall be listed with the reason for return and subsequent salvaging or disposition carried out shall be summarized in the review report.
+
+
+
+
+
+5.28
+
+Review of Product Failures :- List of batches for the selected product which are rejected during the review period failing to specifications or set limits including reason for rejection / failure and corrective action taken shall be summarized in the review report.
+
+
+
+
+
+5.29
+
+Review of Out of Specification :- The batches under the selected product for which OOS is recorded / observed shall be listed and reason for assignable cause for the same and action taken shall be summarized in the review report.
+
+
+
+
+
+5.30
+
+Review of Product Nonconformance :- The batches under the selected product for which Nonconformance is recorded / observed shall be listed and reason for assignable cause for the same and action taken shall be summarized in the review report.
+
+
+
+5.31
+
+Review of Corrective Action and Preventive Action :- The batches under the selected product for which corrective action and preventive action are taken shall be listed alongwith CAPA No., description of nonconformance and status of CAPA.
+
+
+
+
+
+5.32
+
+Review of Preventive Maintenance of Equipments / Instruments :- Preventive maintenance of equipments and instruments which are used in the manufacturing of selected product batches shall be reviewed.
+
+
+
+
+
+5.33
+
+Review of Supply Chain Traceability of Active Substances :- Traceability of supply chain for active substances used in the manufacturing of selected product batches shall be reviewed. This shall contain name of manufacturer and supplier of active substances.
+
+
+
+
+
+5.34
+
+Review of Supply Chain Traceability of Finished products :- Traceability of supply chain for finished products manufactured in calendar year shall be reviewed. This shall contain transfer of products whether it is domestic or export.
+
+
+
+
+
+5.35
+
+Review of Purified Water Trends :- Trend analysis of purified water shall be reviewed for any ‘out of trend’ observed and corrective measures taken shall be recorded in report.
+
+
+
+
+
+5.36
+
+Review of Environmental Monitoring Trends :- Trend analysis of environmental monitoring shall be reviewed for any ‘out of trend’ observed result and corrective measures taken shall be recorded in report.
+
+
+
+
+
+5.37
+
+Review of Marketing Authorization Variations Including Post Marketing Commitments :- Any change in marketing authorization documentation (submitted/granted/refused) during review period shall be reported in this section. 
+
+
+
+
+
+5.38
+
+Review of Dossier variations submitted :- Any change in dossier documentation (submitted/granted/refused) during review period shall be reported in this section in case of export products. 
+
+
+
+
+
+5.39
+
+Review of Qualification Status of Critical Equipments and Utilities :- Qualification status of all critical equipments and instruments utilized in the manufacturing of selected product batches for particular year shall be reviewed. This shall contain name, ID No. , qualification/requalification date, qualification/requalification due date and location of equipments or utilities. 
+
+
+
+
+
+5.40
+
+Review of Calibration Status of Quality Control Instruments :- Calibration status of quality control instruments which are used in testing and analysis of selected product batches for the calendar year shall be reviewed. It should include instrument name, ID No., Calibration date and due date of calibration.
+
+
+
+
+
+5.41
+
+Review of Unresolved Issues From Previous APQR :- Unresolved issues from previous APQR shall be reported in this section.
+
+
+
+
+
+5.42
+
+Review of Technical Agreements / Contractual Agreements :- It shall contain status of technical agreements. If any technical agreement is not up to date then it shall be recorded in this section.
+
+
+
+
+
+5.43
+
+Review of Critical Product Quality Parameters from Previous APQR :- Critical product quality parameters such as deviation, market complaints, OOS, incidents, product failures, product nonconformance, product recall from previous year’s issues from previous APQR shall be compared in this section whenever applicable.
+
+
+
+
+
+5.44
+
+APQR Summary, Conclusion, Recommendations/ Action Plan and Approval :- 
+
+
+
+
+
+5.44.1
+
+Based on the evaluation of summarized data as described in section 5.16 to 5.41, final conclusion shall be made. Any changes if required in manufacturing formula, material, specification, procedure,  facility, shelf life of product shall described with proper justification.
+
+5.44.2
+
+The authorized person of the Quality Assurance department shall draw the summary report along with evaluation comments, conclusions and recommendations / action plan after thorough discussions with Production and Quality Control Head where ever necessary.
+
+
+
+
+
+5.44.3
+
+The final report shall be forwarded to Head QA for his / her evaluation comments, conclusions, recommendations and approvals.
+
+
+
+
+
+5.44.4
+
+Note : Based on the review of trend results, failures, deviations, and  errors (if any) in the critical parameters and quality systems, shall be discussed by the appropriate department heads, Investigated where ever necessary for attributable cause and suitable corrective and preventive actions such as revalidation, stability studies or any updation to the current practices and procedures shall be drawn  jointly. Any alert / action limit warning shall be discussed in recommendation/ action plan section with proper action plan, target date of completion & responsible department / personnel details. The details of the decision taken shall be addressed in the review report.
+
+
+
+
+
+6.0
+
+ANNEXURES:-
+
+
+
+
+
+6.1
+
+Annexure-I 	:  Annual Product Quality Review
+
+
+
+
+
+7.0
+
+REFERENCES:- 
+
+
+
+
+
+7.1
+
+PICS- PE 009-12 (Part I)
+
+7.2
+
+WHO-TRS, 986, 2014
+
+7.3
+
+Annual product quality review: Guidance for industry by regulatory perspective
+
+7.4
+
+International Journal of Medicine Research
+
+7.5
+
+https://www.spcforexcel.com/knowledge/process-capability/cpk-vs-ppk-who-wins
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+8.0
+
+REVISION HISTORY:-
+
+
+
+
+
+Sr.
+
+No.
+
+Revision No.
+
+Date of Revision 
+
+SOP No.
+
+Supersedes No.
+
+Reason for Revision
+
+
+
+05
+
+22/09/2022
+
+QAGE110-05
+
+QAGE110-4
+
+Change in Firm Name from “Indiana Ophthalmics” to “Indiana Ophthalmics LLP”.
+
+Addition of Annexures, References and Revision History as Section 5.0, 6.0 and 7.0 respectively in the SOP.
+
+Detail provided for Evaluation of process capability parameter (Cpk) value for better understanding.
+
+Addition of detailed section for Upper Control Limit (UCL) and Lower Control Limit (LCL) for better practices.
+
+
+
+06
+
+05/12/2022
+
+QAGE110-06
+
+QAGE110-05
+
+Addition of Section 2.0 as Scope.
+
+Section 5.7 updated by adding details for preparing APQR in case if there is no any batch is manufactured in review period. 
+
+
+
+07
+
+19/07/2024
+
+QAGE110-07
+
+QAGE110-06
+
+Incorporation of supply chain traceability of finished products.
+
+Incorporation of Dossier variation submission.
+
+
+
+
+
+
+
+
+
+
+
+
+

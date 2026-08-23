@@ -106,6 +106,9 @@ const SNAPSHOT_FIELDS = [
   "effectiveDate",
   "reviewDate",
   "expiryDate",
+  "fileType",
+  "uploadedAt",
+  "complianceStatus",
 ] as const;
 
 function fileLabel(url: unknown): string | null {
@@ -116,6 +119,29 @@ function fileLabel(url: unknown): string | null {
   } catch {
     return url;
   }
+}
+
+type SopDocumentEntry = {
+  fileName?: string;
+  documentKind?: string;
+  annexureLabel?: string;
+};
+
+/** Annexure labels attached to an SOP record, as shown in the registry ANNEXURE column. */
+function annexureLabels(documents: unknown): string | null {
+  if (!Array.isArray(documents)) return null;
+  const labels = (documents as SopDocumentEntry[])
+    .filter((doc) => doc?.documentKind === "annexure")
+    .map((doc) => String(doc.annexureLabel ?? doc.fileName ?? "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  return labels.length ? labels.join(", ") : null;
+}
+
+function labelList(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  const labels = value.map((entry) => String(entry ?? "").trim()).filter(Boolean).sort();
+  return labels.length ? labels.join(", ") : null;
 }
 
 function mediaCount(value: unknown): number {
@@ -168,6 +194,8 @@ export function snapshotSop(source: unknown): Record<string, unknown> {
     out[field] = serializeAuditValue(sop[field]);
   }
   out.file = fileLabel(sop.fileUrl);
+  out.annexures = annexureLabels(sop.sopDocuments);
+  out.requiredAnnexures = labelList(sop.requiredAnnexures);
   out.videosEn = mediaCount(media.videos?.en);
   out.videosGu = mediaCount(media.videos?.gu);
   out.slidesEn = mediaCount(media.slides?.en);

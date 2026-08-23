@@ -121,6 +121,20 @@ export async function listTrainerScopedEmployees(
   return [...byIdentity.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * Employees who actually carry an SOP assignment, keyed the same way the
+ * assignment map is. Department membership alone is not an assignment: only the
+ * people ticked against an SOP on the Manage SOPs page belong on trainer lists.
+ */
+export function filterEmployeesWithAssignments<
+  T extends { name: string; department: string },
+>(employees: T[], assignmentsMap: Map<string, unknown[]>): T[] {
+  return employees.filter((e) => {
+    const assignments = assignmentsMap.get(employeeAssignmentKey(e.department, e.name));
+    return Boolean(assignments && assignments.length > 0);
+  });
+}
+
 /** Employees who can be scheduled for an exam: in scope, with LMS access. */
 export function filterSchedulable(
   employees: TrainerScopedEmployee[],

@@ -18,6 +18,12 @@ export async function saveUploadedBuffer(
   identifier: string,
   language = "English",
 ): Promise<{ fileUrl: string; checksum: string; fileSize: number }> {
+  // Never persist an empty upload: it would push 0 bytes to Bunny and overwrite a
+  // good record (findByIdAndUpdate skips validators), leaving an unopenable file.
+  if (!buffer?.length) {
+    throw new Error(`${fileName} is empty (0 bytes) — check the source file and re-upload`);
+  }
+
   const checksum = createHash("sha256").update(buffer).digest("hex");
   const filename = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
   const fileType = detectFileType(fileName) ?? "docx";
@@ -83,6 +89,9 @@ export async function saveMediaFile(
   mediaKind: "video" | "slide" | "thumbnail",
 ): Promise<{ fileUrl: string; fileSize: number }> {
   const buffer = Buffer.from(await file.arrayBuffer());
+  if (!buffer.length) {
+    throw new Error(`${file.name} is empty (0 bytes) — check the source file and re-upload`);
+  }
   const filename = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const fileType = mediaKind === "thumbnail" ? "thumbnail" : mediaKind;
 
