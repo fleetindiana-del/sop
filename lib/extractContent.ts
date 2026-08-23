@@ -60,12 +60,19 @@ export async function extractTextFromBuffer(
     return combined || "[Empty DOCX content]";
   }
 
-  // Basic PDF text extraction placeholder — PDF parsing requires pdf-parse
-  // For production PDFs, store extracted text at upload or use pdf-parse
+  try {
+    const { extractPdfText } = await import("@/lib/pdf-parse-server");
+    const extracted = await extractPdfText(buffer);
+    const text = extracted.text.trim();
+    if (text.length > 20) return text.slice(0, 50000);
+  } catch (err) {
+    console.warn("[extractContent] PDF parse failed; storing file without extracted text", err);
+  }
+
   const asText = buffer.toString("utf8");
   const readable = asText.replace(/[^\x20-\x7E\n\r\t]/g, " ").replace(/\s+/g, " ").trim();
   if (readable.length > 200) return readable.slice(0, 50000);
-  return "[PDF text extraction pending — upload DOCX for MCQ generation or install pdf-parse]";
+  return "";
 }
 
 export function getContentType(filename: string): string {

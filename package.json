@@ -18,6 +18,7 @@
     "@fullcalendar/react": "^6.1.21",
     "@fullcalendar/timegrid": "^6.1.21",
     "@google/generative-ai": "^0.24.1",
+    "@napi-rs/canvas": "0.1.80",
     "@types/pdf-parse": "^1.1.5",
     "adm-zip": "^0.5.18",
     "bcryptjs": "^3.0.3",

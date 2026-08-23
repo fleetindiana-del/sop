@@ -1,4 +1,3 @@
-import { PDFParse } from "pdf-parse";
 import { stripGuidelineBoilerplate } from "@/lib/guidelineBoilerplate";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -24,18 +23,13 @@ export interface GuidelineClause {
 
 export async function processGuidelinePDF(buffer: Buffer): Promise<OCRResult> {
   const t0 = Date.now();
-  const parser = new PDFParse({ data: buffer });
-  let result;
-  try {
-    result = await parser.getText();
-  } finally {
-    await parser.destroy().catch(() => {});
-  }
+  const { extractPdfText } = await import("@/lib/pdf-parse-server");
+  const result = await extractPdfText(buffer);
 
-  const rawText = result?.text ?? "";
-  const pageCount = result?.total ?? 1;
-  const pages = (result?.pages ?? [])
-    .map((p) => normalizeText(p.text ?? ""))
+  const rawText = result.text ?? "";
+  const pageCount = result.pageCount ?? 1;
+  const pages = (result.pages ?? [])
+    .map((p) => normalizeText(p))
     .filter((t) => t.length > 0);
   const avgCharsPerPage = rawText.length / Math.max(1, pageCount);
   const isScanned = avgCharsPerPage < 50;

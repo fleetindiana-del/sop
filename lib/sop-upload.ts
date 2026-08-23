@@ -40,7 +40,6 @@ import {
 import { parseRequiredAnnexuresFromContent } from "@/lib/sop-annexure-requirements";
 import { extractRefSopNoFromAnnexure } from "@/lib/annexure-parent-extract";
 import { linkAnnexureToParent } from "@/lib/sop-annexure";
-import { triggerMcqGenerationAsync } from "@/lib/mcq-generation";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { invalidateViewerUrlCache } from "@/lib/viewerHelper";
 import { invalidateDocxHtmlCache } from "@/lib/docxHtmlCache";
@@ -526,7 +525,11 @@ export async function processSopUpload(formData: FormData) {
   }
 
   for (const identifier of mcqIdentifiers) {
-    triggerMcqGenerationAsync(identifier);
+    void import("@/lib/mcq-generation")
+      .then(({ triggerMcqGenerationAsync }) => triggerMcqGenerationAsync(identifier))
+      .catch((err) => {
+        console.error(`MCQ generation failed to start for ${identifier}:`, err);
+      });
   }
 
   invalidateDashboardSopsCache();
