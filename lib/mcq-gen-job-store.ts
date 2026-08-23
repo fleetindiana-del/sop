@@ -1,4 +1,4 @@
-import MCQGenJob from "@/models/MCQGenJob";
+import MCQGenJob, { type McqGenLanguage, type McqGenMode } from "@/models/MCQGenJob";
 import { isMcqRunActiveInProcess } from "@/lib/mcq-run-control";
 import { normalizeSopIdentifierKey, sopIdentifierMatchFilter } from "@/lib/sopIdentifierNormalize";
 
@@ -110,10 +110,17 @@ export async function findMcqGenJob(identifier: string) {
 /** Clear DB rows stuck in queued/running when no in-process run exists (enqueue only). */
 export async function healOrphanedMcqGenJobIfNeeded(
   identifier: string,
-  job: { status: string; updatedAt?: Date | string | null; startedAt?: Date | string | null },
+  job: {
+    status: string;
+    awaitingLocalWorker?: boolean;
+    updatedAt?: Date | string | null;
+    startedAt?: Date | string | null;
+  },
 ): Promise<boolean> {
   if (job.status !== "queued" && job.status !== "running") return false;
   if (isMcqRunActiveInProcess(identifier)) return false;
+  // Production queues Codex work for a local worker — do not fail these as orphans.
+  if (job.status === "queued" && job.awaitingLocalWorker) return false;
 
   const now = Date.now();
   const updatedMs = new Date(job.updatedAt ?? 0).getTime();
@@ -131,4 +138,35 @@ export async function healOrphanedMcqGenJobIfNeeded(
     finishedAt: new Date(),
   });
   return true;
+}
+
+/** Atomically take the oldest Codex job waiting for a local worker. */
+export async function claimNextLocalMcqJob(): Promise<{
+  identifier: string;
+  mode: McqGenMode;
+  languageScope?: McqGenLanguage;
+} | null> {
+  const job = await MCQGenJob.findOneAndUpdate(
+    {
+      status: "queued",
+      awaitingLocalWorker: true,
+      cancelRequested: { $ne: true },
+    },
+    {
+      $set: {
+        status: "running",
+        awaitingLocalWorker: false,
+        phase: "Claimed by local Codex worker",
+        updatedAt: new Date(),
+      },
+    },
+    { sort: { startedAt: 1 }, new: true },
+  ).lean();
+
+  if (!job?.identifier) return null;
+  return {
+    identifier: job.identifier,
+    mode: (job.mode ?? "generate") as McqGenMode,
+    languageScope: job.languageScope,
+  };
 }

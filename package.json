@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:clean": "node scripts/dev.mjs --clean",
+    "mcq:worker": "npx tsx scripts/mcq-local-worker.ts",
     "stop:compliance": "node scripts/call-compliance-cancel.mjs",
     "build": "node --max-old-space-size=8192 ./node_modules/next/dist/bin/next build",
     "start": "next start",

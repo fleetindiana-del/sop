@@ -729,7 +729,7 @@ export function SOPRegistryTable({
                     Score <SortIcon field="complianceScore" />
                   </button>
                 </th>
-                <th className={thBase} title="New version uploaded without running compliance">
+                <th className={thBase} title="New revision issued without running compliance (expiry must have been updated)">
                   <div className="flex flex-col gap-px">
                     <button type="button" className={sortBtn} onClick={() => onSort("complianceBypassed")}>
                       Bypassed <SortIcon field="complianceBypassed" />

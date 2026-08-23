@@ -4,7 +4,7 @@ import MCQGenJob, { type McqGenLanguage, type McqGenMode, type IMcqGenLangProgre
 import { generateJson, isGeminiOverloadedError } from "@/lib/gemini";
 import { generateOllamaJson } from "@/lib/ollama";
 import { generateClaudeCliMcqBatch, getMcqClaudeModel } from "@/lib/claude-cli";
-import { generateCodexCliMcqBatch, getMcqCodexModel } from "@/lib/codex-cli";
+import { checkCodexCliHealth, generateCodexCliMcqBatch, getMcqCodexModel } from "@/lib/codex-cli";
 import { anthropicMcqApiAvailable, generateAnthropicMcqBatch } from "@/lib/anthropic-mcq";
 import { getOrBuildClauseIndex } from "@/lib/mcq-clause-cache";
 import {
@@ -1154,13 +1154,24 @@ function applyGujaratiSourceFallback(reps: Map<"English" | "Gujarati", ISOP>): b
 }
 
 /** Resolve generate-vs-regenerate (or honour an explicit "continue"), reset the
- *  progress job to "queued", and kick off the background run. The HTTP route
- *  awaits only this (fast) part; the client polls for live progress. */
+ *  progress job to "queued", and optionally kick off the background run. */
+export type EnqueueMcqOptions = {
+  /** When false, persist a queued job for a local Codex worker instead of running here. */
+  startWorker?: boolean;
+};
+
+export async function canStartCodexMcqHere(): Promise<boolean> {
+  if (process.env.VERCEL) return false;
+  const health = await checkCodexCliHealth();
+  return Boolean(health.ok && health.loggedIn);
+}
+
 export async function enqueueMcqGeneration(
   identifier: string,
   provider?: LlmProvider,
   modeOverride?: McqGenMode,
   languageScope?: McqGenLanguage,
+  options?: EnqueueMcqOptions,
 ): Promise<{
   identifier: string;
   mode: McqGenMode;
@@ -1168,11 +1179,15 @@ export async function enqueueMcqGeneration(
   status: "queued" | "running";
   startedAt: string;
   alreadyRunning?: boolean;
+  awaitingLocalWorker?: boolean;
 }> {
   await connectDB();
   const idRegex = escapeId(identifier);
   const exists = await SOP.exists({ identifier: idRegex });
   if (!exists) throw new Error(`SOP not found: ${identifier}`);
+
+  const startWorker = options?.startWorker !== false;
+  const effectiveProvider: LlmProvider = provider ?? "claude";
 
   let mode: McqGenMode;
   if (modeOverride) {
@@ -1199,18 +1214,21 @@ export async function enqueueMcqGeneration(
         status: inFlight.status as "queued" | "running",
         startedAt: new Date(inFlight.startedAt ?? Date.now()).toISOString(),
         alreadyRunning: true,
+        awaitingLocalWorker: Boolean(inFlight.awaitingLocalWorker),
       };
     }
   }
 
   const startedAt = new Date();
-  beginMcqRun(identifier);
+  if (startWorker) beginMcqRun(identifier);
 
   await upsertMcqGenJob(identifier, {
     mode,
     languageScope: languageScope ?? null,
+    provider: effectiveProvider,
+    awaitingLocalWorker: !startWorker,
     status: "queued",
-    phase: "Queued",
+    phase: startWorker ? "Queued" : "Waiting for local Codex worker",
     percent: 0,
     languages: [],
     totalInserted: 0,
@@ -1222,8 +1240,41 @@ export async function enqueueMcqGeneration(
     finishedAt: null,
   });
 
-  triggerMcqGenerationAsync(identifier, mode, provider, languageScope);
-  return { identifier, mode, languageScope, status: "queued", startedAt: startedAt.toISOString() };
+  await SOP.updateMany(
+    { identifier: idRegex, isObsolete: { $ne: true } },
+    { pipelineStatus: "mcq_generating" },
+  );
+
+  if (startWorker) {
+    triggerMcqGenerationAsync(identifier, mode, effectiveProvider, languageScope);
+  } else {
+    console.log(`[mcq-gen] ${identifier} queued for local Codex worker`);
+  }
+  return {
+    identifier,
+    mode,
+    languageScope,
+    status: "queued",
+    startedAt: startedAt.toISOString(),
+    awaitingLocalWorker: !startWorker,
+  };
+}
+
+/** Queue Codex MCQs for a newly uploaded SOP. Skips SOPs that already have a bank. */
+export async function enqueueMcqGenerationForNewSop(identifier: string): Promise<{
+  skipped?: boolean;
+  reason?: string;
+  awaitingLocalWorker?: boolean;
+}> {
+  await connectDB();
+  const idRegex = escapeId(identifier);
+  const hasActive = await MCQBank.exists({ sopIdentifier: idRegex, isObsolete: { $ne: true } });
+  if (hasActive) {
+    return { skipped: true, reason: "bank_exists" };
+  }
+  const startWorker = await canStartCodexMcqHere();
+  const job = await enqueueMcqGeneration(identifier, "codex", "generate", undefined, { startWorker });
+  return { awaitingLocalWorker: job.awaitingLocalWorker };
 }
 
 export async function runMcqGeneration(
@@ -1347,6 +1398,7 @@ export async function runMcqGeneration(
   await upsertMcqGenJob(identifier, {
     mode,
     languageScope: languageScope ?? null,
+    awaitingLocalWorker: false,
     status: "running",
     phase: mode === "regenerate" ? "Regenerating — starting…" : mode === "continue" ? "Continuing — starting…" : "Generating — starting…",
     percent: 0,

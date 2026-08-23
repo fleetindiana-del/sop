@@ -24,6 +24,10 @@ export interface IMcqGenJob extends Document {
   mode: McqGenMode;
   /** When set, only this language is generated/regenerated/continued. */
   languageScope?: McqGenLanguage;
+  /** Provider the local/production worker should use (codex jobs wait for a local CLI). */
+  provider?: "gemini" | "ollama" | "claude" | "codex";
+  /** True when the job is waiting for a local Codex worker (production cannot run Codex). */
+  awaitingLocalWorker?: boolean;
   status: McqGenStatus;
   /** Human-readable current phase, e.g. "Generating English — batch 3/4 (75 MCQs)". */
   phase: string;
@@ -71,6 +75,8 @@ const MCQGenJobSchema = new Schema<IMcqGenJob>(
     identifier: { type: String, required: true, unique: true },
     mode: { type: String, enum: ["generate", "regenerate", "continue"], required: true },
     languageScope: { type: String, enum: ["English", "Gujarati"] },
+    provider: { type: String, enum: ["gemini", "ollama", "claude", "codex"] },
+    awaitingLocalWorker: { type: Boolean, default: false },
     status: {
       type: String,
       enum: ["queued", "running", "completed", "failed", "cancelled"],
@@ -90,6 +96,8 @@ const MCQGenJobSchema = new Schema<IMcqGenJob>(
   },
   { timestamps: true },
 );
+
+MCQGenJobSchema.index({ status: 1, awaitingLocalWorker: 1, startedAt: 1 });
 
 if (mongoose.models.MCQGenJob) delete mongoose.models.MCQGenJob;
 const MCQGenJob: Model<IMcqGenJob> = mongoose.model<IMcqGenJob>("MCQGenJob", MCQGenJobSchema);

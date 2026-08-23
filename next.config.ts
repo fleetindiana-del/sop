@@ -3,7 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   devIndicators: false,
   serverExternalPackages: ["pdf-parse", "pdfjs-dist", "@napi-rs/canvas"],
-  // Keep native canvas binaries in serverless traces so pdfjs can polyfill DOMMatrix.
+  // Keep native canvas binaries and pdfjs worker files in serverless traces.
+  // pdfjs-dist loads pdf.worker.mjs via a dynamic import that NFT does not follow.
   outputFileTracingIncludes: {
     "/api/**/*": [
       "./node_modules/@napi-rs/canvas/**/*",
@@ -12,6 +13,9 @@ const nextConfig: NextConfig = {
       "./node_modules/@napi-rs/canvas-linux-arm64-gnu/**/*",
       "./node_modules/@napi-rs/canvas-linux-arm64-musl/**/*",
       "./node_modules/@napi-rs/canvas-win32-x64-msvc/**/*",
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+      "./node_modules/pdf-parse/dist/worker/**/*",
     ],
   },
   // Keep SOP binary trees out of serverless NFT traces (they are runtime disk/CDN assets).

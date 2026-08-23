@@ -500,7 +500,7 @@ export async function processSopUpload(formData: FormData) {
       results.push(result);
 
       if (result.success && !result.skipped && result.identifier) {
-        if (generateMcq && result.kind !== "annexure") mcqIdentifiers.add(result.identifier);
+        if (result.kind !== "annexure") mcqIdentifiers.add(result.identifier);
         if (result.sopBaseId) touchedFamilies.add(result.sopBaseId);
         touchedIdentifiers.add(result.identifier);
         console.log(
@@ -524,12 +524,20 @@ export async function processSopUpload(formData: FormData) {
     }
   }
 
-  for (const identifier of mcqIdentifiers) {
-    void import("@/lib/mcq-generation")
-      .then(({ triggerMcqGenerationAsync }) => triggerMcqGenerationAsync(identifier))
-      .catch((err) => {
-        console.error(`MCQ generation failed to start for ${identifier}:`, err);
-      });
+  if (mcqIdentifiers.size > 0) {
+    const { enqueueMcqGenerationForNewSop } = await import("@/lib/mcq-generation");
+    for (const identifier of mcqIdentifiers) {
+      try {
+        const queued = await enqueueMcqGenerationForNewSop(identifier);
+        if (queued?.skipped) {
+          console.log(`[sop-upload] MCQ not queued for ${identifier} (${queued.reason})`);
+        } else if (queued?.awaitingLocalWorker) {
+          console.log(`[sop-upload] MCQ queued for local Codex worker: ${identifier}`);
+        }
+      } catch (err) {
+        console.error(`MCQ generation failed to queue for ${identifier}:`, err);
+      }
+    }
   }
 
   invalidateDashboardSopsCache();

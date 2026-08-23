@@ -166,6 +166,20 @@ const child = spawn("npx", ["next", "dev", ...bundlerArgs, "-p", String(PORT)], 
   shell: true,
 });
 
+const startMcqWorker = process.env.MCQ_WORKER !== "0";
+const mcqWorker = startMcqWorker
+  ? spawn("npx", ["tsx", "scripts/mcq-local-worker.ts"], {
+      cwd: root,
+      stdio: "inherit",
+      shell: true,
+      env: process.env,
+    })
+  : null;
+
+if (startMcqWorker) {
+  console.log("Started local Codex MCQ worker (set MCQ_WORKER=0 to disable)");
+}
+
 let warmedUp = false;
 child.stdout.on("data", (chunk) => {
   process.stdout.write(chunk);
@@ -175,4 +189,14 @@ child.stdout.on("data", (chunk) => {
   }
 });
 
-child.on("exit", (code) => process.exit(code ?? 0));
+function shutdown(code) {
+  if (mcqWorker && !mcqWorker.killed) mcqWorker.kill();
+  process.exit(code ?? 0);
+}
+
+child.on("exit", (code) => shutdown(code));
+mcqWorker?.on("exit", (code) => {
+  if (code && code !== 0) {
+    console.warn(`Local Codex MCQ worker exited (${code}). Queued production MCQs will wait until you run npm run mcq:worker`);
+  }
+});

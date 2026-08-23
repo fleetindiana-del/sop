@@ -10,6 +10,21 @@ export function hasUploadedPriorVersion(sop: Pick<RegistrySOP, "priorVersions" |
   );
 }
 
+/**
+ * Bypass means a new revision was issued (expiry refreshed into the future)
+ * without running compliance, after the prior version had failed.
+ * Expired / undated SOPs still have prior files on record but did not bypass —
+ * the expiry was never updated, so they stay "not done", not "bypassed".
+ */
+export function isComplianceBypassed(
+  sop: Pick<RegistrySOP, "priorVersions" | "archivedVersions" | "expiryTier">,
+  analyzed: boolean,
+  priorFailed: boolean,
+): boolean {
+  if (analyzed || !priorFailed || !hasUploadedPriorVersion(sop)) return false;
+  return sop.expiryTier !== "expired" && sop.expiryTier !== "none";
+}
+
 export function compliancePercent(score: number): number {
   return Math.round(score * 10);
 }

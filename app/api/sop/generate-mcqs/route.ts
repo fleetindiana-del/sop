@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth } from "@/lib/withAuth";
-import { enqueueMcqGeneration, parseMcqLanguage } from "@/lib/mcq-generation";
+import { enqueueMcqGeneration, parseMcqLanguage, canStartCodexMcqHere } from "@/lib/mcq-generation";
 
 // Kick off generation in the background and return immediately. The previous
 // implementation awaited the full dual-language run (up to 16+ Gemini calls plus
@@ -27,7 +27,12 @@ export async function POST(request: NextRequest) {
     const modeOverride = body.mode === "continue" ? "continue" : undefined;
     const languageScope = parseMcqLanguage(body.language);
 
-    const job = await enqueueMcqGeneration(identifier, provider, modeOverride, languageScope);
+    const startWorker =
+      provider !== "codex" ? true : await canStartCodexMcqHere();
+
+    const job = await enqueueMcqGeneration(identifier, provider, modeOverride, languageScope, {
+      startWorker,
+    });
     return NextResponse.json(job, { status: 202 });
   } catch (error) {
     console.error("POST /api/sop/generate-mcqs error:", error);

@@ -17,8 +17,9 @@ Pharma SOP management platform: SOP registry/upload, MCQ bank generation for LMS
 ## Commands
 
 ```bash
-npm run dev          # Start dev server (kills stale port, default :3000)
+npm run dev          # Start dev server (kills stale port, default :3000) + local Codex MCQ worker
 npm run dev:clean    # Delete .next then start
+npm run mcq:worker   # Poll production MongoDB for queued Codex MCQ jobs and generate them locally
 npm run build        # Production build
 npm run start        # Production server
 npm run lint         # ESLint
@@ -28,6 +29,8 @@ npm run seed:admin   # Seed admin user
 **Diagnostics:** `npx tsx scripts/diag-mcqgen.ts`, `npx tsx scripts/stop-mcq-gen.ts` (force-stop MCQ jobs + CLI subprocesses).
 
 Copy `.env.example` → `.env.local` before running. Required: `MONGODB_URI`.
+
+**Production Codex MCQs:** Vercel cannot run the Codex CLI. SOP uploads enqueue `MCQGenJob` with `awaitingLocalWorker: true`. Point local `.env.local` at the **same** `MONGODB_URI` as production, keep `npm run dev` or `npm run mcq:worker` running (`codex login`), and the worker claims those jobs.
 
 ## Architecture
 
