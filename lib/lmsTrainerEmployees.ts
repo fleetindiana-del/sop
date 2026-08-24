@@ -13,6 +13,7 @@
  */
 
 import Employee from '@/models/Employee';
+import TrainerEmployee from '@/models/lms/TrainerEmployee';
 import { connectDB } from '@/lib/mongodb';
 import { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
 import { syncEmployeesFromMatrixThrottled } from '@/lib/syncEmployeesFromMatrix';
@@ -186,4 +187,36 @@ export function checkEmployeeSelection(
   }
 
   return { ok: true, employees };
+}
+
+/**
+ * Re-point the denormalised copy of an employee's identity held on every
+ * trainer roster row at the current Employee Master values.
+ *
+ * TrainerEmployee stores employeeName / department / designation so rosters can
+ * list without a join. Those are a convenience copy, not a historical record —
+ * once Employee Master changes they are stale and must follow. Read paths also
+ * re-resolve from Employee Master, so this keeps the stored copy honest for
+ * anything that reads the collection directly (exports, ad-hoc queries).
+ */
+export async function refreshTrainerRosterIdentity(
+  employeeId: string,
+  identity: { name?: string; department?: string; designation?: string },
+): Promise<void> {
+  const id = String(employeeId || '').trim();
+  if (!id) return;
+  const set: Record<string, string> = {};
+  const name = String(identity.name || '').trim();
+  const department = String(identity.department || '').trim();
+  const designation = String(identity.designation || '').trim();
+  if (name) set.employeeName = name;
+  if (department) set.department = department;
+  set.designation = designation;
+
+  try {
+    await TrainerEmployee.updateMany({ employeeId: id }, { $set: set });
+  } catch (err) {
+    // A roster refresh must never fail the employee update itself.
+    console.error('Failed to refresh trainer roster identity:', err);
+  }
 }

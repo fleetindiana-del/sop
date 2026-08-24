@@ -20,7 +20,7 @@ import {
   X,
 } from 'lucide-react';
 
-type AppRole = 'admin' | 'trainer' | 'viewer';
+type AppRole = 'admin' | 'sop_admin' | 'trainer' | 'viewer';
 
 interface AppPage {
   key: string;
@@ -47,11 +47,27 @@ interface AccessUser {
   updatedAt?: string;
 }
 
+const ROLE_LABEL: Record<AppRole, string> = {
+  admin: 'Super Admin',
+  sop_admin: 'SOP Admin',
+  trainer: 'Trainer',
+  viewer: 'Viewer',
+};
+
 const ROLE_STYLE: Record<AppRole, string> = {
   admin: 'bg-violet-100 text-violet-800 border-violet-200',
+  sop_admin: 'bg-indigo-100 text-indigo-800 border-indigo-200',
   trainer: 'bg-sky-100 text-sky-800 border-sky-200',
   viewer: 'bg-slate-100 text-slate-700 border-slate-200',
 };
+
+/**
+ * Super Admin and SOP Admin both bypass the per-user allowlist — page access is
+ * decided by the role — so neither is configurable here.
+ */
+function isRoleDrivenAccess(role: AppRole | undefined): boolean {
+  return role === 'admin' || role === 'sop_admin';
+}
 
 function sameSet(a: string[], b: string[]) {
   if (a.length !== b.length) return false;
@@ -141,7 +157,7 @@ export default function AccessManagementPage() {
     return [...map.entries()];
   }, [pages]);
 
-  const isAdminUser = selected?.role === 'admin';
+  const isAdminUser = isRoleDrivenAccess(selected?.role);
 
   const dirty = useMemo(() => {
     if (!selected) return false;
@@ -209,7 +225,7 @@ export default function AccessManagementPage() {
   };
 
   const grantedCount = (user: AccessUser) =>
-    user.role === 'admin'
+    isRoleDrivenAccess(user.role)
       ? pages.length
       : user.effectivePages.filter((k) => !pages.find((p) => p.key === k)?.alwaysAllowed).length;
 
@@ -290,7 +306,7 @@ export default function AccessManagementPage() {
                 className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
               />
               <div className="mt-2 flex gap-1">
-                {(['all', 'admin', 'trainer', 'viewer'] as const).map((r) => (
+                {(['all', 'admin', 'sop_admin', 'trainer', 'viewer'] as const).map((r) => (
                   <button
                     key={r}
                     type="button"
@@ -330,9 +346,9 @@ export default function AccessManagementPage() {
                         {user.name}
                       </span>
                       <span
-                        className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold capitalize ${ROLE_STYLE[user.role]}`}
+                        className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${ROLE_STYLE[user.role]}`}
                       >
-                        {user.role}
+                        {ROLE_LABEL[user.role] ?? user.role}
                       </span>
                     </div>
                     <span className="font-mono text-[11px] text-slate-500">
@@ -340,7 +356,7 @@ export default function AccessManagementPage() {
                       {user.id === currentUserId ? ' (you)' : ''}
                     </span>
                     <span className="text-[11px] text-slate-500">
-                      {user.role === 'admin'
+                      {isRoleDrivenAccess(user.role)
                         ? 'All pages · all departments'
                         : `${grantedCount(user)} page${grantedCount(user) === 1 ? '' : 's'} · ${
                             user.departments.length
@@ -401,7 +417,8 @@ export default function AccessManagementPage() {
                   <div className="mx-4 mt-4 flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-800">
                     <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <span>
-                      Admins always have every page and every department. Change the role on the{' '}
+                      Super Admin and SOP Admin always have every page and every department (SOP
+                      Admin cannot open user administration). Change the role on the{' '}
                       <Link href="/admin/users" className="underline">
                         Logins &amp; Passwords
                       </Link>{' '}

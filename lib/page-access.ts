@@ -6,7 +6,8 @@ type RoleLike = string | undefined | null;
 /**
  * Page-level access.
  *
- * - Admins can reach everything.
+ * - Super Admin reaches everything; SOP Admin everything except the pages
+ *   flagged `superAdminOnly` (user administration).
  * - A user whose `pageAccess` was never configured (`undefined`/`null`) keeps
  *   the legacy role behaviour: every page except the admin-only ones and those
  *   flagged `restrictedByDefault`.
@@ -19,7 +20,10 @@ export function canAccessPageKey(
   pageAccess: string[] | null | undefined,
   page: AppPage,
 ): boolean {
-  if (role === "admin") return true;
+  // Checked before the blanket admin allow so SOP Admin cannot reach user
+  // administration and grant itself more access.
+  if (page.superAdminOnly) return role === "admin";
+  if (role === "admin" || role === "sop_admin") return true;
   if (page.adminOnly) return false;
   if (page.alwaysAllowed) return true;
   if (!Array.isArray(pageAccess)) return !page.restrictedByDefault;
@@ -42,7 +46,7 @@ export function isComplianceOperator(
   pageAccess: string[] | null | undefined,
 ): boolean {
   const page = getPage("compliance");
-  if (!page) return role === "admin";
+  if (!page) return role === "admin" || role === "sop_admin";
   return canAccessPageKey(role, pageAccess, page);
 }
 
@@ -64,7 +68,7 @@ export function allowedDepartments(
   userDepartment: string | null | undefined,
   allDepartments: string[],
 ): string[] {
-  if (role === "admin") return allDepartments;
+  if (role === "admin" || role === "sop_admin") return allDepartments;
   const assigned = parseAssignedDepartments(userDepartment);
   if (!assigned.length) return [];
   return allDepartments.filter((name) => assigned.some((d) => departmentsMatch(d, name)));

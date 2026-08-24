@@ -24,6 +24,7 @@ import { getTrainingMatrixCacheEntry, setTrainingMatrixCached } from '@/lib/trai
 import { resolveEngGujFilePaths } from '@/lib/pathLanguageDetection';
 import { getTrainingMatrixDepartments } from '@/lib/trainingMatrixDepartments.server';
 import { canonTrainingMatrixDepartment } from '@/lib/trainingMatrixDepartments';
+import { getEmployeeMasterIndex, currentDesignation } from '@/lib/employeeMaster';
 
 export const dynamic = 'force-dynamic';
 
@@ -304,7 +305,7 @@ export async function computeOverviewPayload(forceFresh: boolean) {
     //   2. MCQ stats from `mcqbanks` (one doc per SOP + language)
     //   3. Trainers + training-matrix upload snapshots
     const cachedRegistry = getServerGroupedCache();
-    const [sopRecords, mcqAgg, trainerDocs, uploads] = await Promise.all([
+    const [sopRecords, mcqAgg, trainerDocs, uploads, masterIndex] = await Promise.all([
       cachedRegistry ? Promise.resolve(null) : SOP.find({}).select(SOP_LIST_EXCLUDE).lean(),
       MCQBank.aggregate([
         { $match: { isObsolete: { $ne: true } } },
@@ -329,6 +330,7 @@ export async function computeOverviewPayload(forceFresh: boolean) {
       findLatestUploadsByDepartment(TrainingMatrixUpload, {
         snapshot: { $exists: true, $ne: null },
       }),
+      getEmployeeMasterIndex(),
     ]);
 
     // 1. Same SOP source as the Dashboard: collapse versions into one row per family.
@@ -558,8 +560,14 @@ export async function computeOverviewPayload(forceFresh: boolean) {
           excelCodes.add(b);
         }
       }
+      // The snapshot stores the designation held when the Excel was uploaded.
+      // Employee Master owns the current one; the snapshot value is only a
+      // fallback for roster rows with no Employee Master record.
       const employees = (snap.employees || []).map((e) => ({
-        name: e.name, designation: e.designation, department: dept, training: normalizeTraining(e.training),
+        name: e.name,
+        designation: currentDesignation(masterIndex, dept, e.name, e.designation),
+        department: dept,
+        training: normalizeTraining(e.training),
       }));
       excelByDept.set(dept, {
         uploaded: true,

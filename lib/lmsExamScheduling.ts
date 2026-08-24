@@ -15,6 +15,10 @@
 import LearningProgress from '@/models/lms/LearningProgress';
 import ScheduledExam, { type IScheduledExam } from '@/models/lms/ScheduledExam';
 import { toDateOnlyIso } from '@/lib/trainingExamSchedule';
+import {
+  currentDesignationById,
+  type EmployeeMasterIndex,
+} from '@/lib/employeeMaster';
 
 export type ExamCompletionStatus = 'completed' | 'pending' | 'overdue';
 
@@ -200,10 +204,16 @@ export interface ScheduledExamView {
   notes?: string;
 }
 
+/**
+ * A scheduled exam is a FUTURE assignment, so it must render with the
+ * employee's current designation. `doc.designation` is only the value captured
+ * when the exam was scheduled and is used as a fallback.
+ */
 export function buildScheduledExamView(
   doc: ScheduledExamLean,
   progress: ExamProgress | undefined,
   now = new Date(),
+  masterIndex?: EmployeeMasterIndex,
 ): ScheduledExamView {
   const completed = isExamCompleted(progress);
   const dueIso = latestSittingIso([doc.scheduledDate3, doc.scheduledDate2, doc.scheduledDate])
@@ -220,7 +230,9 @@ export function buildScheduledExamView(
     id: String(doc._id),
     employeeId: doc.employeeId,
     employeeName: doc.employeeName,
-    designation: doc.designation || '',
+    designation: masterIndex
+      ? currentDesignationById(masterIndex, doc.employeeId, doc.designation)
+      : doc.designation || '',
     department: doc.department,
     sopCode: doc.sopCode,
     sopName: doc.sopName || doc.sopCode,
@@ -263,13 +275,18 @@ export async function listScheduledExams(opts: {
     .lean<ScheduledExamLean[]>();
 }
 
-export function serializeScheduledExam(doc: IScheduledExam | ScheduledExamLean) {
+export function serializeScheduledExam(
+  doc: IScheduledExam | ScheduledExamLean,
+  masterIndex?: EmployeeMasterIndex,
+) {
   return {
     id: String(doc._id),
     employeeId: doc.employeeId,
     employeeName: doc.employeeName,
     department: doc.department,
-    designation: doc.designation || '',
+    designation: masterIndex
+      ? currentDesignationById(masterIndex, doc.employeeId, doc.designation)
+      : doc.designation || '',
     sopCode: doc.sopCode,
     sopName: doc.sopName || doc.sopCode,
     scheduledDate: toDateOnlyIso(new Date(doc.scheduledDate)),

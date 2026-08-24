@@ -27,7 +27,7 @@ function ensureNextAuthUrl(): void {
 }
 ensureNextAuthUrl();
 
-export type AppRole = "admin" | "trainer" | "viewer";
+export type AppRole = "admin" | "sop_admin" | "trainer" | "viewer";
 
 declare module "next-auth" {
   interface Session {

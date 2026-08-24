@@ -488,7 +488,7 @@ export function TrainerAttendancePanel({ onUnauthorized }: { onUnauthorized?: ()
                                 <span className="ml-1.5 text-[10px] font-normal text-gray-400">{e.employeeCode}</span>
                               )}
                             </td>
-                            <td className="px-3 py-2 text-gray-600">{e.designation || '—'}</td>
+                            <td className="px-3 py-2 text-gray-900">{e.designation || '—'}</td>
                             <td className="px-3 py-2">
                               {e.assignedThisSop ? (
                                 <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">
@@ -646,7 +646,7 @@ export function TrainerAttendancePanel({ onUnauthorized }: { onUnauthorized?: ()
                                   </span>
                                 </td>
                                 <td className="py-1.5 pr-3 font-semibold text-gray-800">{r.employeeName}</td>
-                                <td className="py-1.5 pr-3 text-gray-600">{r.designation || '—'}</td>
+                                <td className="py-1.5 pr-3 text-gray-900">{r.designation || '—'}</td>
                                 <td className="py-1.5 text-gray-500">{r.remark || '—'}</td>
                               </tr>
                             ))}
@@ -680,7 +680,7 @@ export function TrainerAttendancePanel({ onUnauthorized }: { onUnauthorized?: ()
                         {report.byEmployee.map((row) => (
                           <tr key={row.employeeId} className="hover:bg-gray-50">
                             <td className="px-3 py-2 font-semibold text-gray-900">{row.employeeName}</td>
-                            <td className="px-3 py-2 text-gray-600">{row.designation || '—'}</td>
+                            <td className="px-3 py-2 text-gray-900">{row.designation || '—'}</td>
                             <td className="px-3 py-2 tabular-nums text-gray-700">{row.sessions}</td>
                             <td className="px-3 py-2 tabular-nums font-semibold text-green-700">{row.present}</td>
                             <td className="px-3 py-2 tabular-nums font-semibold text-red-600">{row.absent}</td>

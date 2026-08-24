@@ -430,7 +430,7 @@ export function ScheduleExamModal({
                             <p className="text-[10px] text-gray-400">{e.employeeCode}</p>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-gray-600">{e.designation || '—'}</td>
+                        <td className="px-3 py-2 text-gray-900">{e.designation || '—'}</td>
                         <td className="px-3 py-2 text-gray-500">{e.department}</td>
                         <td className="px-3 py-2">
                           <div className="flex flex-wrap gap-1">

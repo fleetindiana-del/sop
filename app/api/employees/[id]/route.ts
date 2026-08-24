@@ -7,12 +7,13 @@ import {
   resolveInductionTrainingRequired,
   formatDateOfJoiningInput,
 } from '@/lib/employeeInduction';
-import { invalidateEmployeeAssignmentsCache } from '@/lib/employeeAssignments';
 import { parseTrainerDepartments } from '@/lib/employeeTrainer';
-import { bustTrainerScheduleCaches } from '@/lib/lmsTrainerCache';
-import { invalidateManageSopViewCache } from '@/lib/manageSopViewCache';
-import { invalidateTrainingMatrixCache } from '@/lib/trainingMatrixCache';
-import { invalidateInductionTrainingMatrixCache } from '@/lib/inductionTrainingMatrixCache';
+import {
+  invalidateEmployeeDerivedCaches,
+  touchesEmployeeIdentity,
+} from '@/lib/employeeCacheInvalidation';
+import { refreshTrainerRosterIdentity } from '@/lib/lmsTrainerEmployees';
+import { logAuditEvent, resolveAuditActor } from '@/lib/audit-log';
 import Employee from '@/models/Employee';
 import TrainerEmployee from '@/models/lms/TrainerEmployee';
 
@@ -42,6 +43,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const existing = await Employee.findById(id).select('+lmsPasswordHash');
     if (!existing) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+
+    // Designation change: stamp the previous value and the time, so LMS and
+    // admin screens can confirm the update landed without reading the audit log.
+    const priorDesignation = String(existing.designation || '').trim();
+    const nextDesignation =
+      typeof update.designation === 'string' ? update.designation.trim() : priorDesignation;
+    const designationChanged =
+      update.designation !== undefined && nextDesignation !== priorDesignation;
+    if (designationChanged) {
+      update.previousDesignation = priorDesignation;
+      update.designationUpdatedAt = new Date();
+    }
 
     const nextDoj = body.dateOfJoining !== undefined
       ? (parseDateOfJoining(body.dateOfJoining) ?? undefined)
@@ -122,9 +135,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         );
       }
       existing.isActive = persisted.isActive;
-      bustTrainerScheduleCaches();
-      void invalidateTrainingMatrixCache();
-      void invalidateInductionTrainingMatrixCache();
       if (expected === false) {
         const identity = {
           name: String(existing.name || '').trim(),
@@ -153,8 +163,40 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
     }
 
-    invalidateEmployeeAssignmentsCache();
-    void invalidateManageSopViewCache();
+    // Every employee edit gets the full fan-out. Identity (designation included)
+    // is denormalised into matrix rows, filter dropdowns, trainer rosters and
+    // LMS admin views; a password change flips `hasLmsAccess` on the trainer
+    // scheduling views. This used to fire only on the Mark-as-Left path, which
+    // is why a designation change kept rendering the old title until each
+    // cache's TTL (up to 5 minutes) expired.
+    invalidateEmployeeDerivedCaches();
+
+    // Full audit trail for designation changes: who, what, when.
+    if (designationChanged) {
+      await logAuditEvent({
+        actor: await resolveAuditActor(req),
+        entityType: 'employee',
+        entityId: id,
+        entityLabel: String(existing.name || '').trim() || id,
+        department: String(existing.department || '').trim() || undefined,
+        action: 'updated',
+        fieldsChanged: ['designation'],
+        previousValues: { designation: priorDesignation },
+        updatedValues: { designation: nextDesignation },
+        summary:
+          `Changed designation for ${existing.name}: ` +
+          `${priorDesignation || '(none)'} → ${nextDesignation || '(none)'}`,
+      });
+    }
+
+    // Keep the denormalised copy on trainer rosters pointing at the new values.
+    if (touchesEmployeeIdentity(update)) {
+      await refreshTrainerRosterIdentity(id, {
+        name: existing.name,
+        department: existing.department,
+        designation: existing.designation,
+      });
+    }
 
     // Never leak the hash; report whether a password is set instead.
     const out = existing.toObject();
@@ -184,6 +226,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const { id } = await params;
     const employee = await Employee.findByIdAndDelete(id);
     if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+    await TrainerEmployee.deleteMany({ employeeId: id });
+    invalidateEmployeeDerivedCaches();
     return NextResponse.json({ message: `Employee ${employee.name} deleted` });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });

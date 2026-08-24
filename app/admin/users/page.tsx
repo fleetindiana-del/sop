@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 
-type AppRole = 'admin' | 'trainer' | 'viewer';
+type AppRole = 'admin' | 'sop_admin' | 'trainer' | 'viewer';
 
 interface AppUser {
   id: string;
@@ -33,11 +33,21 @@ interface AppUser {
   updatedAt?: string;
 }
 
-const ROLES: AppRole[] = ['admin', 'trainer', 'viewer'];
+const ROLES: AppRole[] = ['admin', 'sop_admin', 'trainer', 'viewer'];
+
+// Super Admin and SOP Admin differ only in user administration: SOP Admin
+// cannot reach Login & Passwords or Access Management.
+const ROLE_LABEL: Record<AppRole, string> = {
+  admin: 'Super Admin',
+  sop_admin: 'SOP Admin',
+  trainer: 'Trainer',
+  viewer: 'Viewer',
+};
 const DEPARTMENTS = ['QA', 'QC', 'Microbiology', 'Production', 'Store', 'Engineering', 'Personnel', 'General'];
 
 const ROLE_STYLE: Record<AppRole, string> = {
   admin: 'bg-violet-100 text-violet-800 border-violet-200',
+  sop_admin: 'bg-indigo-100 text-indigo-800 border-indigo-200',
   trainer: 'bg-sky-100 text-sky-800 border-sky-200',
   viewer: 'bg-slate-100 text-slate-700 border-slate-200',
 };
@@ -331,8 +341,8 @@ export default function AdminUsersPage() {
                       ) : null}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold capitalize ${ROLE_STYLE[user.role]}`}>
-                        {user.role}
+                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${ROLE_STYLE[user.role]}`}>
+                        {ROLE_LABEL[user.role] ?? user.role}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{user.department || '—'}</td>
@@ -414,7 +424,7 @@ export default function AdminUsersPage() {
                     className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                   >
                     {ROLES.map((r) => (
-                      <option key={r} value={r}>{r}</option>
+                      <option key={r} value={r}>{ROLE_LABEL[r]}</option>
                     ))}
                   </select>
                 </label>

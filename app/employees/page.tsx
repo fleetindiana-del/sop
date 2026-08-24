@@ -22,6 +22,7 @@ import {
   INDUCTION_WINDOW_MONTHS,
 } from '@/lib/employeeInduction';
 import { parseTrainerDepartments } from '@/lib/employeeTrainer';
+import { bustEmployeeClientCaches } from '@/lib/employeeClientCache';
 
 const DEPARTMENTS = ['QA', 'QC', 'Microbiology', 'Production', 'Store', 'Engineering', 'Personnel'] as const;
 type Dept = (typeof DEPARTMENTS)[number];
@@ -30,6 +31,10 @@ interface Employee {
   _id: string;
   name: string;
   designation: string;
+  /** Designation held before the most recent change, if there has been one. */
+  previousDesignation?: string;
+  /** ISO timestamp of the most recent designation change. */
+  designationUpdatedAt?: string;
   department: string;
   employeeId?: string;
   dateOfJoining?: string;
@@ -75,6 +80,10 @@ function EmployeeModal({
 }) {
   const [name,        setName]        = useState(initial?.name        || '');
   const [designation, setDesignation] = useState(initial?.designation || '');
+  // Designation is picked from the Designation Master rather than typed, so
+  // near-duplicate titles cannot fragment the matrix filters.
+  const [masterDesignations, setMasterDesignations] = useState<string[]>([]);
+  const [designationsLoaded, setDesignationsLoaded] = useState(false);
   const [department,  setDepartment]  = useState(initial?.department  || defaultDept || 'QA');
   const [employeeId,  setEmployeeId]  = useState(initial?.employeeId  || '');
   const [dateOfJoining, setDateOfJoining] = useState(formatDateOfJoiningInput(initial?.dateOfJoining));
@@ -105,6 +114,45 @@ function EmployeeModal({
   useEffect(() => {
     if (tenureRequiresInduction) setInductionTrainingRequired(true);
   }, [tenureRequiresInduction]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/designations');
+        const json = await res.json();
+        if (cancelled) return;
+        if (res.ok && Array.isArray(json.designations)) {
+          setMasterDesignations(
+            json.designations
+              .map((d: { name: string }) => String(d.name || '').trim())
+              .filter(Boolean),
+          );
+        }
+      } catch {
+        /* fall back to the current value only */
+      } finally {
+        if (!cancelled) setDesignationsLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // A legacy title that predates the master must stay selectable, otherwise
+  // opening the form would silently clear it.
+  const designationOptions = useMemo(() => {
+    const current = (initial?.designation || '').trim();
+    const all = [...masterDesignations];
+    if (current && !all.some((d) => d.toLowerCase() === current.toLowerCase())) {
+      all.push(current);
+    }
+    return [...new Set(all)].sort((a, b) => a.localeCompare(b));
+  }, [masterDesignations, initial?.designation]);
+
+  const designationNotInMaster =
+    designationsLoaded &&
+    designation.trim() !== '' &&
+    !masterDesignations.some((d) => d.toLowerCase() === designation.trim().toLowerCase());
 
   // Keep trainer multi-select in sync when home department changes while trainer is on.
   useEffect(() => {
@@ -198,7 +246,29 @@ function EmployeeModal({
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={labelCls}>Designation *</label>
-              <input value={designation} onChange={(e) => setDesignation(e.target.value)} placeholder="e.g. Analyst" className={inputCls} />
+              <select
+                value={designation}
+                onChange={(e) => setDesignation(e.target.value)}
+                className={inputCls}
+              >
+                <option value="">
+                  {designationsLoaded ? 'Select a designation…' : 'Loading designations…'}
+                </option>
+                {designationOptions.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+              {designationNotInMaster && (
+                <p className="mt-1 text-[11px] text-amber-700">
+                  &ldquo;{designation}&rdquo; is not in the Designation Master.
+                </p>
+              )}
+              {designationsLoaded && masterDesignations.length === 0 && (
+                <p className="mt-1 text-[11px] text-amber-700">
+                  The Designation Master is empty — a Super Admin or SOP Admin can populate it from
+                  the Designation Master page.
+                </p>
+              )}
             </div>
             <div>
               <label className={labelCls}>Employee ID</label>
@@ -374,6 +444,7 @@ function DeleteConfirm({ employee, onClose, onDeleted }: { employee: Employee; o
     const res  = await fetch(`/api/employees/${employee._id}`, { method: 'DELETE' });
     const json = await res.json();
     if (!res.ok) { setError(json.error || 'Delete failed'); setLoading(false); return; }
+    bustEmployeeClientCaches();
     onDeleted();
   };
 
@@ -643,6 +714,8 @@ export default function EmployeesPage() {
             employeeId:       emp._id,
             employeeName:     emp.name,
             designation:      emp.designation,
+            previousDesignation:  emp.previousDesignation,
+            designationUpdatedAt: emp.designationUpdatedAt,
             department:       emp.department,
             isActive:         emp.isActive,
             totalSops:        t.totalSops,
@@ -658,6 +731,8 @@ export default function EmployeesPage() {
           employeeId:       emp._id,
           employeeName:     emp.name,
           designation:      emp.designation,
+          previousDesignation:  emp.previousDesignation,
+          designationUpdatedAt: emp.designationUpdatedAt,
           department:       emp.department,
           isActive:         emp.isActive,
           totalSops:        0,
@@ -700,6 +775,7 @@ export default function EmployeesPage() {
       });
       const json = await res.json();
       if (json.employee) {
+        bustEmployeeClientCaches();
         setEmployees((prev) => prev.map((e) => e._id === emp._id ? { ...e, isActive: json.employee.isActive } : e));
       }
     } finally {
@@ -708,6 +784,9 @@ export default function EmployeesPage() {
   };
 
   const handleSaved = (emp: Employee) => {
+    // Name / designation / department are denormalised into the matrix and LMS
+    // views the browser has cached; drop those so they re-fetch the new value.
+    bustEmployeeClientCaches();
     setEmployees((prev) => {
       const normalized: Employee = {
         ...emp,
@@ -802,39 +881,6 @@ export default function EmployeesPage() {
           ))}
         </div>
 
-        {/* Designation pills — multi-select */}
-        {designations.length > 0 && (
-          <div className="mb-2 flex shrink-0 flex-wrap items-center gap-1.5">
-            <span className="mr-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-              Designation
-            </span>
-            {designations.map((d) => {
-              const selected = selectedDesignations.includes(d);
-              return (
-                <button
-                  suppressHydrationWarning
-                  key={d}
-                  onClick={() => toggleDesignation(d)}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                    selected
-                      ? 'bg-sky-600 text-white shadow-sm'
-                      : 'border border-gray-200 bg-white text-gray-600 hover:border-sky-200 hover:bg-sky-50'
-                  }`}
-                >
-                  {d}
-                  <span
-                    className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                      selected ? 'bg-sky-500 text-white' : 'bg-sky-100 text-sky-700'
-                    }`}
-                  >
-                    {countsByDesignation[d] || 0}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
         {/* Search + clear */}
         <div className="mb-2 flex shrink-0 flex-wrap items-center gap-2">
           <div className="relative min-w-52 flex-1 max-w-sm">
@@ -871,6 +917,39 @@ export default function EmployeesPage() {
             {gridRows.length} employee{gridRows.length !== 1 ? 's' : ''}
           </span>
         </div>
+
+        {/* Designation pills — multi-select */}
+        {designations.length > 0 && (
+          <div className="mb-2 flex shrink-0 flex-wrap items-center gap-1.5">
+            <span className="mr-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-900">
+              Designation
+            </span>
+            {designations.map((d) => {
+              const selected = selectedDesignations.includes(d);
+              return (
+                <button
+                  suppressHydrationWarning
+                  key={d}
+                  onClick={() => toggleDesignation(d)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                    selected
+                      ? 'bg-sky-600 text-white shadow-sm'
+                      : 'border border-gray-200 bg-white text-gray-900 hover:border-sky-200 hover:bg-sky-50'
+                  }`}
+                >
+                  {d}
+                  <span
+                    className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                      selected ? 'bg-sky-500 text-white' : 'bg-sky-100 text-sky-700'
+                    }`}
+                  >
+                    {countsByDesignation[d] || 0}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Training grid — fills remaining viewport */}
         {!loading && gridRows.length === 0 ? (

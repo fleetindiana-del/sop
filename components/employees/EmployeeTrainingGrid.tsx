@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { colPct, employeeGridColWidths } from '@/components/lms/trainingGridLayout';
 import { DeptFieldCell } from '@/components/lms/DeptFieldCell';
+import { DesignationUpdatedBadge } from '@/components/lms/DesignationUpdatedBadge';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTHS_FULL = [
@@ -38,6 +39,10 @@ export interface EmployeeGridRow {
   employeeId: string;
   employeeName: string;
   designation: string;
+  /** Designation held before the most recent change, if there has been one. */
+  previousDesignation?: string;
+  /** ISO timestamp of the most recent designation change. */
+  designationUpdatedAt?: string;
   department: string;
   isActive: boolean;
   totalSops: number;
@@ -484,8 +489,13 @@ function DrillDownModal({ drill, onClose }: { drill: DrillState; onClose: () => 
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{title}</p>
             <h2 className="mt-0.5 truncate text-base font-bold text-gray-900">{record.employeeName}</h2>
-            <p className="mt-0.5 text-xs text-gray-500">
+            <p className="mt-0.5 text-xs text-gray-900">
               {record.designation || '—'} · {record.department || '—'}
+              <DesignationUpdatedBadge
+                designation={record.designation}
+                previousDesignation={record.previousDesignation}
+                designationUpdatedAt={record.designationUpdatedAt}
+              />
             </p>
           </div>
           <button

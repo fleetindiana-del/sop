@@ -22,6 +22,7 @@ import {
 } from '@/lib/trainingExamSchedule';
 import { buildSopList } from '@/app/api/lms/admin/sop-exam-settings/route';
 import { getOrBuildLmsCache, lmsServerKeys, lmsServerTtl } from '@/lib/lmsCache';
+import { getEmployeeMasterIndex } from '@/lib/employeeMaster';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,12 +62,20 @@ export async function GET(req: NextRequest) {
       month,
       employeeIds: employeeId ? [employeeId] : undefined,
     });
-    const progress = await loadExamProgressMap([...new Set(docs.map((d) => d.employeeId))]);
+    const [progress, masterIndex] = await Promise.all([
+      loadExamProgressMap([...new Set(docs.map((d) => d.employeeId))]),
+      getEmployeeMasterIndex(),
+    ]);
     const now = new Date();
 
     return NextResponse.json({
       exams: docs.map((d) =>
-        buildScheduledExamView(d, progress.get(`${d.employeeId}::${stripVersion(d.sopCode)}`), now),
+        buildScheduledExamView(
+          d,
+          progress.get(`${d.employeeId}::${stripVersion(d.sopCode)}`),
+          now,
+          masterIndex,
+        ),
       ),
     });
   } catch (err: unknown) {
@@ -245,7 +254,10 @@ export async function PATCH(req: NextRequest) {
     await doc.save();
 
     bustTrainerScheduleCaches();
-    return NextResponse.json({ ok: true, exam: serializeScheduledExam(doc) });
+    return NextResponse.json({
+      ok: true,
+      exam: serializeScheduledExam(doc, await getEmployeeMasterIndex()),
+    });
   } catch (err: unknown) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

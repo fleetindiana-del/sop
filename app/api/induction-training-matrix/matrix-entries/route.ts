@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import InductionMatrixEntryData from '@/models/InductionMatrixEntryData';
 import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
+import { getEmployeeMasterIndex, currentDesignation } from '@/lib/employeeMaster';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,10 +62,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // A new entry captures the designation held NOW. Employee Master wins over
+    // whatever the (possibly stale) client sent.
+    const masterIndex = await getEmployeeMasterIndex();
     const entry = await InductionMatrixEntryData.create({
       department,
       employeeName,
-      designation: designation ?? '',
+      designation: currentDesignation(masterIndex, department, employeeName, designation ?? ''),
       sopCode: String(sopCode).toUpperCase(),
       sopAssignmentId,
       month: parseInt(month, 10),
@@ -105,6 +109,7 @@ export async function PUT(req: NextRequest) {
       const { entries, updatedBy } = body;
       if (!updatedBy) return NextResponse.json({ error: 'updatedBy is required' }, { status: 400 });
 
+      const masterIndex = await getEmployeeMasterIndex();
       const ops = entries.map((e: Record<string, unknown>) => ({
         updateOne: {
           filter: {
@@ -117,7 +122,6 @@ export async function PUT(req: NextRequest) {
           },
           update: {
             $set: {
-              designation:         e.designation ?? '',
               sopAssignmentId:     e.sopAssignmentId,
               trainingStatus:      e.trainingStatus ?? 'not_started',
               qualificationStatus: e.qualificationStatus ?? 'pending',
@@ -131,6 +135,14 @@ export async function PUT(req: NextRequest) {
             },
             $setOnInsert: {
               createdBy: updatedBy,
+              // Insert-only: an existing entry is a record of training that
+              // already happened, so it keeps the designation held at the time.
+              designation: currentDesignation(
+                masterIndex,
+                String(e.department ?? ''),
+                String(e.employeeName ?? ''),
+                String(e.designation ?? ''),
+              ),
             },
           },
           upsert: true,
