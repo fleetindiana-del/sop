@@ -44,6 +44,11 @@ export async function GET(_req: NextRequest, { params }: Params) {
       },
     );
 
+    if (!body.certificate) {
+      // Do not reveal whether this SOP has a certificate owned by another employee.
+      return NextResponse.json({ error: 'Certificate not found' }, { status: 404 });
+    }
+
     return NextResponse.json(body, { headers: lmsCacheControl(120) });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
@@ -66,7 +71,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
     if (existing) return NextResponse.json({ certificate: existing });
 
     // Verify progress is complete AND the quiz was actually passed
-    let progress = await LearningProgress.findOne({ employeeId: payload.sub, sopCode });
+    const progress = await LearningProgress.findOne({ employeeId: payload.sub, sopCode });
     if (!progress) {
       return NextResponse.json({ error: 'Training not yet completed' }, { status: 400 });
     }

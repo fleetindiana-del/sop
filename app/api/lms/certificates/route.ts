@@ -26,7 +26,7 @@ export async function GET() {
         await connectDB();
         const certificates = await Certificate.find({ employeeId: payload.sub })
           .sort({ issuedAt: -1 })
-          .select('certificateNumber sopCode sopName completedAt quizScore hasPractical practicalScore issuedAt')
+          .select('certificateNumber sopCode sopName sopVersion completedAt quizScore hasPractical practicalScore issuedAt')
           .lean();
         return { certificates };
       },

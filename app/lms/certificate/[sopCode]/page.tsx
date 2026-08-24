@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, Download, Award, Check, Loader2, AlertCircle } from 'lucide-react';
 import {
@@ -30,6 +30,7 @@ interface Certificate {
 export default function CertificatePage() {
   const params = useParams<{ sopCode: string }>();
   const router = useRouter();
+  const printStarted = useRef(false);
   const sopCode = params.sopCode;
 
   const [cert,    setCert]    = useState<Certificate | null>(null);
@@ -75,7 +76,18 @@ export default function CertificatePage() {
     }
   }, [sopCode, router]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  useEffect(() => {
+    if (cert && new URLSearchParams(window.location.search).get('print') === '1' && !printStarted.current) {
+      printStarted.current = true;
+      const timer = window.setTimeout(() => window.print(), 250);
+      return () => window.clearTimeout(timer);
+    }
+  }, [cert]);
 
   if (loading) {
     return (

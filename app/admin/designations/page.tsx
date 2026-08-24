@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
+import { bustEmployeeClientCaches } from '@/lib/employeeClientCache';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -35,6 +36,7 @@ interface DesignationEmployee {
   name: string;
   employeeCode: string;
   department: string;
+  designation?: string;
   isActive: boolean;
   isTrainer: boolean;
   previousDesignation: string;
@@ -93,6 +95,10 @@ export default function DesignationMasterPage() {
   const [formDescription, setFormDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [employeeCandidates, setEmployeeCandidates] = useState<DesignationEmployee[]>([]);
+  const [employeeCandidatesLoading, setEmployeeCandidatesLoading] = useState(false);
+  const [employeeSearch, setEmployeeSearch] = useState('');
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
 
   const [deleting, setDeleting] = useState<Designation | null>(null);
   const [deleteError, setDeleteError] = useState('');
@@ -210,13 +216,45 @@ export default function DesignationMasterPage() {
     setShowForm(true);
   };
 
-  const openEdit = (d: Designation) => {
+  const openEdit = async (d: Designation) => {
     setEditing(d);
     setFormName(d.name);
     setFormDescription(d.description || '');
     setFormError('');
+    setEmployeeSearch('');
+    setSelectedEmployeeIds([]);
+    setEmployeeCandidates([]);
     setShowForm(true);
+    setEmployeeCandidatesLoading(true);
+    try {
+      const res = await fetch('/api/designations/employees?all=1');
+      const json = await res.json();
+      if (!res.ok) {
+        setFormError(json.error || 'Failed to load employees');
+        return;
+      }
+      setEmployeeCandidates(
+        (json.employees || []).filter(
+          (employee: DesignationEmployee) =>
+            (employee.designation || '').toLowerCase() !== d.name.toLowerCase(),
+        ),
+      );
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Failed to load employees');
+    } finally {
+      setEmployeeCandidatesLoading(false);
+    }
   };
+
+  const visibleEmployeeCandidates = useMemo(() => {
+    const q = employeeSearch.trim().toLowerCase();
+    if (!q) return employeeCandidates;
+    return employeeCandidates.filter((employee) =>
+      `${employee.name} ${employee.employeeCode} ${employee.department} ${employee.designation || ''}`
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [employeeCandidates, employeeSearch]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -233,7 +271,12 @@ export default function DesignationMasterPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
           editing
-            ? { id: editing.id, name, description: formDescription.trim() }
+            ? {
+                id: editing.id,
+                name,
+                description: formDescription.trim(),
+                assignedEmployeeIds: selectedEmployeeIds,
+              }
             : { name, description: formDescription.trim() },
         ),
       });
@@ -243,11 +286,12 @@ export default function DesignationMasterPage() {
         return;
       }
       setShowForm(false);
+      if (json.employeesUpdated || json.employeesAssigned) bustEmployeeClientCaches();
       setNotice(
         editing
           ? `Designation updated${
               json.employeesUpdated ? ` — ${json.employeesUpdated} employee record(s) re-pointed` : ''
-            }.`
+            }${json.employeesAssigned ? ` — ${json.employeesAssigned} employee(s) added` : ''}.`
           : `Designation "${name}" created.`,
       );
       await Promise.all([load(), loadAudit()]);
@@ -439,7 +483,7 @@ export default function DesignationMasterPage() {
                     <td className="px-4 py-2.5">
                       <div className="flex items-center justify-end gap-1.5">
                         <button
-                          onClick={() => openEdit(d)}
+                          onClick={() => void openEdit(d)}
                           title="Edit"
                           className="rounded-lg border border-gray-200 p-1.5 text-gray-700 transition hover:bg-gray-100"
                         >
@@ -535,7 +579,7 @@ export default function DesignationMasterPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <form
             onSubmit={handleSubmit}
-            className="w-full max-w-md rounded-2xl bg-white shadow-2xl"
+            className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-2xl"
           >
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5">
               <h2 className="text-base font-bold text-gray-900">
@@ -549,7 +593,7 @@ export default function DesignationMasterPage() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="space-y-3 px-5 py-4">
+            <div className="space-y-3 overflow-y-auto px-5 py-4">
               {formError && (
                 <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
                   <AlertTriangle className="h-4 w-4 shrink-0" /> {formError}
@@ -580,6 +624,72 @@ export default function DesignationMasterPage() {
                   title. Past training, attendance, assessment and certificate records keep the
                   original designation.
                 </p>
+              )}
+              {editing && (
+                <div>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="block text-xs font-medium text-gray-900">
+                      Add employees to this designation
+                    </label>
+                    {selectedEmployeeIds.length > 0 && (
+                      <span className="text-xs font-semibold text-violet-700">
+                        {selectedEmployeeIds.length} selected
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    value={employeeSearch}
+                    onChange={(event) => setEmployeeSearch(event.target.value)}
+                    placeholder="Search by name, ID, department or current designation…"
+                    className={inputCls}
+                  />
+                  <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-gray-200">
+                    {employeeCandidatesLoading ? (
+                      <div className="py-8 text-center text-gray-500">
+                        <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+                      </div>
+                    ) : visibleEmployeeCandidates.length === 0 ? (
+                      <p className="px-3 py-6 text-center text-xs text-gray-600">
+                        No other active employees found.
+                      </p>
+                    ) : (
+                      visibleEmployeeCandidates.map((employee) => {
+                        const checked = selectedEmployeeIds.includes(employee.id);
+                        return (
+                          <label
+                            key={employee.id}
+                            className="flex cursor-pointer items-center gap-3 border-b border-gray-100 px-3 py-2 last:border-0 hover:bg-gray-50"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setSelectedEmployeeIds((current) =>
+                                  checked
+                                    ? current.filter((id) => id !== employee.id)
+                                    : [...current, employee.id],
+                                )
+                              }
+                              className="h-4 w-4 rounded border-gray-300 text-violet-600"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-medium text-gray-900">
+                                {employee.name}
+                                {employee.employeeCode ? ` (${employee.employeeCode})` : ''}
+                              </span>
+                              <span className="block truncate text-xs text-gray-600">
+                                {employee.designation || 'Unassigned'} · {employee.department || '—'}
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-600">
+                    Saving changes their current designation in Employee Master and LMS. Historical training records remain unchanged.
+                  </p>
+                </div>
               )}
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">

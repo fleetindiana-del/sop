@@ -1729,11 +1729,6 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
     });
   }, []);
 
-  const earnedCertificates = useMemo(
-    () => certificates.filter((c) => isFullyComplete(getProgress(progressMap, c.sopCode))),
-    [certificates, progressMap],
-  );
-
   const tabCounts = useMemo(() => ({
     all:         monthScopedAssignments.length,
     in_progress: monthScopedAssignments.filter((a) => isActivelyInProgress(getProgress(progressMap, a.sopCode))).length,
@@ -1778,6 +1773,17 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
                 <Users className="h-3.5 w-3.5" /> Trainer View
               </Link>
             )}
+            <Link
+              href="/lms/certificate"
+              className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+            >
+              <Award className="h-3.5 w-3.5" /> My Certificates
+              {certificates.length > 0 && (
+                <span className="rounded-full bg-amber-200/70 px-1.5 py-0.5 text-[9px] font-bold">
+                  {certificates.length}
+                </span>
+              )}
+            </Link>
             <button
               type="button"
               onClick={() => setShowCalendar(true)}
@@ -1820,40 +1826,6 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
 
             {/* Continue learning */}
             <ContinueLearning assignments={monthScopedAssignments} progressMap={progressMap} onOpen={handleOpen} onPrefetch={prefetchJourney} />
-
-            {/* Certificates — only for fully completed (100%) trainings */}
-            {earnedCertificates.length > 0 && (
-              <section className="mb-4">
-                <div className="mb-2 flex items-center gap-1.5">
-                  <Award className="h-3.5 w-3.5 text-amber-500" />
-                  <h2 className="text-xs font-bold text-gray-800">My Certificates</h2>
-                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
-                    {earnedCertificates.length}
-                  </span>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {earnedCertificates.map((cert) => (
-                    <button
-                      key={cert._id}
-                      onClick={() => router.push(`/lms/certificate/${cert.sopCode}`)}
-                      className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-linear-to-br from-amber-50 to-white p-3 text-left transition hover:border-amber-400"
-                    >
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-amber-100">
-                        <Award className="h-4 w-4 text-amber-600" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-mono text-[11px] font-bold text-amber-700">{cert.sopCode}</p>
-                        <p className="truncate text-xs font-semibold text-gray-800">{cleanDisplayText(cert.sopName)}</p>
-                        <p className="mt-0.5 text-[10px] text-gray-400">
-                          {new Date(cert.completedAt).toLocaleDateString()}
-                          {cert.quizScore > 0 && ` · Score: ${cert.quizScore}%`}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
 
             {/* My Trainings section */}
             <section ref={trainingsRef} className="scroll-mt-16">

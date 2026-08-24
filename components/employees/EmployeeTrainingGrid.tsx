@@ -700,12 +700,17 @@ const EmployeeTrainingRow = memo(function EmployeeTrainingRow({
           <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${row.isActive ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-400'}`}>
             {row.employeeName.charAt(0)}
           </div>
-          <p className="min-w-0 font-semibold text-gray-900 leading-tight text-xs line-clamp-2" title={row.employeeName}>
-            {row.employeeName}
-            {!row.isActive && (
-              <span className="ml-1 rounded-full bg-red-100 px-1 py-px text-[9px] font-semibold text-red-600">Left</span>
-            )}
-          </p>
+          <div className="min-w-0 leading-tight" title={`${row.employeeName} · ${row.designation || 'No designation'}`}>
+            <p className="truncate text-xs font-semibold text-gray-900">
+              {row.employeeName}
+              {!row.isActive && (
+                <span className="ml-1 rounded-full bg-red-100 px-1 py-px text-[9px] font-semibold text-red-600">Left</span>
+              )}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] font-medium text-violet-700">
+              {row.designation || 'No designation'}
+            </p>
+          </div>
         </div>
       </td>
       <DeptFieldCell value={row.designation} department={row.department} />

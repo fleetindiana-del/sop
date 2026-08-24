@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Types } from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import Designation from "@/models/Designation";
 import Employee from "@/models/Employee";
+import TrainerEmployee from "@/models/lms/TrainerEmployee";
 import { requireAuth, canManageDesignations } from "@/lib/withAuth";
 import { actorFromSession, logAuditEvent } from "@/lib/audit-log";
 import { invalidateEmployeeDerivedCaches } from "@/lib/employeeCacheInvalidation";
@@ -178,6 +180,12 @@ export async function PATCH(request: NextRequest) {
     const nextDescription =
       body.description !== undefined ? String(body.description).trim() : previous.description;
     const nextIsActive = body.isActive !== undefined ? body.isActive === true : previous.isActive;
+    const assignedEmployeeIds: string[] = Array.isArray(body.assignedEmployeeIds)
+      ? [...new Set<string>(body.assignedEmployeeIds.map((value: unknown) => String(value).trim()).filter(Boolean))]
+      : [];
+    const assignedEmployeeObjectIds = assignedEmployeeIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
 
     if (!nextName) {
       return NextResponse.json({ error: "Designation name is required" }, { status: 400 });
@@ -202,7 +210,7 @@ export async function PATCH(request: NextRequest) {
     if (nextDescription !== previous.description) fieldsChanged.push("description");
     if (nextIsActive !== previous.isActive) fieldsChanged.push("isActive");
 
-    if (fieldsChanged.length === 0) {
+    if (fieldsChanged.length === 0 && assignedEmployeeIds.length === 0) {
       return NextResponse.json({ designation: { id, ...previous }, changed: false });
     }
 
@@ -242,21 +250,74 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
-    await logAuditEvent({
-      actor: actorFromSession(auth.session, request),
-      entityType: "designation",
-      entityId: String(existing._id),
-      entityLabel: nextName,
-      action: nextName !== previous.name ? "renamed" : "updated",
-      fieldsChanged,
-      previousValues: previous,
-      updatedValues: { name: nextName, description: nextDescription, isActive: nextIsActive },
-      summary:
-        nextName !== previous.name
-          ? `Renamed designation ${previous.name} → ${nextName}` +
-            (employeesUpdated ? ` (${employeesUpdated} employee(s) updated)` : "")
-          : `Updated ${fieldsChanged.join(", ")} on designation ${nextName}`,
-    });
+    let employeesAssigned = 0;
+    if (assignedEmployeeObjectIds.length > 0) {
+      const now = new Date();
+      const candidates = await Employee.find({
+        _id: { $in: assignedEmployeeObjectIds },
+        isActive: true,
+        designation: { $not: employeeNameFilter(nextName).designation },
+      })
+        .select("_id name department designation")
+        .lean<Array<{ _id: Types.ObjectId; name: string; department: string; designation: string }>>();
+
+      if (candidates.length > 0) {
+        const result = await Employee.bulkWrite(
+          candidates.map((employee) => ({
+            updateOne: {
+              filter: { _id: employee._id },
+              update: {
+                $set: {
+                  designation: nextName,
+                  previousDesignation: employee.designation || "",
+                  designationUpdatedAt: now,
+                },
+              },
+            },
+          })),
+        );
+        employeesAssigned = result.modifiedCount || 0;
+        await TrainerEmployee.updateMany(
+          { employeeId: { $in: candidates.map((employee) => String(employee._id)) } },
+          { $set: { designation: nextName } },
+        );
+        await logAuditEvent({
+          actor: actorFromSession(auth.session, request),
+          entityType: "employee",
+          entityId: `designation:${existing._id}:assignments`,
+          entityLabel: nextName,
+          action: "updated",
+          fieldsChanged: ["designation"],
+          previousValues: {
+            employees: candidates.map((employee) => ({
+              id: String(employee._id),
+              name: employee.name,
+              designation: employee.designation || "",
+            })),
+          },
+          updatedValues: { designation: nextName },
+          summary: `Assigned ${employeesAssigned} employee(s) to ${nextName}`,
+        });
+      }
+    }
+
+    if (fieldsChanged.length > 0) {
+      await logAuditEvent({
+        actor: actorFromSession(auth.session, request),
+        entityType: "designation",
+        entityId: String(existing._id),
+        entityLabel: nextName,
+        action: nextName !== previous.name ? "renamed" : "updated",
+        fieldsChanged,
+        previousValues: previous,
+        updatedValues: { name: nextName, description: nextDescription, isActive: nextIsActive },
+        summary:
+          nextName !== previous.name
+            ? `Renamed designation ${previous.name} → ${nextName}` +
+              (employeesUpdated ? ` (${employeesUpdated} employee(s) updated)` : "")
+            : `Updated ${fieldsChanged.join(", ")} on designation ${nextName}`,
+      });
+    }
 
     invalidateEmployeeDerivedCaches();
 
@@ -268,6 +329,7 @@ export async function PATCH(request: NextRequest) {
         isActive: nextIsActive,
       },
       employeesUpdated,
+      employeesAssigned,
       changed: true,
     });
   } catch (error) {

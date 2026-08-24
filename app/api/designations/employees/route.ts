@@ -27,16 +27,18 @@ export async function GET(request: NextRequest) {
   try {
     await connectDB();
     const name = String(request.nextUrl.searchParams.get("name") ?? "").trim();
-    if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
+    const all = request.nextUrl.searchParams.get("all") === "1";
+    if (!name && !all) return NextResponse.json({ error: "name is required" }, { status: 400 });
 
     // Inactive employees are included but flagged, so a headcount of 0 with
     // former holders still explains why a delete may feel surprising.
     const includeInactive =
       request.nextUrl.searchParams.get("includeInactive") === "1";
 
-    const filter: Record<string, unknown> = {
-      designation: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"),
-    };
+    const filter: Record<string, unknown> = {};
+    if (!all) {
+      filter.designation = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    }
     if (!includeInactive) filter.isActive = true;
 
     const rows = await Employee.find(filter)
@@ -64,6 +66,7 @@ export async function GET(request: NextRequest) {
         name: String(r.name || "").trim(),
         employeeCode: r.employeeId ? String(r.employeeId).trim() : "",
         department: String(r.department || "").trim(),
+        designation: String(r.designation || "").trim(),
         isActive: r.isActive !== false,
         isTrainer: Boolean(r.isTrainer),
         previousDesignation: r.previousDesignation || "",
