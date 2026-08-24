@@ -1676,6 +1676,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ...employeeSopRemovals.map((r) => String(r.department || "").trim()).filter(Boolean),
       ]),
     ];
+    // Designation-wide edits need the department roster. A named employee edit
+    // only needs those exact people; avoid loading the entire Employee collection
+    // for the common Add Employee / single-checkbox save path.
+    const employeeLookupNames = [
+      ...new Set(
+        employeeSopAssignments
+          .map((row) => String(row.employeeName || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    const activeEmployeeFilter: Record<string, unknown> = normEntries.length > 0
+      ? { isActive: true }
+      : employeeLookupNames.length > 0
+        ? {
+            isActive: true,
+            name: {
+              $in: employeeLookupNames.map(
+                (name) => new RegExp(`^${escapeRegExp(name)}$`, "i"),
+              ),
+            },
+          }
+        : { _id: { $exists: false } };
 
     // The client emits one removal per (SOP, dept, month) — up to twelve per
     // department for a single row edit, each previously costing its own query
@@ -1727,7 +1749,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (ids.length === 0) return { deletedCount: 0 };
         return TrainingMatrixRecord.deleteMany({ _id: { $in: ids } });
       })),
-      Employee.find({ isActive: true })
+      Employee.find(activeEmployeeFilter)
         .select("name designation isTrainer trainerDepartments department")
         .lean<Array<{
           name?: string;

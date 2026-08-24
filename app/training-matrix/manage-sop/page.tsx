@@ -428,6 +428,9 @@ function ManageSOPDashboard() {
   // The employee view needs its own buffer: writing employee ticks into
   // `overrides` toggled every colleague sharing that designation.
   const [employeeOverrides, setEmployeeOverrides] = useState<PerSop>({});
+  // Save completion is tied to the database write; the expensive view rebuild
+  // runs afterward. Ignore stale rebuilds when another save starts meanwhile.
+  const postSaveRefreshIdRef = useRef(0);
 
   // Applied (committed) snapshots — used to derive displayed counts/totals
   const [appliedOverrides, setAppliedOverrides] = useState<PerSop>({});
@@ -723,9 +726,7 @@ function ManageSOPDashboard() {
     }
 
     for (const emp of selected) {
-      const desig = String(emp.designation || '').trim();
-      if (!desig) continue;
-      setDesigChecked(addEmpModal.sopCode, addEmpModal.dept, desig, true);
+      setEmployeeChecked(addEmpModal.sopCode, addEmpModal.dept, emp.name, true);
     }
 
     const sop = viewData.sops.find((s) => s.sopCode === addEmpModal.sopCode);
@@ -749,7 +750,7 @@ function ManageSOPDashboard() {
     }
 
     setAddEmpModal(null);
-  }, [addEmpModal, addEmpCandidates, addEmpSelected, viewData, monthCells, EMPTY_INNER, setDesigChecked, toggleMonthCell]);
+  }, [addEmpModal, addEmpCandidates, addEmpSelected, viewData, monthCells, EMPTY_INNER, setEmployeeChecked, toggleMonthCell]);
 
   const empModalDerived = useMemo(() => {
     if (!empModal) return null;
@@ -1046,23 +1047,31 @@ function ManageSOPDashboard() {
       setAppliedMonthCells({ ...monthCellsArg });
 
       // Rebuild from DB (await) — do not rely on optimistic patches that can drift.
-      let fresh: ManageSOPViewResponse | null = null;
-      try {
-        const freshRes = await fetch('/api/training-matrix/manage-sop-view?year=all&refresh=1', {
-          cache: 'no-store',
-        });
-        fresh = freshRes.ok ? await freshRes.json() : null;
-      } catch {
-        fresh = null;
-      }
-
-      if (fresh) {
-        setViewData(fresh);
+      // The write is complete. Let the user continue immediately while the
+      // expensive derived-view rebuild runs in the background.
+      setApplying(false);
+      const refreshId = ++postSaveRefreshIdRef.current;
+      setRefreshing(true);
+      void (async () => {
+        let fresh: ManageSOPViewResponse | null = null;
         try {
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(MANAGE_SOP_VIEW_LOCAL_CACHE_KEY, JSON.stringify(fresh));
-          }
-        } catch { /* non-fatal */ }
+          const freshRes = await fetch('/api/training-matrix/manage-sop-view?year=all&refresh=1', {
+            cache: 'no-store',
+          });
+          fresh = freshRes.ok ? await freshRes.json() : null;
+        } catch {
+          fresh = null;
+        }
+
+        if (refreshId !== postSaveRefreshIdRef.current) return;
+
+        if (fresh && isValidManageSopViewResponse(fresh)) {
+          setViewData(fresh);
+          try {
+            if (typeof window !== 'undefined') {
+              localStorage.setItem(MANAGE_SOP_VIEW_LOCAL_CACHE_KEY, JSON.stringify(fresh));
+            }
+          } catch { /* non-fatal */ }
 
         // Prime the training-matrix overview cache so assigned-SOP counts match
         // manage-sops when the user navigates back to the main matrix page.
@@ -1089,16 +1098,29 @@ function ManageSOPDashboard() {
         // checkboxes read straight from the refreshed snapshot. Only safe to clear AFTER
         // fresh data has been applied; otherwise the grid would revert to the pre-save
         // view and the just-made ticks would disappear.
-        const clearSopLocalState = (prev: PerSop, codes: Set<string>) => {
+        const savedOverrides = Object.fromEntries(
+          [...sopCodesToProcess].map((code) => [code, overridesArg[code] || {}]),
+        ) as PerSop;
+        const savedMonthCells = Object.fromEntries(
+          [...sopCodesToProcess].map((code) => [code, monthCellsArg[code] || {}]),
+        ) as PerSop;
+        const savedEmployeeOverrides = Object.fromEntries(
+          [...employeeSopCodes].map((code) => [code, employeeOverrides[code] || {}]),
+        ) as PerSop;
+        const clearSopLocalState = (prev: PerSop, saved: PerSop) => {
           const next = { ...prev };
-          for (const code of codes) delete next[code];
+          for (const [code, savedInner] of Object.entries(saved)) {
+            // A newer click replaces the SOP's inner object. Never clear it
+            // when this older background refresh completes.
+            if (prev[code] === savedInner) delete next[code];
+          }
           return next;
         };
-        setOverrides((prev) => clearSopLocalState(prev, sopCodesToProcess));
-        setMonthCells((prev) => clearSopLocalState(prev, sopCodesToProcess));
-        setEmployeeOverrides((prev) => clearSopLocalState(prev, employeeSopCodes));
-        setAppliedOverrides((prev) => clearSopLocalState(prev, sopCodesToProcess));
-        setAppliedMonthCells((prev) => clearSopLocalState(prev, sopCodesToProcess));
+        setOverrides((prev) => clearSopLocalState(prev, savedOverrides));
+        setMonthCells((prev) => clearSopLocalState(prev, savedMonthCells));
+        setEmployeeOverrides((prev) => clearSopLocalState(prev, savedEmployeeOverrides));
+        setAppliedOverrides((prev) => clearSopLocalState(prev, savedOverrides));
+        setAppliedMonthCells((prev) => clearSopLocalState(prev, savedMonthCells));
       } else {
         // Rebuild failed/aborted: keep the local edit buffers so the ticks the user just
         // saved stay visible. The next page load reads the persisted records from the DB.
@@ -1107,6 +1129,9 @@ function ManageSOPDashboard() {
           text: `${prev?.text ? prev.text + ' ' : ''}(Saved — the view will fully refresh on next reload.)`,
         }));
       }
+      })().finally(() => {
+        if (refreshId === postSaveRefreshIdRef.current) setRefreshing(false);
+      });
     } catch (err) {
       setApplyMsg({
         kind: 'err',
