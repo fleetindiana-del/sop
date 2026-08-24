@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { connectDB } from '@/lib/mongodb';
-import { getEmployeeAssignmentsMap, invalidateEmployeeAssignmentsCache } from '@/lib/employeeAssignments';
+import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
 import { generateUniqueLmsUsername } from '@/lib/lms-credentials';
 import { syncEmployeesFromMatrixThrottled } from '@/lib/syncEmployeesFromMatrix';
 import {
@@ -10,7 +10,7 @@ import {
   formatDateOfJoiningInput,
 } from '@/lib/employeeInduction';
 import { parseTrainerDepartments } from '@/lib/employeeTrainer';
-import { invalidateManageSopViewCache } from '@/lib/manageSopViewCache';
+import { invalidateEmployeeDerivedCaches } from '@/lib/employeeCacheInvalidation';
 import Employee from '@/models/Employee';
 
 export const dynamic = 'force-dynamic';
@@ -130,8 +130,7 @@ export async function POST(req: NextRequest) {
 
     const employee = created.toObject();
     delete employee.lmsPasswordHash;
-    invalidateEmployeeAssignmentsCache();
-    void invalidateManageSopViewCache();
+    invalidateEmployeeDerivedCaches();
     return NextResponse.json({
       employee: {
         ...employee,

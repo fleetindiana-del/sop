@@ -4,6 +4,13 @@ import TrainingMatrixRecord from '@/models/TrainingMatrixRecord';
 import TrainingMatrixUpload from '@/models/TrainingMatrixUpload';
 import SOP from '@/models/SOP';
 import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
+import {
+  getEmployeeMasterIndex,
+  currentDesignation,
+  identityKeysForDesignation,
+  employeeMasterKey,
+} from '@/lib/employeeMaster';
+import { canonTrainingMatrixDepartment } from '@/lib/trainingMatrixDepartments';
 
 const STATUS_PRIORITY: Record<string, number> = {
   completed: 4,
@@ -30,7 +37,10 @@ export async function GET(request: NextRequest) {
     if (dept    !== 'all') match.department   = dept;
     if (monthP  !== 'all') match.month        = parseInt(monthP);
     if (yearP   !== 'all') match.year         = parseInt(yearP);
-    if (desigF  !== 'all') match.designation  = desigF;
+    // NOTE: designation is deliberately NOT matched against TrainingMatrixRecord.
+    // Records store the designation held when each row was recorded, so matching
+    // there hid anyone who has since been re-designated (and surfaced them under
+    // their old title). The filter is applied below against Employee Master.
     if (search)            match.employeeName = { $regex: search, $options: 'i' };
     if (sopSearch)         match.sopCode      = { $regex: sopSearch, $options: 'i' };
     // Don't filter by status here — we need all statuses to build the employee map correctly
@@ -46,11 +56,12 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const [recordsRaw, leftKeys] = await Promise.all([
+    const [recordsRaw, leftKeys, masterIndex] = await Promise.all([
       TrainingMatrixRecord.find(match)
         .sort({ department: 1, employeeName: 1, sopCode: 1 })
         .lean(),
       getLeftEmployeeKeys(),
+      getEmployeeMasterIndex(),
     ]);
     const records = (includeObsolete
       ? recordsRaw
@@ -75,7 +86,14 @@ export async function GET(request: NextRequest) {
 
       const key = `${r.department}||${r.employeeName}`;
       if (!empMap[key]) {
-        empMap[key] = { employeeName: r.employeeName, designation: r.designation, department: r.department, trainings: {} };
+        empMap[key] = {
+          employeeName: r.employeeName,
+          // Employee Master wins; the record's stored designation is only a
+          // fallback for roster rows that were never mirrored into Employee.
+          designation: currentDesignation(masterIndex, r.department, r.employeeName, r.designation),
+          department: r.department,
+          trainings: {},
+        };
       }
 
       const priority = STATUS_PRIORITY[r.status] ?? 0;
@@ -107,17 +125,45 @@ export async function GET(request: NextRequest) {
       return { ...emp, trainings, completed, not_required, na: 0, pending, required, totalSOPs, completionPct: pct };
     });
 
+    // Apply the designation filter against the employee's CURRENT designation,
+    // resolved through Employee Master rather than the historical record value.
+    const designationFiltered = desigF !== 'all'
+      ? (() => {
+          const { keys } = identityKeysForDesignation(
+            masterIndex,
+            desigF,
+            dept !== 'all' ? dept : null,
+          );
+          const wanted = desigF.trim().toLowerCase();
+          return employees.filter((e) =>
+            keys.has(employeeMasterKey(e.department, e.employeeName)) ||
+            keys.has(`${e.department}||${e.employeeName}`.trim().toLowerCase()) ||
+            // Excel-only roster rows have no Employee Master record; fall back to
+            // the designation carried on the row itself so they stay filterable.
+            (!masterIndex.byIdentity.has(employeeMasterKey(e.department, e.employeeName)) &&
+              e.designation.trim().toLowerCase() === wanted),
+          );
+        })()
+      : employees;
+
     // Apply status filter after building (filter employees by status presence)
     const filteredEmployees = statusF !== 'all'
-      ? employees.filter(e => Object.values(e.trainings).some(t => t.status === statusF))
-      : employees;
+      ? designationFiltered.filter(e => Object.values(e.trainings).some(t => t.status === statusF))
+      : designationFiltered;
 
     const sopCodes = [...sopSet].sort();
 
     // Filter options
     const departments   = await TrainingMatrixRecord.distinct('department');
     const years         = (await TrainingMatrixRecord.distinct('year')).sort();
-    const designations  = await TrainingMatrixRecord.distinct('designation', dept !== 'all' ? { department: dept } : {});
+    // Designation options come from Employee Master, not from the historical
+    // records — otherwise the dropdown lists titles nobody holds any more and
+    // omits ones just assigned.
+    const designations = dept !== 'all'
+      ? (masterIndex.designationsByDepartment.get(
+          canonTrainingMatrixDepartment(dept) || dept,
+        ) || [])
+      : masterIndex.designations;
     const monthsRaw     = await TrainingMatrixRecord.aggregate([
       { $group: { _id: { month: '$month', monthName: '$monthName' } } },
       { $sort: { '_id.month': 1 } },

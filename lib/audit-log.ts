@@ -237,10 +237,16 @@ function defaultSummary(params: {
   entityLabel: string;
   fieldsChanged: string[];
 }): string {
-  const label = params.entityLabel || (params.entityType === "department" ? "department" : "SOP");
+  const ENTITY_NOUN: Partial<Record<AuditEntityType, string>> = {
+    department: "department",
+    designation: "designation",
+    employee: "employee",
+  };
+  const noun = ENTITY_NOUN[params.entityType];
+  const label = params.entityLabel || noun || "SOP";
   switch (params.action) {
     case "created":
-      return params.entityType === "department" ? `Created department ${label}` : `Created SOP ${label}`;
+      return noun ? `Created ${noun} ${label}` : `Created SOP ${label}`;
     case "uploaded":
       return `Uploaded file for ${label}`;
     case "updated":
@@ -252,11 +258,9 @@ function defaultSummary(params: {
     case "restored":
       return `Restored ${label} to the SOP registry`;
     case "deleted":
-      return params.entityType === "department"
-        ? `Deleted department ${label}`
-        : `Permanently deleted ${label}`;
+      return noun ? `Deleted ${noun} ${label}` : `Permanently deleted ${label}`;
     case "renamed":
-      return `Renamed ${label}`;
+      return noun ? `Renamed ${noun} ${label}` : `Renamed ${label}`;
     default:
       return `${params.action} ${label}`;
   }

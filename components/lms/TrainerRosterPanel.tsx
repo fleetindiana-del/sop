@@ -245,7 +245,7 @@ export function TrainerRosterPanel({ onUnauthorized }: { onUnauthorized?: () => 
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2.5 text-gray-600">{r.designation || '—'}</td>
+                    <td className="px-3 py-2.5 text-gray-900">{r.designation || '—'}</td>
                     <td className="px-3 py-2.5 text-gray-600">{r.department || '—'}</td>
                     <td className="px-3 py-2.5">
                       {r.hasLmsAccess ? (
@@ -353,7 +353,7 @@ export function TrainerRosterPanel({ onUnauthorized }: { onUnauthorized?: () => 
                           />
                         </td>
                         <td className="px-3 py-2 font-semibold text-gray-800">{e.name}</td>
-                        <td className="px-3 py-2 text-gray-600">{e.designation || '—'}</td>
+                        <td className="px-3 py-2 text-gray-900">{e.designation || '—'}</td>
                         <td className="px-3 py-2 text-gray-500">{e.department}</td>
                         <td className="px-3 py-2">
                           {e.hasLmsAccess ? (

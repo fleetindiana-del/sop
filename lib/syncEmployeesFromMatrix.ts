@@ -1,13 +1,14 @@
 import TrainingMatrixUpload from '@/models/TrainingMatrixUpload';
 import TrainingMatrixRecord from '@/models/TrainingMatrixRecord';
 import Employee from '@/models/Employee';
+import { invalidateEmployeeMasterIndex } from '@/lib/employeeMaster';
 
 export interface SyncEmployeesResult {
   /** distinct departments the roster was drawn from */
   departments: number;
   /** new employees created */
   inserted: number;
-  /** existing employees whose designation / active flag changed */
+  /** existing employees touched by the upsert (identity fields are never overwritten) */
   updated: number;
   /** inserted + updated */
   upserted: number;
@@ -58,8 +59,15 @@ export async function syncEmployeesFromMatrixThrottled(): Promise<boolean> {
  * Mirrors the live training-matrix roster into the Employee collection.
  *
  * The matrix is the source of truth for *who* exists; this copies that roster
- * over so the Employee page always reflects it. It only ADDS new people and
- * UPDATES designation — it never removes, deactivates, or re-activates anybody.
+ * over so the Employee page always reflects it. It only ADDS new people — it
+ * never overwrites the identity of somebody already in Employee Master, and
+ * never removes, deactivates, or re-activates anybody.
+ *
+ * Employee Master is the single source of truth for a person's CURRENT name,
+ * designation and department. Matrix rows carry the designation held when each
+ * row was recorded, so writing them back silently reverted admin edits.
+ * Designation is therefore seeded on insert only.
+ *
  * "Mark as Left" (isActive: false) must persist even if that person is still
  * on the training-matrix roster. New inserts default to active.
  *
@@ -123,17 +131,19 @@ export async function syncEmployeesFromMatrix(): Promise<SyncEmployeesResult> {
   const ops: any[] = [];
   for (const { name, department, designation } of roster.values()) {
     departments.add(department);
-    // When the matrix has a designation, write it on both insert and update.
-    // When it's blank, only seed it on insert so an existing one isn't wiped.
-    // (A field may not appear in both $set and $setOnInsert.)
-    // Never $set isActive — that was re-activating people marked Left.
-    const setOnInsert: Record<string, unknown> = { name, department, isActive: true };
+    // Seed designation on INSERT ONLY. The matrix carries the designation a
+    // person held when each row was recorded, so $set-ing it here reverted every
+    // designation change made in Employee Master the next time this sync ran
+    // (within 30s of any Employees-page load or trainer request). Employee
+    // Master owns the current designation; the matrix owns history.
+    // Never $set isActive either — that was re-activating people marked Left.
+    const setOnInsert: Record<string, unknown> = {
+      name,
+      department,
+      isActive: true,
+      designation,
+    };
     const update: Record<string, unknown> = { $setOnInsert: setOnInsert };
-    if (designation) {
-      update.$set = { designation };
-    } else {
-      setOnInsert.designation = '';
-    }
     ops.push({
       updateOne: {
         filter: { name, department },
@@ -146,6 +156,9 @@ export async function syncEmployeesFromMatrix(): Promise<SyncEmployeesResult> {
   const result = await Employee.bulkWrite(ops, { ordered: false });
   const inserted = result.upsertedCount || 0;
   const updated = result.modifiedCount || 0;
+
+  // New people must appear in the Employee Master lookup the read paths use.
+  if (inserted > 0 || updated > 0) invalidateEmployeeMasterIndex();
 
   return {
     departments: departments.size,

@@ -1887,7 +1887,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const live = employeesForDept(department).find(
         (emp) => String(emp.name || "").trim().toLowerCase() === employeeName.toLowerCase(),
       );
-      const designation = String(row.designation || live?.designation || "").trim();
+      // Employee Master first: this stamps a designation onto brand-new matrix
+      // records, so a stale page must not write back the old title. The
+      // client-supplied value is only a fallback for someone with no Employee
+      // Master record (Excel-only roster row).
+      const designation = String(live?.designation || row.designation || "").trim();
       const year = fallbackYear;
       const sops = Array.isArray(row.sops) ? row.sops : [];
       if (sops.length === 0) {

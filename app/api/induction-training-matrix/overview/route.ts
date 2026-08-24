@@ -22,6 +22,7 @@ import { SOP_LIST_EXCLUDE } from '@/lib/sop-list-projection';
 import { findLatestUploadsByDepartment } from '@/lib/latestMatrixUploads';
 import { getInductionTrainingMatrixCacheEntry, setInductionTrainingMatrixCached } from '@/lib/inductionTrainingMatrixCache';
 import { resolveEngGujFilePaths } from '@/lib/pathLanguageDetection';
+import { getEmployeeMasterIndex, currentDesignation } from '@/lib/employeeMaster';
 
 export const dynamic = 'force-dynamic';
 
@@ -300,7 +301,7 @@ async function computeOverviewPayload(forceFresh: boolean) {
     //   2. MCQ stats from `mcqbanks` (one doc per SOP + language)
     //   3. Trainers + induction upload snapshots
     const cachedRegistry = getServerGroupedCache();
-    const [sopRecords, mcqAgg, trainerDocs, uploads] = await Promise.all([
+    const [sopRecords, mcqAgg, trainerDocs, uploads, masterIndex] = await Promise.all([
       cachedRegistry ? Promise.resolve(null) : SOP.find({}).select(SOP_LIST_EXCLUDE).lean(),
       MCQBank.aggregate([
         { $match: { isObsolete: { $ne: true } } },
@@ -325,6 +326,7 @@ async function computeOverviewPayload(forceFresh: boolean) {
       findLatestUploadsByDepartment(InductionTrainingMatrixUpload, {
         snapshot: { $exists: true, $ne: null },
       }),
+      getEmployeeMasterIndex(),
     ]);
 
     // 1. Same SOP source as the Dashboard: collapse versions into one row per family.
@@ -551,7 +553,12 @@ async function computeOverviewPayload(forceFresh: boolean) {
         }
       }
       const employees = (snap.employees || []).map((e) => ({
-        name: e.name, designation: e.designation, department: dept, training: normalizeTraining(e.training),
+        name: e.name,
+        // Employee Master owns the current designation; the upload snapshot
+        // value is only a fallback for rows with no Employee Master record.
+        designation: currentDesignation(masterIndex, dept, e.name, e.designation),
+        department: dept,
+        training: normalizeTraining(e.training),
       }));
       excelByDept.set(dept, {
         uploaded: true,

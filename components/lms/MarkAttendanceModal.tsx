@@ -294,7 +294,7 @@ export function MarkAttendanceModal({
                           </span>
                         ) : null}
                       </td>
-                      <td className="px-3 py-2 text-gray-600">{emp.designation || '—'}</td>
+                      <td className="px-3 py-2 text-gray-900">{emp.designation || '—'}</td>
                       <td className="px-3 py-2 text-right">
                         <button
                           type="button"

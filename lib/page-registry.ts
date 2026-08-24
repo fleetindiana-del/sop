@@ -15,8 +15,14 @@ export interface AppPage {
   prefix: string;
   group: string;
   description: string;
-  /** Always admin-only — cannot be granted to trainer/viewer. */
+  /** Super Admin + SOP Admin only — cannot be granted to trainer/viewer. */
   adminOnly?: boolean;
+  /**
+   * Super Admin only. User administration (creating logins, granting page
+   * access) is deliberately out of reach of SOP Admin, so a SOP Admin cannot
+   * widen their own permissions.
+   */
+  superAdminOnly?: boolean;
   /** Everyone signed in gets this page; it cannot be revoked. */
   alwaysAllowed?: boolean;
   /**
@@ -143,6 +149,7 @@ export const APP_PAGES: AppPage[] = [
     group: "Administration",
     description: "Create logins and reset passwords",
     adminOnly: true,
+    superAdminOnly: true,
   },
   {
     key: "admin-access",
@@ -150,6 +157,15 @@ export const APP_PAGES: AppPage[] = [
     prefix: "/admin/access",
     group: "Administration",
     description: "Page and department permissions",
+    adminOnly: true,
+    superAdminOnly: true,
+  },
+  {
+    key: "admin-designations",
+    label: "Designation Master",
+    prefix: "/admin/designations",
+    group: "Administration",
+    description: "Manage the designation list used across employees and training",
     adminOnly: true,
   },
 ];
@@ -188,7 +204,8 @@ export function sanitizePageAccess(keys: unknown, role: string): string[] {
     const key = String(raw || "").trim();
     const page = PAGES_BY_KEY.get(key);
     if (!page || page.alwaysAllowed) continue;
-    if (page.adminOnly && role !== "admin") continue;
+    if (page.superAdminOnly && role !== "admin") continue;
+    if (page.adminOnly && role !== "admin" && role !== "sop_admin") continue;
     seen.add(key);
   }
   return [...seen];

@@ -3229,7 +3229,7 @@ function EmployeeWiseSummaryTable({ rows }: { rows: MonthlyExamRow[] }) {
                 <tr key={empId} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/60'}>
                   <td className="px-3 py-2 text-[10px] font-bold text-gray-500 tabular-nums">{i + 1}</td>
                   <td className="px-3 py-2 font-semibold text-gray-900 whitespace-nowrap">{gRows[0].employeeName}</td>
-                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{gRows[0].designation || '—'}</td>
+                  <td className="px-3 py-2 text-gray-900 whitespace-nowrap">{gRows[0].designation || '—'}</td>
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap" title={gRows[0].department}>{shortDepartmentName(gRows[0].department)}</td>
                   <td className="px-3 py-2 text-center font-bold text-gray-900 tabular-nums">{uniqueSops}</td>
                   <td className="px-3 py-2 text-center font-bold text-emerald-700 tabular-nums">{doneSops}</td>
@@ -3446,7 +3446,7 @@ function ExamTable({
                   )}
                 </td>
               )}
-              {showEmployee && <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{r.designation || '—'}</td>}
+              {showEmployee && <td className="px-3 py-2 text-gray-900 whitespace-nowrap">{r.designation || '—'}</td>}
               {showEmployee && (
                 <td
                   className="px-3 py-2 text-gray-600 whitespace-nowrap"

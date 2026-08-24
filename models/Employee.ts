@@ -3,6 +3,15 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IEmployee extends Document {
   name: string;
   designation: string;
+  /**
+   * The designation held before the most recent change, and when that change
+   * was made. Kept so LMS and admin screens can show a "designation updated"
+   * confirmation without reading the audit log on every render. These describe
+   * the CURRENT record only — historical training, attendance, assessment and
+   * certificate rows keep their own captured designation.
+   */
+  previousDesignation?: string;
+  designationUpdatedAt?: Date;
   /** Home / primary department (always a single value). */
   department: string;
   employeeId?: string;
@@ -30,6 +39,8 @@ const EmployeeSchema = new Schema<IEmployee>(
   {
     name:        { type: String, required: true, trim: true },
     designation: { type: String, required: true, trim: true },
+    previousDesignation: { type: String, trim: true },
+    designationUpdatedAt: { type: Date },
     department:  { type: String, required: true, trim: true, index: true },
     employeeId:  { type: String, trim: true },
     dateOfJoining: { type: Date },
@@ -62,6 +73,12 @@ function getEmployeeModel() {
     if (!existing.schema.path('trainerDepartments')) {
       existing.schema.add({
         trainerDepartments: { type: [String], default: [], index: true },
+      });
+    }
+    if (!existing.schema.path('designationUpdatedAt')) {
+      existing.schema.add({
+        previousDesignation: { type: String, trim: true },
+        designationUpdatedAt: { type: Date },
       });
     }
     return existing;

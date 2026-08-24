@@ -9,7 +9,10 @@
     "stop:compliance": "node scripts/call-compliance-cancel.mjs",
     "build": "node --max-old-space-size=8192 ./node_modules/next/dist/bin/next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed:admin": "node scripts/seed-admin.mjs",
+    "seed:sop-admin": "node scripts/seed-sop-admin.mjs",
+    "seed:designations": "node scripts/seed-designations.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",

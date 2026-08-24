@@ -4,7 +4,9 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 
-type Role = 'admin' | 'user' | 'trainer' | 'qa-head';
+import type { AppRole } from '@/lib/auth';
+
+type Role = AppRole;
 
 interface AuthGuardOptions {
   /** Redirect target when not logged in. Defaults to '/login'. */

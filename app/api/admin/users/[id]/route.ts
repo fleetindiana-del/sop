@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
-import { requireAuth } from "@/lib/withAuth";
+import { requireSuperAdmin } from "@/lib/withAuth";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
 
-const ROLES: AppRole[] = ["admin", "trainer", "viewer"];
+const ROLES: AppRole[] = ["admin", "sop_admin", "trainer", "viewer"];
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -26,7 +26,7 @@ function toPublicUser(user: IUser) {
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const auth = await requireAuth(["admin"]);
+  const auth = await requireSuperAdmin();
   if (auth.error) return auth.error;
 
   try {
@@ -104,7 +104,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 }
 
 export async function DELETE(_request: NextRequest, context: RouteContext) {
-  const auth = await requireAuth(["admin"]);
+  const auth = await requireSuperAdmin();
   if (auth.error) return auth.error;
 
   try {

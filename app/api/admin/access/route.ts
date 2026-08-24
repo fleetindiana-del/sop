@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
-import { requireAuth } from "@/lib/withAuth";
+import { requireSuperAdmin } from "@/lib/withAuth";
 import User from "@/models/User";
 import Department from "@/models/Department";
 import SOP from "@/models/SOP";
@@ -55,7 +55,7 @@ async function listDepartments(): Promise<string[]> {
 
 // GET /api/admin/access — every user plus the page and department catalogues.
 export async function GET() {
-  const auth = await requireAuth(["admin"]);
+  const auth = await requireSuperAdmin();
   if (auth.error) return auth.error;
 
   try {
@@ -81,7 +81,7 @@ export async function GET() {
 
 // PATCH /api/admin/access — update one user's page and department access.
 export async function PATCH(request: NextRequest) {
-  const auth = await requireAuth(["admin"]);
+  const auth = await requireSuperAdmin();
   if (auth.error) return auth.error;
 
   try {

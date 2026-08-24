@@ -127,6 +127,10 @@ export interface EmployeeTrainingRecord {
   employeeId: string;
   employeeName: string;
   designation: string;
+  /** Designation held before the most recent change, if there has been one. */
+  previousDesignation?: string;
+  /** ISO timestamp of the most recent designation change. */
+  designationUpdatedAt?: string;
   department: string;
   isActive: boolean;
   isTrainer: boolean;
@@ -206,12 +210,17 @@ export async function GET(req: NextRequest) {
         if (department) empFilter.department = { $regex: new RegExp(`^${department}$`, 'i') };
 
         const employees = await Employee.find(empFilter)
-          .select('_id name designation department isActive isTrainer trainerDepartments')
+          .select(
+            '_id name designation previousDesignation designationUpdatedAt ' +
+            'department isActive isTrainer trainerDepartments',
+          )
           .sort({ name: 1 })
           .lean<{
             _id: unknown;
             name: string;
             designation: string;
+            previousDesignation?: string;
+            designationUpdatedAt?: Date;
             department: string;
             isActive: boolean;
             isTrainer?: boolean;
@@ -440,6 +449,11 @@ export async function GET(req: NextRequest) {
             employeeId:       id,
             employeeName:     emp.name,
             designation:      emp.designation,
+            // Lets the LMS view confirm a designation change actually landed.
+            previousDesignation: emp.previousDesignation || undefined,
+            designationUpdatedAt: emp.designationUpdatedAt
+              ? new Date(emp.designationUpdatedAt).toISOString()
+              : undefined,
             department:       emp.department,
             isActive:         emp.isActive,
             isTrainer:        Boolean(emp.isTrainer),

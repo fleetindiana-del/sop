@@ -25,6 +25,7 @@ import {
   readLmsClientCache,
   writeLmsClientCache,
 } from '@/lib/lmsCache';
+import { DesignationUpdatedBadge } from '@/components/lms/DesignationUpdatedBadge';
 import { hasGujaratiScript, isInvalidSopAssignmentCode, isPlaceholderSopName } from '@/lib/sop-name-resolution';
 import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
 import type { DashboardStats, RegistrySOP } from '@/lib/types';
@@ -57,6 +58,10 @@ interface EmployeeTrainingRecord {
   employeeId: string;
   employeeName: string;
   designation: string;
+  /** Designation held before the most recent change, if there has been one. */
+  previousDesignation?: string;
+  /** ISO timestamp of the most recent designation change. */
+  designationUpdatedAt?: string;
   department: string;
   isActive: boolean;
   isTrainer?: boolean;
@@ -374,7 +379,14 @@ function SopDrillDownModal({
                 {rows.map((row) => (
                   <tr key={row.emp.employeeId} className="hover:bg-gray-50">
                     <td className="px-4 py-3 font-medium text-gray-900">{row.emp.employeeName}</td>
-                    <td className="px-4 py-3 text-gray-600">{row.emp.designation || '—'}</td>
+                    <td className="px-4 py-3 text-gray-900">
+                      {row.emp.designation || '—'}
+                      <DesignationUpdatedBadge
+                        designation={row.emp.designation}
+                        previousDesignation={row.emp.previousDesignation}
+                        designationUpdatedAt={row.emp.designationUpdatedAt}
+                      />
+                    </td>
                     <td className="px-4 py-3 text-gray-600">{row.emp.department || '—'}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${SOP_STATUS_META[row.hit.status].chip}`}>
@@ -489,6 +501,8 @@ export default function EmployeeTrainingDashboardPage() {
         employeeId:       r.employeeId,
         employeeName:     r.employeeName,
         designation:      r.designation,
+        previousDesignation:  r.previousDesignation,
+        designationUpdatedAt: r.designationUpdatedAt,
         department:       r.department,
         isActive:         r.isActive,
         totalSops:        r.totalSops,

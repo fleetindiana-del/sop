@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import type { AppRole } from "@/lib/auth";
+import { isAdmin } from "@/lib/roles";
 
 /** Roles that only see assigned-department data (not the full admin dashboard). */
 export function isDeptScopedRole(role: AppRole): boolean {
   return role === "trainer" || role === "viewer";
 }
 
+/** Super Admin and SOP Admin both get the unscoped dashboard. */
 export function hasFullDashboardAccess(role: AppRole): boolean {
-  return role === "admin";
+  return isAdmin(role);
 }
 
 /**
@@ -31,7 +33,7 @@ export function canAccessDepartment(
   userDepartment: string | undefined | null,
   targetDepartment: string | undefined | null,
 ): boolean {
-  if (role === "admin") return true;
+  if (isAdmin(role)) return true;
   if (!targetDepartment?.trim()) return false;
   const assigned = parseAssignedDepartments(userDepartment);
   if (!assigned.length) return false;
@@ -43,7 +45,7 @@ export function filterByAssignedDepartments<T extends { department?: string | nu
   userDepartment: string | undefined | null,
   items: T[],
 ): T[] {
-  if (role === "admin") return items;
+  if (isAdmin(role)) return items;
   const assigned = parseAssignedDepartments(userDepartment);
   if (!assigned.length) return [];
   return items.filter(

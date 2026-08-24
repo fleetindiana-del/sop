@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { connectDB } from "@/lib/mongodb";
-import { requireAuth } from "@/lib/withAuth";
+import { requireSuperAdmin } from "@/lib/withAuth";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
 
-const ROLES: AppRole[] = ["admin", "trainer", "viewer"];
+const ROLES: AppRole[] = ["admin", "sop_admin", "trainer", "viewer"];
 
 function toPublicUser(user: IUser) {
   return {
@@ -23,7 +23,7 @@ function toPublicUser(user: IUser) {
 }
 
 export async function GET() {
-  const auth = await requireAuth(["admin"]);
+  const auth = await requireSuperAdmin();
   if (auth.error) return auth.error;
 
   try {
@@ -57,7 +57,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth(["admin"]);
+  const auth = await requireSuperAdmin();
   if (auth.error) return auth.error;
 
   try {

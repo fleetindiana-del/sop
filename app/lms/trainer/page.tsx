@@ -534,7 +534,7 @@ export default function LmsTrainerPage() {
                                 onClick={() => setExpandedEmp(open ? null : emp.employeeId)}
                               >
                                 <td className="px-3 py-2.5 font-semibold text-gray-900">{emp.employeeName}</td>
-                                <td className="px-3 py-2.5 text-gray-600">{emp.designation || '—'}</td>
+                                <td className="px-3 py-2.5 text-gray-900">{emp.designation || '—'}</td>
                                 <td className="px-3 py-2.5 text-gray-600">{emp.department}</td>
                                 <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-gray-800">{emp.totalSops}</td>
                                 <td className="px-3 py-2.5 text-right tabular-nums">
