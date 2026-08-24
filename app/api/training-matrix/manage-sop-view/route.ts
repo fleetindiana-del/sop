@@ -827,6 +827,14 @@ async function buildManageSopViewResponse(
       return [
         ...new Set(
           assigns
+            // The blue employee checkbox is a per-person Training Matrix
+            // assignment and nothing else. The shared LMS map also carries
+            // induction SOPs and two synthesized kinds — a trainer's blanket
+            // department coverage and standalone trainer-scheduled exams.
+            // Those are not individual matrix assignments: un-ticking one here
+            // deletes no matrix record, so it would reappear checked on the
+            // next load and the save after that would report "no changes".
+            .filter((a) => a.trainingType === "training" && !a.derivedFrom)
             .map((a) => stripVersion(a.sopCode))
             .filter(Boolean),
         ),

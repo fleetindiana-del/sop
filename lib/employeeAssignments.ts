@@ -68,6 +68,15 @@ export interface EmployeeSopAssignment {
   scheduledByTrainer?: boolean;
   /** Name of the trainer who scheduled it (only with `scheduledByTrainer`). */
   scheduledBy?: string;
+  /**
+   * Set when the assignment was synthesized rather than read from the training
+   * matrix: blanket coverage a trainer gets for their department, or a
+   * standalone trainer-scheduled exam for a SOP the employee is not on the
+   * matrix for. Absent on a real matrix assignment, even when a trainer later
+   * retargets its month. Manage SOP's per-employee Training Check filters these
+   * out — they are not individual matrix assignments and cannot be un-ticked there.
+   */
+  derivedFrom?: 'trainer-coverage' | 'trainer-schedule';
 }
 
 function empKey(department: string, name: string): string {
@@ -658,6 +667,7 @@ async function computeEmployeeAssignmentsMap(
           year: deptSnap.year,
           trainingType: 'training',
           sopDepartment: dept,
+          derivedFrom: 'trainer-coverage',
         };
         enrichAssignment(assignment, dept, lookup);
         existing.push(assignment);
@@ -753,6 +763,7 @@ async function mergeTrainerScheduledExams(
       examDate,
       scheduledByTrainer: true,
       scheduledBy: s.trainerName,
+      derivedFrom: 'trainer-schedule',
     };
     enrichAssignment(assignment, department, lookup);
     list.push(assignment);

@@ -190,7 +190,7 @@ interface ManageSOPViewResponse {
   year: number | 'all';
 }
 
-const MANAGE_SOP_VIEW_LOCAL_CACHE_KEY = 'manage_sop_view_cache_v10';
+const MANAGE_SOP_VIEW_LOCAL_CACHE_KEY = 'manage_sop_view_cache_v12';
 const TRAINING_MATRIX_OVERVIEW_CACHE_KEY = 'training_matrix_overview_cache_v6';
 const TRAINING_MATRIX_NEEDS_REFRESH_KEY = 'training_matrix_needs_refresh_v1';
 const EMPLOYEE_DISPLAY_COLUMNS = 3;
@@ -3680,12 +3680,8 @@ const SopRow = memo(function SopRow({
                 (deptStat?.designations || []).some(d => d.designation === fullName && (d.count || 0) > 0) ||
                 manualDesigList.some(d => d === fullName);
               const trainingChecked = key in sopOverrides ? sopOverrides[key] : fallback;
-              // Pending (unsaved) designation tick, when the user has touched it.
-              // The employee view needs to tell "the user just ticked this
-              // designation" apart from "this designation is assigned on record".
-              const pendingTrainingChecked = key in sopOverrides ? !!sopOverrides[key] : undefined;
               const inductionChecked = !!sopInductionOverrides[key];
-              return { fullName, abbr: desigAbbr(fullName), isNative, trainingChecked, pendingTrainingChecked, inductionChecked };
+              return { fullName, abbr: desigAbbr(fullName), isNative, trainingChecked, inductionChecked };
             });
 
             const trainCheckedCount = desigStates.filter(s => s.trainingChecked).length;
@@ -3769,7 +3765,6 @@ const SopRow = memo(function SopRow({
                             norm(s.fullName),
                             {
                               trainingChecked: s.trainingChecked,
-                              pendingTrainingChecked: s.pendingTrainingChecked,
                               inductionChecked: s.inductionChecked,
                               fullName: s.fullName,
                             },
@@ -3820,13 +3815,10 @@ const SopRow = memo(function SopRow({
                                   const assignedToSop = (emp.assignedSopCodes || []).some(
                                     (c) => sopCacheKey(c) === thisSopKey,
                                   );
-                                  // Baseline tick is per person: whether THEY are
-                                  // assigned this SOP. A pending designation tick
-                                  // still sweeps the whole designation, but a saved
-                                  // one must not re-tick someone removed by name.
-                                  const persistedChecked = matched?.pendingTrainingChecked !== undefined
-                                    ? matched.pendingTrainingChecked
-                                    : assignedToSop;
+                                  // Employee mode is strictly per person. A
+                                  // designation checkbox must never make every
+                                  // same-designation employee look assigned.
+                                  const persistedChecked = assignedToSop;
                                   const empOverrideKey = empOverrideKeyHelper(dept, emp.name);
                                   // A pending per-person tick always wins, so
                                   // un-ticking an individually assigned employee
