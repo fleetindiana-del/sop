@@ -233,11 +233,15 @@ export default function DesignationMasterPage() {
         setFormError(json.error || 'Failed to load employees');
         return;
       }
-      setEmployeeCandidates(
-        (json.employees || []).filter(
-          (employee: DesignationEmployee) =>
-            (employee.designation || '').toLowerCase() !== d.name.toLowerCase(),
-        ),
+      const employees = (json.employees || []) as DesignationEmployee[];
+      setEmployeeCandidates(employees);
+      setSelectedEmployeeIds(
+        employees
+          .filter(
+            (employee) =>
+              (employee.designation || '').trim().toLowerCase() === d.name.trim().toLowerCase(),
+          )
+          .map((employee) => employee.id),
       );
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Failed to load employees');
@@ -275,7 +279,7 @@ export default function DesignationMasterPage() {
                 id: editing.id,
                 name,
                 description: formDescription.trim(),
-                assignedEmployeeIds: selectedEmployeeIds,
+                selectedEmployeeIds,
               }
             : { name, description: formDescription.trim() },
         ),
@@ -286,12 +290,14 @@ export default function DesignationMasterPage() {
         return;
       }
       setShowForm(false);
-      if (json.employeesUpdated || json.employeesAssigned) bustEmployeeClientCaches();
+      if (json.employeesUpdated || json.employeesAssigned || json.employeesUnassigned) {
+        bustEmployeeClientCaches();
+      }
       setNotice(
         editing
           ? `Designation updated${
               json.employeesUpdated ? ` — ${json.employeesUpdated} employee record(s) re-pointed` : ''
-            }${json.employeesAssigned ? ` — ${json.employeesAssigned} employee(s) added` : ''}.`
+            }${json.employeesAssigned ? ` — ${json.employeesAssigned} employee(s) added` : ''}${json.employeesUnassigned ? ` — ${json.employeesUnassigned} employee(s) removed` : ''}.`
           : `Designation "${name}" created.`,
       );
       await Promise.all([load(), loadAudit()]);
@@ -629,7 +635,7 @@ export default function DesignationMasterPage() {
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <label className="block text-xs font-medium text-gray-900">
-                      Add employees to this designation
+                      Employees assigned to this designation
                     </label>
                     {selectedEmployeeIds.length > 0 && (
                       <span className="text-xs font-semibold text-violet-700">
@@ -650,11 +656,14 @@ export default function DesignationMasterPage() {
                       </div>
                     ) : visibleEmployeeCandidates.length === 0 ? (
                       <p className="px-3 py-6 text-center text-xs text-gray-600">
-                        No other active employees found.
+                        No active employees found.
                       </p>
                     ) : (
                       visibleEmployeeCandidates.map((employee) => {
                         const checked = selectedEmployeeIds.includes(employee.id);
+                        const alreadyAssigned =
+                          (employee.designation || '').trim().toLowerCase() ===
+                          editing.name.trim().toLowerCase();
                         return (
                           <label
                             key={employee.id}
@@ -676,6 +685,16 @@ export default function DesignationMasterPage() {
                               <span className="block truncate text-sm font-medium text-gray-900">
                                 {employee.name}
                                 {employee.employeeCode ? ` (${employee.employeeCode})` : ''}
+                                {alreadyAssigned && checked && (
+                                  <span className="ml-1.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700">
+                                    Current
+                                  </span>
+                                )}
+                                {alreadyAssigned && !checked && (
+                                  <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800">
+                                    Will be removed
+                                  </span>
+                                )}
                               </span>
                               <span className="block truncate text-xs text-gray-600">
                                 {employee.designation || 'Unassigned'} · {employee.department || '—'}
@@ -687,7 +706,7 @@ export default function DesignationMasterPage() {
                     )}
                   </div>
                   <p className="mt-1 text-[11px] text-gray-600">
-                    Saving changes their current designation in Employee Master and LMS. Historical training records remain unchanged.
+                    Checked employees will hold this designation. Unchecked current employees become Unassigned in Employee Master and LMS. Historical training records remain unchanged.
                   </p>
                 </div>
               )}

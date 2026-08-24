@@ -14,6 +14,7 @@ import {
   ArrowLeft, Plus, Search, Pencil, Trash2, X, Check,
   UserRound, RefreshCw, AlertTriangle, GraduationCap, KeyRound, Copy,
   UserX, UserCheck, Loader2, CalendarDays, ShieldCheck, Award,
+  BadgeCheck,
 } from 'lucide-react';
 import {
   isWithinInductionWindow,
@@ -821,6 +822,12 @@ export default function EmployeesPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Link
+              href="/admin/designations"
+              className="flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100"
+            >
+              <BadgeCheck className="h-3.5 w-3.5" /> Designation Master
+            </Link>
             <button suppressHydrationWarning onClick={load} disabled={loading} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">
               <RefreshCw className={`h-3.5 w-3.5 ${loading || trainingLoading ? 'animate-spin' : ''}`} />
             </button>

@@ -180,8 +180,11 @@ export async function PATCH(request: NextRequest) {
     const nextDescription =
       body.description !== undefined ? String(body.description).trim() : previous.description;
     const nextIsActive = body.isActive !== undefined ? body.isActive === true : previous.isActive;
-    const assignedEmployeeIds: string[] = Array.isArray(body.assignedEmployeeIds)
-      ? [...new Set<string>(body.assignedEmployeeIds.map((value: unknown) => String(value).trim()).filter(Boolean))]
+    const hasCompleteSelection = Array.isArray(body.selectedEmployeeIds);
+    const assignedEmployeeIds: string[] = hasCompleteSelection
+      ? [...new Set<string>(body.selectedEmployeeIds.map((value: unknown) => String(value).trim()).filter(Boolean))]
+      : Array.isArray(body.assignedEmployeeIds)
+        ? [...new Set<string>(body.assignedEmployeeIds.map((value: unknown) => String(value).trim()).filter(Boolean))]
       : [];
     const assignedEmployeeObjectIds = assignedEmployeeIds
       .filter((id) => Types.ObjectId.isValid(id))
@@ -210,7 +213,7 @@ export async function PATCH(request: NextRequest) {
     if (nextDescription !== previous.description) fieldsChanged.push("description");
     if (nextIsActive !== previous.isActive) fieldsChanged.push("isActive");
 
-    if (fieldsChanged.length === 0 && assignedEmployeeIds.length === 0) {
+    if (fieldsChanged.length === 0 && assignedEmployeeIds.length === 0 && !hasCompleteSelection) {
       return NextResponse.json({ designation: { id, ...previous }, changed: false });
     }
 
@@ -301,6 +304,52 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
+    let employeesUnassigned = 0;
+    if (hasCompleteSelection) {
+      const now = new Date();
+      const selectedIdStrings = new Set(assignedEmployeeObjectIds.map(String));
+      const currentHolders = await Employee.find({
+        isActive: true,
+        ...employeeNameFilter(nextName),
+      })
+        .select("_id name department designation")
+        .lean<Array<{ _id: Types.ObjectId; name: string; department: string; designation: string }>>();
+      const removed = currentHolders.filter((employee) => !selectedIdStrings.has(String(employee._id)));
+
+      if (removed.length > 0) {
+        const removedIds = removed.map((employee) => employee._id);
+        const result = await Employee.updateMany(
+          { _id: { $in: removedIds } },
+          {
+            $set: {
+              designation: "Unassigned",
+              previousDesignation: nextName,
+              designationUpdatedAt: now,
+            },
+          },
+        );
+        employeesUnassigned = result.modifiedCount || 0;
+        await TrainerEmployee.updateMany(
+          { employeeId: { $in: removedIds.map(String) } },
+          { $set: { designation: "Unassigned" } },
+        );
+        await logAuditEvent({
+          actor: actorFromSession(auth.session, request),
+          entityType: "employee",
+          entityId: `designation:${existing._id}:removals`,
+          entityLabel: nextName,
+          action: "updated",
+          fieldsChanged: ["designation"],
+          previousValues: { designation: nextName },
+          updatedValues: {
+            designation: "Unassigned",
+            employees: removed.map((employee) => ({ id: String(employee._id), name: employee.name })),
+          },
+          summary: `Removed ${employeesUnassigned} employee(s) from ${nextName}`,
+        });
+      }
+    }
+
     if (fieldsChanged.length > 0) {
       await logAuditEvent({
         actor: actorFromSession(auth.session, request),
@@ -330,6 +379,7 @@ export async function PATCH(request: NextRequest) {
       },
       employeesUpdated,
       employeesAssigned,
+      employeesUnassigned,
       changed: true,
     });
   } catch (error) {

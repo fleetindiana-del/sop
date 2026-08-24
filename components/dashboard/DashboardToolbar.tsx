@@ -303,6 +303,15 @@ export function DashboardToolbar({
           <GraduationCap className="h-3 w-3" /> LMS
         </Btn>
 
+        {/* Designation Master — primary dashboard navigation, beside LMS. */}
+        <Btn
+          size="sm"
+          className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+          onClick={() => router.push("/admin/designations")}
+        >
+          <BadgeCheck className="h-3 w-3" /> Designation Master
+        </Btn>
+
         {onOpenAuditLogs && (
           <Btn
             size="sm"
@@ -375,11 +384,6 @@ export function DashboardToolbar({
                     />
                   </>
                 )}
-                <DropdownItem
-                  icon={<BadgeCheck className="h-3.5 w-3.5 text-violet-600" />}
-                  label="Designation Master"
-                  onClick={() => router.push("/admin/designations")}
-                />
                 <DropdownItem
                   icon={<Cloud className="h-3.5 w-3.5 text-orange-500" />}
                   label="Bunny Files"
