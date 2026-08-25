@@ -18,8 +18,8 @@ export interface AppPage {
   /** Super Admin + SOP Admin only — cannot be granted to trainer/viewer. */
   adminOnly?: boolean;
   /**
-   * Super Admin only. Creating logins and resetting passwords is deliberately
-   * out of reach of SOP Admin, so a SOP Admin cannot mint itself a Super Admin.
+   * The `admin` role alone — SOP Admin cannot reach it, however its allowlist
+   * is configured. No page carries this today.
    */
   superAdminOnly?: boolean;
   /**
@@ -150,7 +150,6 @@ export const APP_PAGES: AppPage[] = [
     group: "Administration",
     description: "Create logins and reset passwords",
     adminOnly: true,
-    superAdminOnly: true,
     neverRestricted: true,
   },
   {

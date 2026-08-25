@@ -39,8 +39,6 @@ interface DashboardToolbarProps {
   onExport: () => void;
   canMutate: boolean;
   isAdmin: boolean;
-  /** Super Admin only — gates the user-administration entries. */
-  isSuperAdmin?: boolean;
   onOpenGuidelinesWizard?: () => void;
   onFilesImportComplete?: () => void;
   onOpenAuditLogs?: () => void;
@@ -52,7 +50,6 @@ export function DashboardToolbar({
   onHardRefresh,
   canMutate,
   isAdmin,
-  isSuperAdmin = false,
   onOpenGuidelinesWizard,
   onFilesImportComplete,
   onOpenAuditLogs,
@@ -351,22 +348,16 @@ export function DashboardToolbar({
             {/* Admin-only tools */}
             {isAdmin && (
               <>
-                {/* User administration is Super Admin only — SOP Admin would
-                    be redirected by middleware, so don't offer the link. */}
-                {isSuperAdmin && (
-                  <>
-                    <DropdownItem
-                      icon={<UserCog className="h-3.5 w-3.5 text-violet-600" />}
-                      label="Login & Passwords"
-                      onClick={() => router.push("/admin/users")}
-                    />
-                    <DropdownItem
-                      icon={<ShieldCheck className="h-3.5 w-3.5 text-violet-600" />}
-                      label="Access Management"
-                      onClick={() => router.push("/admin/access")}
-                    />
-                  </>
-                )}
+                <DropdownItem
+                  icon={<UserCog className="h-3.5 w-3.5 text-violet-600" />}
+                  label="Login & Passwords"
+                  onClick={() => router.push("/admin/users")}
+                />
+                <DropdownItem
+                  icon={<ShieldCheck className="h-3.5 w-3.5 text-violet-600" />}
+                  label="Access Management"
+                  onClick={() => router.push("/admin/access")}
+                />
                 <DropdownItem
                   icon={<Cloud className="h-3.5 w-3.5 text-orange-500" />}
                   label="Bunny Files"

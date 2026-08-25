@@ -53,8 +53,8 @@ export function canAccessPageKey(
   pageAccess: string[] | null | undefined,
   page: AppPage,
 ): boolean {
-  // Checked before the admin branch so SOP Admin cannot reach the pages that
-  // mint logins and reset passwords.
+  // Reserved for pages that must stay with the `admin` role alone; no page
+  // carries the flag today.
   if (page.superAdminOnly) return role === "admin";
   if (role === "admin" || role === "sop_admin") {
     // Access Management itself can never be taken away, or a bad save would be

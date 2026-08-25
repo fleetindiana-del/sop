@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
-import { requireSuperAdmin } from "@/lib/withAuth";
+import { requireAuth } from "@/lib/withAuth";
 import { syncEmployeeTrainerFlag } from "@/lib/userTrainerSync";
 import { resolveLmsEmployeeLink } from "@/lib/userEmployeeLink";
 import { isSharedLmsLogin, syncLmsPasswordFromUser } from "@/lib/lmsSharedLogin";
@@ -33,7 +33,7 @@ function toPublicUser(user: IUser) {
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const auth = await requireSuperAdmin();
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {
@@ -143,7 +143,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 }
 
 export async function DELETE(_request: NextRequest, context: RouteContext) {
-  const auth = await requireSuperAdmin();
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {

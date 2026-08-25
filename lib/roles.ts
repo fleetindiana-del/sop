@@ -5,16 +5,16 @@ import type { AppRole } from "@/lib/auth";
  *
  * - `admin`     — Super Admin. Everything, including user administration
  *                 (Login & Passwords, Access Management).
- * - `sop_admin` — SOP Admin. Everything a Super Admin can do EXCEPT user
- *                 administration. Manages SOPs, employees and the Designation
- *                 Master.
+ * - `sop_admin` — SOP Admin. The same administrative capability as a Super
+ *                 Admin, user administration included, plus SOPs, employees
+ *                 and the Designation Master.
  * - `trainer` / `viewer` — department-scoped read/training roles.
  *
- * Use `isSuperAdmin` for anything that grants or revokes access to the system
- * itself; use `isAdminRole` for ordinary administrative capability.
+ * Use `isAdmin` for administrative capability; the two admin roles differ only
+ * as a label today.
  */
 
-/** Super Admin only — user administration and permission granting. */
+/** The `admin` role specifically — kept for labelling, not for gating. */
 export function isSuperAdmin(role: AppRole) {
   return role === "admin";
 }

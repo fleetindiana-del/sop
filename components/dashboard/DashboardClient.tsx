@@ -20,7 +20,7 @@ import {
 } from "@/lib/sop-utils";
 import { exportSopsToExcel } from "@/lib/export-missing";
 import { displaySopCode } from "@/lib/sop-display";
-import { canMutate, hasFullDashboardAccess, isAdmin, isSuperAdmin } from "@/lib/roles";
+import { canMutate, hasFullDashboardAccess, isAdmin } from "@/lib/roles";
 import type { AppRole } from "@/lib/auth";
 import { DashboardHeader } from "./DashboardHeader";
 import { DashboardToolbar } from "./DashboardToolbar";
@@ -49,8 +49,6 @@ export function DashboardClient() {
   const role = (session?.user?.role ?? "viewer") as AppRole;
   const userCanMutate = canMutate(role);
   const userIsAdmin = isAdmin(role);
-  // SOP Admin sees the admin tools but not user administration.
-  const userIsSuperAdmin = isSuperAdmin(role);
   const fullDashboard = hasFullDashboardAccess(role);
   const cacheScope = `${role}:${session?.user?.department ?? ""}`;
   const scopedSopCacheKey = `${DASHBOARD_CACHE_KEY}:${cacheScope}`;
@@ -558,7 +556,6 @@ export function DashboardClient() {
         onExport={handleExport}
         canMutate={userCanMutate}
         isAdmin={userIsAdmin}
-        isSuperAdmin={userIsSuperAdmin}
         onFilesImportComplete={refresh}
         onOpenGuidelinesWizard={
           fullDashboard

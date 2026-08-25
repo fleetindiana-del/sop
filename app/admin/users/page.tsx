@@ -61,8 +61,8 @@ interface EmployeeOption {
 
 const ROLES: AppRole[] = ['admin', 'sop_admin', 'trainer', 'viewer'];
 
-// Super Admin and SOP Admin differ only in user administration: SOP Admin
-// cannot reach Login & Passwords or Access Management.
+// Super Admin and SOP Admin carry the same capability, including this page;
+// the two labels only distinguish who the login belongs to.
 const ROLE_LABEL: Record<AppRole, string> = {
   admin: 'Super Admin',
   sop_admin: 'SOP Admin',
@@ -220,7 +220,7 @@ function lmsPasswordNote(
 }
 
 export default function AdminUsersPage() {
-  useAuthGuard({ allowedRoles: ['admin'] });
+  useAuthGuard({ allowedRoles: ['admin', 'sop_admin'] });
   const { data: session } = useSession();
   const currentUserId = session?.user?.id;
 
