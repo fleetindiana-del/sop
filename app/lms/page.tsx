@@ -11,6 +11,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import Link from 'next/link';
+import { signOut } from 'next-auth/react';
 import {
   clearLmsClientCache,
   lmsClientFields,
@@ -74,6 +75,9 @@ interface Employee {
   isTrainer?: boolean;
   trainerDepartments?: string[];
 }
+
+/** Which login backs the current LMS session — see `lib/lmsIdentity.ts`. */
+type AuthSource = 'lms' | 'app';
 
 interface CertRecord {
   _id: string;
@@ -1278,7 +1282,18 @@ function ContinueLearning({
 
 // ─── Login card ───────────────────────────────────────────────────────────────
 
-function LoginCard({ onLogin }: { onLogin: (emp: Employee) => void }) {
+function LoginCard({
+  notice,
+  onLogin,
+}: {
+  /**
+   * Why the portal could not sign this visitor in automatically — set when a
+   * user is signed in to the main app but their login is not linked to an
+   * employee record.
+   */
+  notice?: string;
+  onLogin: (emp: Employee) => void;
+}) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading,  setLoading]  = useState(false);
@@ -1328,6 +1343,12 @@ function LoginCard({ onLogin }: { onLogin: (emp: Employee) => void }) {
           </div>
         </div>
 
+        {notice && !error && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {notice}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -1371,7 +1392,16 @@ function LoginCard({ onLogin }: { onLogin: (emp: Employee) => void }) {
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
-function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () => void }) {
+function Dashboard({
+  employee,
+  authSource,
+  onLogout,
+}: {
+  employee: Employee;
+  /** Which login this session came from — 'app' means the main dashboard login. */
+  authSource: AuthSource;
+  onLogout: () => void;
+}) {
   const router = useRouter();
   const [assignments, setAssignments] = useState<SopAssignment[]>([]);
   const [progressMap, setProgressMap] = useState<Map<string, ProgressRecord>>(new Map());
@@ -1436,6 +1466,12 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
   const handleSignOut = async () => {
     await fetch('/api/lms/auth/logout', { method: 'POST' });
     clearLmsClientCache();
+    if (authSource === 'app') {
+      // Signed in through the main application login — clearing only the LMS
+      // cookie would let the next request sign them straight back in.
+      await signOut({ callbackUrl: '/login' });
+      return;
+    }
     onLogout();
   };
 
@@ -2001,6 +2037,8 @@ function Dashboard({ employee, onLogout }: { employee: Employee; onLogout: () =>
 
 export default function LmsPage() {
   const [employee, setEmployee] = useState<Employee | null>(null);
+  const [authSource, setAuthSource] = useState<AuthSource>('lms');
+  const [loginNotice, setLoginNotice] = useState('');
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
@@ -2013,14 +2051,29 @@ export default function LmsPage() {
     // Always revalidate — login used to omit isTrainer, so a "fresh" cache can
     // hide Trainer View until /me runs.
     fetch('/api/lms/auth/me')
-      .then((r) => r.json())
-      .then((d) => {
+      .then(async (r) => {
+        if (r.status === 401 || r.status === 403) {
+          // The session is gone. Without this the cached employee keeps the
+          // dashboard on screen while every LMS call 401s ("Not authenticated").
+          clearLmsClientCache();
+          setEmployee(null);
+          const body = await r.json().catch(() => ({}));
+          // A signed-in app user whose login is not linked to an employee needs
+          // an administrator, so show the reason instead of a bare login form.
+          if (body.problem && body.problem !== 'no-session') {
+            setLoginNotice(String(body.error || ''));
+          }
+          return;
+        }
+        if (!r.ok) return;
+        const d = await r.json();
         if (d.employee) {
           setEmployee(d.employee);
+          setAuthSource(d.authSource === 'app' ? 'app' : 'lms');
           writeLmsClientCache(lmsClientFields.employee, { employee: d.employee });
         }
       })
-      .catch(() => { /* not logged in */ })
+      .catch(() => { /* offline — keep whatever the cache had */ })
       .finally(() => setChecking(false));
   }, []);
 
@@ -2033,8 +2086,14 @@ export default function LmsPage() {
   }
 
   if (!employee) {
-    return <LoginCard onLogin={setEmployee} />;
+    return <LoginCard notice={loginNotice} onLogin={setEmployee} />;
   }
 
-  return <Dashboard employee={employee} onLogout={() => setEmployee(null)} />;
+  return (
+    <Dashboard
+      employee={employee}
+      authSource={authSource}
+      onLogout={() => setEmployee(null)}
+    />
+  );
 }

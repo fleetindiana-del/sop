@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { connectDB } from "@/lib/mongodb";
 import { requireSuperAdmin } from "@/lib/withAuth";
+import { syncEmployeeTrainerFlag } from "@/lib/userTrainerSync";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
 
@@ -16,6 +17,7 @@ function toPublicUser(user: IUser) {
     role: user.role,
     department: user.department ?? "",
     designation: user.designation ?? "",
+    isTrainer: user.isTrainer === true,
     pageAccess: Array.isArray(user.pageAccess) ? user.pageAccess : null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -43,6 +45,7 @@ export async function GET() {
         role: u.role,
         department: u.department ?? "",
         designation: u.designation ?? "",
+        isTrainer: u.isTrainer === true,
         pageAccess: Array.isArray(u.pageAccess) ? u.pageAccess : null,
         createdAt: u.createdAt,
         updatedAt: u.updatedAt,
@@ -70,6 +73,7 @@ export async function POST(request: NextRequest) {
     const email = String(body.email || "").trim().toLowerCase() || undefined;
     const department = String(body.department || "").trim() || undefined;
     const designation = String(body.designation || "").trim() || undefined;
+    const isTrainer = body.isTrainer === true;
 
     if (!username || !name) {
       return NextResponse.json({ error: "Username and name are required" }, { status: 400 });
@@ -95,9 +99,18 @@ export async function POST(request: NextRequest) {
       email,
       department,
       designation,
+      isTrainer,
     });
 
-    return NextResponse.json({ success: true, user: toPublicUser(user) }, { status: 201 });
+    // Trainer access is read from the Employee record, so mirror it there. Only
+    // when granting: a new login created with the box unticked must not demote
+    // an existing trainer who merely shares the name.
+    const sync = isTrainer ? await syncEmployeeTrainerFlag(user, true) : undefined;
+
+    return NextResponse.json(
+      { success: true, user: toPublicUser(user), trainerSync: sync },
+      { status: 201 },
+    );
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to create user" },

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
-import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
+import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import {
   getOrBuildLmsCache,
   invalidateLmsLearnerCache,
@@ -51,8 +50,7 @@ function recalcOverall(steps: Record<string, unknown>, availableSteps: string[])
 
 // GET /api/lms/progress/[sopCode]
 export async function GET(_req: NextRequest, { params }: Params) {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const { sopCode } = await params;
@@ -84,8 +82,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 //   { step: 'quiz', completed: true, passed: true, score: 80, attempts: 1 }
 //   { availableSteps: ['videoEn', 'slidesEn', 'sopPdf'] }  — first-time init
 export async function PATCH(req: NextRequest, { params }: Params) {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const { sopCode } = await params;

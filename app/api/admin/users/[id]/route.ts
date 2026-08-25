@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import { requireSuperAdmin } from "@/lib/withAuth";
+import { syncEmployeeTrainerFlag } from "@/lib/userTrainerSync";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
 
@@ -19,6 +20,7 @@ function toPublicUser(user: IUser) {
     role: user.role,
     department: user.department ?? "",
     designation: user.designation ?? "",
+    isTrainer: user.isTrainer === true,
     pageAccess: Array.isArray(user.pageAccess) ? user.pageAccess : null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -53,6 +55,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
     if (body.designation !== undefined) {
       user.designation = String(body.designation || "").trim() || undefined;
+    }
+    if (body.isTrainer !== undefined) {
+      user.isTrainer = body.isTrainer === true;
     }
     if (body.role !== undefined) {
       const role = String(body.role || "").trim().toLowerCase() as AppRole;
@@ -94,7 +99,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     await user.save();
-    return NextResponse.json({ success: true, user: toPublicUser(user) });
+
+    // Trainer access is read from the Employee record, so mirror it there.
+    const trainerSync =
+      body.isTrainer !== undefined
+        ? await syncEmployeeTrainerFlag(user, user.isTrainer === true)
+        : undefined;
+
+    return NextResponse.json({ success: true, user: toPublicUser(user), trainerSync });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to update user" },

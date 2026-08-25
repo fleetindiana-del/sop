@@ -9,6 +9,12 @@ export interface IUser extends Document {
   department?: string;
   designation?: string;
   /**
+   * Marks this login as a trainer. Mirrored onto the matching Employee record
+   * (see `lib/userTrainerSync.ts`) because LMS trainer access reads
+   * `Employee.isTrainer`.
+   */
+  isTrainer?: boolean;
+  /**
    * Allowlist of page keys from `lib/page-registry.ts`.
    * Undefined = never configured, so legacy role defaults apply.
    */
@@ -26,6 +32,7 @@ const UserSchema = new Schema<IUser>(
     role: { type: String, enum: ["admin", "sop_admin", "trainer", "viewer"], default: "viewer" },
     department: { type: String, trim: true },
     designation: { type: String, trim: true },
+    isTrainer: { type: Boolean, default: false },
     pageAccess: { type: [String], default: undefined },
   },
   { timestamps: true },

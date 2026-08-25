@@ -14,6 +14,7 @@ import {
   Shield,
   ShieldCheck,
   Trash2,
+  UserCheck,
   UserPlus,
   Users,
   X,
@@ -29,8 +30,14 @@ interface AppUser {
   role: AppRole;
   department: string;
   designation: string;
+  isTrainer?: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+interface DesignationOption {
+  id: string;
+  name: string;
 }
 
 const ROLES: AppRole[] = ['admin', 'sop_admin', 'trainer', 'viewer'];
@@ -59,9 +66,27 @@ const emptyForm = {
   role: 'viewer' as AppRole,
   department: 'QA',
   designation: '',
+  isTrainer: false,
   password: '',
   confirmPassword: '',
 };
+
+/**
+ * The Trainer flag only grants LMS trainer access once it reaches the matching
+ * Employee record, so say plainly when no employee matched the login.
+ */
+function trainerSyncNote(
+  sync: { matched?: boolean; employeeName?: string } | undefined,
+  isTrainer: boolean,
+): string {
+  if (!sync) return '';
+  if (sync.matched) {
+    return ` · Trainer ${isTrainer ? 'enabled' : 'removed'} on employee ${sync.employeeName}`;
+  }
+  return isTrainer
+    ? ' · No matching employee record found, so LMS trainer access is not active yet'
+    : '';
+}
 
 export default function AdminUsersPage() {
   useAuthGuard({ allowedRoles: ['admin'] });
@@ -69,6 +94,7 @@ export default function AdminUsersPage() {
   const currentUserId = session?.user?.id;
 
   const [users, setUsers] = useState<AppUser[]>([]);
+  const [designations, setDesignations] = useState<DesignationOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -97,6 +123,30 @@ export default function AdminUsersPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Designation Master drives the dropdown, so titles stay consistent with the
+  // Employee Master instead of being free text.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/designations');
+        const json = await res.json();
+        if (cancelled || !res.ok || !Array.isArray(json.designations)) return;
+        setDesignations(
+          json.designations
+            .map((d: { id: string; name: string }) => ({
+              id: String(d.id),
+              name: String(d.name || '').trim(),
+            }))
+            .filter((d: DesignationOption) => d.name),
+        );
+      } catch {
+        /* dropdown falls back to the value already on the user */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -127,6 +177,7 @@ export default function AdminUsersPage() {
       role: user.role,
       department: user.department || 'QA',
       designation: user.designation,
+      isTrainer: user.isTrainer === true,
       password: '',
       confirmPassword: '',
     });
@@ -162,12 +213,13 @@ export default function AdminUsersPage() {
 
     try {
       if (editing) {
-        const payload: Record<string, string> = {
+        const payload: Record<string, string | boolean> = {
           name: form.name.trim(),
           email: form.email.trim(),
           role: form.role,
           department: form.department,
           designation: form.designation.trim(),
+          isTrainer: form.isTrainer,
         };
         if (form.password) payload.password = form.password;
 
@@ -179,7 +231,10 @@ export default function AdminUsersPage() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Update failed');
         setUsers((prev) => prev.map((u) => (u.id === editing.id ? data.user : u)));
-        setMessage(form.password ? 'User updated and password reset' : 'User updated');
+        setMessage(
+          (form.password ? 'User updated and password reset' : 'User updated')
+          + trainerSyncNote(data.trainerSync, form.isTrainer),
+        );
       } else {
         const res = await fetch('/api/admin/users', {
           method: 'POST',
@@ -191,13 +246,17 @@ export default function AdminUsersPage() {
             role: form.role,
             department: form.department,
             designation: form.designation.trim(),
+            isTrainer: form.isTrainer,
             password: form.password,
           }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Create failed');
         setUsers((prev) => [...prev, data.user].sort((a, b) => a.username.localeCompare(b.username)));
-        setMessage(`Created login for ${data.user.username}`);
+        setMessage(
+          `Created login for ${data.user.username}`
+          + trainerSyncNote(data.trainerSync, form.isTrainer),
+        );
       }
       setModalOpen(false);
     } catch (err) {
@@ -344,6 +403,11 @@ export default function AdminUsersPage() {
                       <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${ROLE_STYLE[user.role]}`}>
                         {ROLE_LABEL[user.role] ?? user.role}
                       </span>
+                      {user.isTrainer ? (
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-800">
+                          <UserCheck className="h-3 w-3" /> Trainer
+                        </span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-slate-600">{user.department || '—'}</td>
                     <td className="px-4 py-3 text-slate-600">{user.designation || '—'}</td>
@@ -444,12 +508,40 @@ export default function AdminUsersPage() {
 
               <label className="block text-xs font-semibold text-slate-600">
                 Designation
-                <input
+                <select
                   value={form.designation}
                   onChange={(e) => setForm((f) => ({ ...f, designation: e.target.value }))}
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                  placeholder="Optional"
+                >
+                  <option value="">— None —</option>
+                  {/* A designation retired from the master must stay visible on
+                      the user already holding it, or saving would silently drop it. */}
+                  {form.designation
+                    && !designations.some((d) => d.name === form.designation) ? (
+                    <option value={form.designation}>{form.designation}</option>
+                  ) : null}
+                  {designations.map((d) => (
+                    <option key={d.id} value={d.name}>{d.name}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex items-start gap-2.5 rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+                <input
+                  type="checkbox"
+                  checked={form.isTrainer}
+                  onChange={(e) => setForm((f) => ({ ...f, isTrainer: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-400"
                 />
+                <span>
+                  <span className="flex items-center gap-1.5 text-xs font-bold text-sky-900">
+                    <UserCheck className="h-3.5 w-3.5" /> Trainer
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-sky-800/70">
+                    Grants Trainer View in the LMS. Also sets the trainer flag on
+                    this person&rsquo;s employee record.
+                  </span>
+                </span>
               </label>
 
               <label className="block text-xs font-semibold text-slate-600">

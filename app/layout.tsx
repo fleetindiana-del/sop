@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/components/providers/AuthProvider";
 import { ComplianceRunHost } from "@/components/compliance/ComplianceRunHost";
+import { DashboardShortcut } from "@/components/DashboardShortcut";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -40,6 +41,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <AuthProvider>
           {children}
+          <DashboardShortcut />
           <ComplianceRunHost />
         </AuthProvider>
       </body>

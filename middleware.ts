@@ -53,7 +53,8 @@ export const config = {
     "/mcq-bank/:path*",
     "/mcq-review/:path*",
     "/sop-compliance-sync/:path*",
-    // Learner /lms uses its own cookie session (lib/lms-session), not next-auth.
+    // Learner /lms accepts either login (lib/lmsIdentity), so it stays off the
+    // next-auth matcher; only the LMS admin screens require a next-auth session.
     "/lms/admin/:path*",
   ],
 };

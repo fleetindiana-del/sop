@@ -1,7 +1,6 @@
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
+import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import { resolveTrainerDepartments } from '@/lib/employeeTrainer';
 import { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
 import Employee from '@/models/Employee';
@@ -17,14 +16,14 @@ export type LmsTrainerContext = {
 };
 
 /**
- * Require an LMS cookie session for an active Employee.isTrainer.
+ * Require an LMS session — the employee login or the main application login —
+ * for an active Employee.isTrainer.
  * Returns either the trainer context or a NextResponse error.
  */
 export async function requireLmsTrainer(): Promise<
   { ok: true; trainer: LmsTrainerContext } | { ok: false; response: NextResponse }
 > {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) {
     return {
       ok: false,

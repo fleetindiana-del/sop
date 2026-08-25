@@ -101,7 +101,8 @@ function csvCell(value: unknown): string {
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth(["admin", "trainer", "viewer"]);
+  // Admins only — the change history exposes every department's activity.
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {

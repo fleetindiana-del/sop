@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
-import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
+import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import PracticalAssessment from '@/models/lms/PracticalAssessment';
 import LearningProgress from '@/models/lms/LearningProgress';
 import Employee from '@/models/Employee';
@@ -13,8 +12,7 @@ type Params = { params: Promise<{ sopCode: string }> };
 
 // GET /api/lms/practical/[sopCode] — get practical status for current employee
 export async function GET(_req: NextRequest, { params }: Params) {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const { sopCode } = await params;
@@ -33,8 +31,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 // POST /api/lms/practical/[sopCode] — request a practical assessment
 export async function POST(_req: NextRequest, { params }: Params) {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const { sopCode } = await params;

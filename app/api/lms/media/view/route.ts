@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
+import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import { signLmsMediaToken, verifyLmsMediaToken } from '@/lib/lmsMediaToken';
 
 export const runtime = 'nodejs';
@@ -11,8 +10,7 @@ export const dynamic = 'force-dynamic';
  * GET  ?t=token → streams the file inline (no attachment) for iframe preview.
  */
 export async function POST(req: NextRequest) {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   try {
@@ -35,8 +33,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const token = req.nextUrl.searchParams.get('t') || '';

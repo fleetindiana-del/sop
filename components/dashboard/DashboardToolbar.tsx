@@ -111,16 +111,7 @@ export function DashboardToolbar({
           >
             <GraduationCap className="h-3 w-3" /> LMS
           </Btn>
-          {onOpenAuditLogs && (
-            <Btn
-              size="sm"
-              className="border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100"
-              onClick={onOpenAuditLogs}
-              title="View dashboard change history"
-            >
-              <History className="h-3 w-3" /> Audit Logs
-            </Btn>
-          )}
+          {/* Audit Logs is admin-only — /api/audit-logs rejects other roles. */}
         </div>
       </div>
     );

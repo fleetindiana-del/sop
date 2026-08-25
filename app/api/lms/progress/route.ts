@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
-import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
+import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import {
   getOrBuildLmsCache,
   lmsCacheControl,
@@ -14,8 +13,7 @@ export const dynamic = 'force-dynamic';
 
 // GET /api/lms/progress — all progress records for the current learner
 export async function GET() {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   try {

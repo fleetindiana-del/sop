@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
-import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
+import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import {
   getOrBuildLmsCache,
   invalidateLmsLearnerCache,
@@ -27,8 +26,7 @@ function generateCertNumber(): string {
 
 // GET /api/lms/certificate/[sopCode] — get existing certificate or null
 export async function GET(_req: NextRequest, { params }: Params) {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const { sopCode } = await params;
@@ -57,8 +55,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 // POST /api/lms/certificate/[sopCode] — generate certificate if all steps complete
 export async function POST(_req: NextRequest, { params }: Params) {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const { sopCode } = await params;

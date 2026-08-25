@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
-import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
+import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import {
   invalidateLmsAdminCaches,
   invalidateLmsServerPrefix,
@@ -25,8 +24,7 @@ function bustIgnoreCaches() {
 }
 
 async function requireEmployee() {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
+  const payload = await resolveLmsIdentity();
   if (!payload) return null;
   await connectDB();
   const employee = await Employee.findById(payload.sub).lean<{

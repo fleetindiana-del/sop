@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
 import { getEmployeeAssignmentsMap, employeeAssignmentDepartments } from '@/lib/employeeAssignments';
-import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
+import { lmsIdentityProblemMessage, resolveLmsIdentityDetailed } from '@/lib/lmsIdentity';
 import {
   getOrBuildLmsCache,
   lmsCacheControl,
@@ -20,9 +19,17 @@ export const dynamic = 'force-dynamic';
 
 // GET /api/lms/auth/me — current learner + their assigned SOPs.
 export async function GET() {
-  const jar = await cookies();
-  const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
-  if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  const resolved = await resolveLmsIdentityDetailed();
+  if (!resolved.ok) {
+    // This is the one endpoint whose 401 a person reads, so say what is wrong:
+    // a signed-in user with no linked employee record needs an admin, not a
+    // second sign-in attempt.
+    return NextResponse.json(
+      { error: lmsIdentityProblemMessage(resolved.problem), problem: resolved.problem },
+      { status: 401 },
+    );
+  }
+  const payload = resolved.identity;
 
   try {
     const body = await getOrBuildLmsCache(
@@ -72,7 +79,11 @@ export async function GET() {
       return NextResponse.json({ error: 'Account not found or inactive' }, { status: 401 });
     }
 
-    return NextResponse.json(body, { headers: lmsCacheControl(60) });
+    // Outside the cached body: which login this request used varies per request.
+    return NextResponse.json(
+      { ...body, authSource: payload.source },
+      { headers: lmsCacheControl(60) },
+    );
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }

@@ -281,6 +281,13 @@ export function TrainerLmsSchedulePanel({
         fetch('/api/lms/trainer/exam-catalog', { cache: 'no-store' }),
       ]);
       const json = await monthlyRes.json();
+      if (monthlyRes.status === 401) {
+        // Session expired mid-visit — say so instead of surfacing the raw
+        // "Not authenticated" API error.
+        setError('Your session has expired. Sign out and sign in again to continue.');
+        setRows([]);
+        return;
+      }
       if (monthlyRes.status === 403) {
         setError('');
         setRows([]);

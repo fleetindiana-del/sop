@@ -729,7 +729,9 @@ export function DashboardClient() {
         </>
       )}
       <ToastNotification />
-      <AuditLogsModal open={auditLogsOpen} onClose={() => setAuditLogsOpen(false)} />
+      {userIsAdmin && (
+        <AuditLogsModal open={auditLogsOpen} onClose={() => setAuditLogsOpen(false)} />
+      )}
     </div>
   );
 }
