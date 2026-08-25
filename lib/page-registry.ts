@@ -18,11 +18,19 @@ export interface AppPage {
   /** Super Admin + SOP Admin only — cannot be granted to trainer/viewer. */
   adminOnly?: boolean;
   /**
-   * Super Admin only. User administration (creating logins, granting page
-   * access) is deliberately out of reach of SOP Admin, so a SOP Admin cannot
-   * widen their own permissions.
+   * Super Admin only. Creating logins and resetting passwords is deliberately
+   * out of reach of SOP Admin, so a SOP Admin cannot mint itself a Super Admin.
    */
   superAdminOnly?: boolean;
+  /**
+   * Cannot be revoked from a role that reaches it at all.
+   *
+   * Only user administration carries this. An admin allowlist that dropped
+   * Access Management would leave nobody able to restore anyone's access
+   * without a direct database edit, so those two pages stay granted however
+   * the allowlist is saved.
+   */
+  neverRestricted?: boolean;
   /** Everyone signed in gets this page; it cannot be revoked. */
   alwaysAllowed?: boolean;
   /**
@@ -47,13 +55,6 @@ export const APP_PAGES: AppPage[] = [
     prefix: "/mcq-bank",
     group: "Training",
     description: "Generated question banks per SOP",
-  },
-  {
-    key: "mcq-review",
-    label: "MCQ Review",
-    prefix: "/mcq-review",
-    group: "Training",
-    description: "Review and approve generated MCQs",
   },
   {
     key: "lms-admin",
@@ -150,6 +151,7 @@ export const APP_PAGES: AppPage[] = [
     description: "Create logins and reset passwords",
     adminOnly: true,
     superAdminOnly: true,
+    neverRestricted: true,
   },
   {
     key: "admin-access",
@@ -158,7 +160,7 @@ export const APP_PAGES: AppPage[] = [
     group: "Administration",
     description: "Page and department permissions",
     adminOnly: true,
-    superAdminOnly: true,
+    neverRestricted: true,
   },
   {
     key: "admin-designations",

@@ -29,8 +29,12 @@ interface AppPage {
   group: string;
   description: string;
   adminOnly?: boolean;
+  /** Super Admin only — not grantable to anyone else. */
+  superAdminOnly?: boolean;
   alwaysAllowed?: boolean;
   restrictedByDefault?: boolean;
+  /** User administration — granted to whoever can reach it and never revocable. */
+  neverRestricted?: boolean;
 }
 
 interface AccessUser {
@@ -61,11 +65,8 @@ const ROLE_STYLE: Record<AppRole, string> = {
   viewer: 'bg-slate-100 text-slate-700 border-slate-200',
 };
 
-/**
- * Super Admin and SOP Admin both bypass the per-user allowlist — page access is
- * decided by the role — so neither is configurable here.
- */
-function isRoleDrivenAccess(role: AppRole | undefined): boolean {
+/** Super Admin and SOP Admin — they start with every page rather than a set. */
+function isAdminRole(role: AppRole | undefined): boolean {
   return role === 'admin' || role === 'sop_admin';
 }
 
@@ -76,9 +77,11 @@ function sameSet(a: string[], b: string[]) {
 }
 
 export default function AccessManagementPage() {
-  useAuthGuard({ allowedRoles: ['admin'] });
+  useAuthGuard({ allowedRoles: ['admin', 'sop_admin'] });
   const { data: session } = useSession();
   const currentUserId = session?.user?.id;
+  /** Only a Super Admin may edit another Super Admin — mirrors the API rail. */
+  const viewerIsSuperAdmin = session?.user?.role === 'admin';
 
   const [users, setUsers] = useState<AccessUser[]>([]);
   const [pages, setPages] = useState<AppPage[]>([]);
@@ -157,7 +160,27 @@ export default function AccessManagementPage() {
     return [...map.entries()];
   }, [pages]);
 
-  const isAdminUser = isRoleDrivenAccess(selected?.role);
+  const isAdminUser = isAdminRole(selected?.role);
+  /** A SOP Admin may not touch a Super Admin's row — the API refuses it too. */
+  const readOnly = selected?.role === 'admin' && !viewerIsSuperAdmin;
+
+  /**
+   * Whether a checkbox can be moved. `alwaysAllowed` and (for admins) the
+   * user-administration pages are granted no matter what is saved; pages the
+   * target's role cannot reach at all are not grantable here.
+   */
+  const pageState = (page: AppPage) => {
+    const grantedByRole = Boolean(page.alwaysAllowed) || (isAdminUser && Boolean(page.neverRestricted));
+    const unavailable =
+      (Boolean(page.adminOnly) && !isAdminUser)
+      || (Boolean(page.superAdminOnly) && selected?.role !== 'admin');
+    return {
+      locked: readOnly || grantedByRole || unavailable,
+      checked: grantedByRole || (!unavailable && draftPages.includes(page.key)),
+      grantedByRole,
+      unavailable,
+    };
+  };
 
   const dirty = useMemo(() => {
     if (!selected) return false;
@@ -168,7 +191,7 @@ export default function AccessManagementPage() {
   }, [selected, draftPages, draftDepts, usingDefaults]);
 
   const togglePage = (page: AppPage) => {
-    if (page.alwaysAllowed || (page.adminOnly && !isAdminUser)) return;
+    if (pageState(page).locked) return;
     setUsingDefaults(false);
     setDraftPages((prev) =>
       prev.includes(page.key) ? prev.filter((k) => k !== page.key) : [...prev, page.key],
@@ -176,18 +199,18 @@ export default function AccessManagementPage() {
   };
 
   const toggleDept = (dept: string) => {
+    if (readOnly) return;
     setDraftDepts((prev) =>
       prev.includes(dept) ? prev.filter((d) => d !== dept) : [...prev, dept],
     );
   };
 
   const setAllPages = (on: boolean) => {
+    if (readOnly) return;
     setUsingDefaults(false);
     setDraftPages(
       on
-        ? pages
-            .filter((p) => !p.alwaysAllowed && (!p.adminOnly || isAdminUser))
-            .map((p) => p.key)
+        ? pages.filter((p) => !p.alwaysAllowed && !pageState(p).unavailable).map((p) => p.key)
         : [],
     );
   };
@@ -224,10 +247,10 @@ export default function AccessManagementPage() {
     }
   };
 
+  // `effectivePages` is computed server-side from the same rules, so an admin
+  // with a saved allowlist reports the reduced count rather than "all pages".
   const grantedCount = (user: AccessUser) =>
-    isRoleDrivenAccess(user.role)
-      ? pages.length
-      : user.effectivePages.filter((k) => !pages.find((p) => p.key === k)?.alwaysAllowed).length;
+    user.effectivePages.filter((k) => !pages.find((p) => p.key === k)?.alwaysAllowed).length;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -252,12 +275,16 @@ export default function AccessManagementPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Link
-              href="/admin/users"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-            >
-              <KeyRound className="h-3.5 w-3.5" /> Logins &amp; Passwords
-            </Link>
+            {/* Login & Passwords stays Super Admin only, so do not offer a SOP
+                Admin a link that would bounce them back to the dashboard. */}
+            {viewerIsSuperAdmin ? (
+              <Link
+                href="/admin/users"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              >
+                <KeyRound className="h-3.5 w-3.5" /> Logins &amp; Passwords
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={() => void load()}
@@ -356,13 +383,13 @@ export default function AccessManagementPage() {
                       {user.id === currentUserId ? ' (you)' : ''}
                     </span>
                     <span className="text-[11px] text-slate-500">
-                      {isRoleDrivenAccess(user.role)
-                        ? 'All pages · all departments'
-                        : `${grantedCount(user)} page${grantedCount(user) === 1 ? '' : 's'} · ${
-                            user.departments.length
-                              ? user.departments.join(', ')
-                              : 'no department'
-                          }`}
+                      {`${grantedCount(user)} page${grantedCount(user) === 1 ? '' : 's'} · ${
+                        isAdminRole(user.role)
+                          ? 'all departments'
+                          : user.departments.length
+                            ? user.departments.join(', ')
+                            : 'no department'
+                      }`}
                     </span>
                   </button>
                 ))
@@ -387,7 +414,7 @@ export default function AccessManagementPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {!isAdminUser && (
+                    {!readOnly && (
                       <button
                         type="button"
                         onClick={resetToDefaults}
@@ -400,7 +427,7 @@ export default function AccessManagementPage() {
                     <button
                       type="button"
                       onClick={() => void save()}
-                      disabled={saving || !dirty}
+                      disabled={saving || !dirty || readOnly}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
                     >
                       {saving ? (
@@ -413,16 +440,24 @@ export default function AccessManagementPage() {
                   </div>
                 </div>
 
-                {isAdminUser && (
-                  <div className="mx-4 mt-4 flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-800">
+                {readOnly && (
+                  <div className="mx-4 mt-4 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                     <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <span>
-                      Super Admin and SOP Admin always have every page and every department (SOP
-                      Admin cannot open user administration). Change the role on the{' '}
-                      <Link href="/admin/users" className="underline">
-                        Logins &amp; Passwords
-                      </Link>{' '}
-                      page to restrict this user.
+                      Read-only: only a Super Admin can change another Super Admin&rsquo;s access.
+                    </span>
+                  </div>
+                )}
+
+                {isAdminUser && !readOnly && (
+                  <div className="mx-4 mt-4 flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-800">
+                    <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      {ROLE_LABEL[selected.role] ?? selected.role} starts with every page. Untick any
+                      page below to restrict this login to an explicit list.{' '}
+                      {selected.role === 'admin'
+                        ? 'Login & Passwords and Access Management stay granted so nobody can be locked out of user administration.'
+                        : 'Access Management stays granted; Login & Passwords is Super Admin only.'}
                     </span>
                   </div>
                 )}
@@ -440,7 +475,7 @@ export default function AccessManagementPage() {
                     <h3 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">
                       <LayoutGrid className="h-3.5 w-3.5" /> Page access
                     </h3>
-                    {!isAdminUser && (
+                    {!readOnly && (
                       <div className="flex gap-1.5">
                         <button
                           type="button"
@@ -468,12 +503,7 @@ export default function AccessManagementPage() {
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                           {groupPages.map((page) => {
-                            const locked =
-                              isAdminUser || page.alwaysAllowed || (page.adminOnly && !isAdminUser);
-                            const checked =
-                              isAdminUser ||
-                              page.alwaysAllowed ||
-                              (!page.adminOnly && draftPages.includes(page.key));
+                            const { locked, checked, grantedByRole } = pageState(page);
                             return (
                               <button
                                 key={page.key}
@@ -505,7 +535,15 @@ export default function AccessManagementPage() {
                                     ) : null}
                                     {page.adminOnly ? (
                                       <span className="rounded bg-violet-100 px-1 text-[9px] font-bold uppercase text-violet-700">
-                                        admin
+                                        {page.superAdminOnly ? 'super admin' : 'admin'}
+                                      </span>
+                                    ) : null}
+                                    {grantedByRole && !page.alwaysAllowed ? (
+                                      <span
+                                        title="User administration cannot be revoked"
+                                        className="rounded bg-slate-100 px-1 text-[9px] font-bold uppercase text-slate-500"
+                                      >
+                                        locked
                                       </span>
                                     ) : null}
                                   </span>
@@ -531,7 +569,7 @@ export default function AccessManagementPage() {
                     <h3 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">
                       <Building2 className="h-3.5 w-3.5" /> Department access
                     </h3>
-                    {!isAdminUser && (
+                    {!readOnly && (
                       <div className="flex gap-1.5">
                         <button
                           type="button"
@@ -551,11 +589,7 @@ export default function AccessManagementPage() {
                     )}
                   </div>
 
-                  {isAdminUser ? (
-                    <p className="text-xs text-slate-500">
-                      Admins see every department; department scoping does not apply.
-                    </p>
-                  ) : departments.length === 0 ? (
+                  {departments.length === 0 ? (
                     <p className="text-xs text-slate-500">No departments found.</p>
                   ) : (
                     <>
@@ -567,11 +601,12 @@ export default function AccessManagementPage() {
                               key={dept}
                               type="button"
                               onClick={() => toggleDept(dept)}
+                              disabled={readOnly}
                               className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
                                 checked
                                   ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
                                   : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-300'
-                              }`}
+                              } ${readOnly ? 'cursor-default opacity-70' : ''}`}
                             >
                               <span
                                 className={`flex h-3.5 w-3.5 items-center justify-center rounded-full border ${
@@ -587,7 +622,12 @@ export default function AccessManagementPage() {
                           );
                         })}
                       </div>
-                      {draftDepts.length === 0 ? (
+                      {isAdminUser ? (
+                        <p className="mt-2 text-[11px] text-slate-500">
+                          Recorded on the login, but department scoping is not enforced for Super
+                          Admin or SOP Admin — they still see data for every department.
+                        </p>
+                      ) : draftDepts.length === 0 ? (
                         <p className="mt-2 text-[11px] text-amber-700">
                           With no department selected this user sees no department-scoped SOP data.
                         </p>

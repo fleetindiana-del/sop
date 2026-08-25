@@ -303,7 +303,15 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
     subfolderLevel: pathMeta.folderPath ? pathMeta.folderPath.split("/").length : 0,
     originalFileName: fileName,
     metadata: { fileSize },
-    sopDocuments: [docEntry],
+    // Replacing the main DOCX/PDF must not detach annexures or training media
+    // that were already linked to this record. Only replace the main document
+    // entry represented by this SOP record.
+    sopDocuments: [
+      docEntry,
+      ...((existing?.sopDocuments ?? []).filter(
+        (document) => document.documentKind === "annexure" || document.documentKind === "media",
+      )),
+    ],
     ...(fileType === "docx" && lang === "English"
       ? { requiredAnnexures: parseRequiredAnnexuresFromContent(content) }
       : {}),
@@ -478,11 +486,18 @@ async function processSopUploadInner(formData: FormData) {
   const touchedFamilies = new Set<string>();
   const touchedIdentifiers = new Set<string>();
 
-  const pairs = files.map((file, index) => ({
-    file,
-    relativePath: paths[index] || file.name,
-    annexure: isAnnexureFileName(file.name),
-  }));
+  const pairs = files.map((file, index) => {
+    const relativePath = paths[index] || file.name;
+    return {
+      file,
+      relativePath,
+      // Folder uploads commonly use generic filenames such as Form-I.docx
+      // inside an Annexures/ or Appendix/ directory. Check the preserved
+      // browser-relative path as well as the bare filename.
+      annexure:
+        isAnnexureFileName(file.name) || isAnnexureFileName(relativePath),
+    };
+  });
   // Main SOP/PDF records first so annexures in the same batch can link to them.
   const ordered = [...pairs.filter((p) => !p.annexure), ...pairs.filter((p) => p.annexure)];
 

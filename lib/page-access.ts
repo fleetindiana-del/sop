@@ -30,8 +30,13 @@ export function landingPathForRole(role: RoleLike): string {
 /**
  * Page-level access.
  *
- * - Super Admin reaches everything; SOP Admin everything except the pages
- *   flagged `superAdminOnly` (user administration).
+ * - Pages flagged `superAdminOnly` are Super Admin's alone, whatever else is
+ *   configured.
+ * - Super Admin and SOP Admin reach every other page until an explicit
+ *   `pageAccess` allowlist is saved for them, which then applies the same way
+ *   it does for anyone else — except that pages flagged `neverRestricted`
+ *   (user administration) stay granted, so an allowlist can never leave the
+ *   system with nobody able to fix access.
  * - An explicit grant in `pageAccess` always wins, whatever the role.
  * - A learner-only role (see {@link isLearnerOnly}) reaches nothing else in the
  *   registry — not even the pages flagged `alwaysAllowed`. `/lms` itself is not
@@ -48,10 +53,17 @@ export function canAccessPageKey(
   pageAccess: string[] | null | undefined,
   page: AppPage,
 ): boolean {
-  // Checked before the blanket admin allow so SOP Admin cannot reach user
-  // administration and grant itself more access.
+  // Checked before the admin branch so SOP Admin cannot reach the pages that
+  // mint logins and reset passwords.
   if (page.superAdminOnly) return role === "admin";
-  if (role === "admin" || role === "sop_admin") return true;
+  if (role === "admin" || role === "sop_admin") {
+    // Access Management itself can never be taken away, or a bad save would be
+    // unrecoverable from the UI.
+    if (page.neverRestricted || page.alwaysAllowed) return true;
+    // Never configured — the historical "admins see everything" behaviour.
+    if (!Array.isArray(pageAccess)) return true;
+    return pageAccess.includes(page.key);
+  }
   if (page.adminOnly) return false;
   // An administrator can still hand a learner a specific page.
   if (Array.isArray(pageAccess) && pageAccess.includes(page.key)) return true;

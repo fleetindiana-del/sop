@@ -63,7 +63,6 @@ const WARMUP_ROUTES = [
   "/training-matrix",
   "/induction-training-matrix",
   "/mcq-bank",
-  "/mcq-review",
   "/lms",
   "/employees",
   "/bunny-files",

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
-import { requireSuperAdmin } from "@/lib/withAuth";
+import { requireAuth } from "@/lib/withAuth";
 import User from "@/models/User";
 import Department from "@/models/Department";
 import SOP from "@/models/SOP";
@@ -55,8 +55,9 @@ async function listDepartments(): Promise<string[]> {
 }
 
 // GET /api/admin/access — every user plus the page and department catalogues.
+// `requireAuth(["admin"])` admits SOP Admin too — see `roleSatisfies`.
 export async function GET() {
-  const auth = await requireSuperAdmin();
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {
@@ -82,7 +83,7 @@ export async function GET() {
 
 // PATCH /api/admin/access — update one user's page and department access.
 export async function PATCH(request: NextRequest) {
-  const auth = await requireSuperAdmin();
+  const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
   try {
@@ -96,6 +97,15 @@ export async function PATCH(request: NextRequest) {
 
     const user = await User.findById(userId);
     if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
+
+    // A SOP Admin may configure everyone below it, but not a Super Admin —
+    // otherwise the lower tier could strip the higher one's pages.
+    if (user.role === "admin" && auth.session?.user?.role !== "admin") {
+      return NextResponse.json(
+        { error: "Only a Super Admin can change another Super Admin's access" },
+        { status: 403 },
+      );
+    }
 
     // Mongoose will not persist `undefined`, so a reset needs an explicit $unset.
     let unsetPageAccess = false;

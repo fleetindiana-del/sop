@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import {
@@ -12,7 +11,6 @@ import {
   Zap,
   ChevronRight,
   ArrowLeft,
-  BookOpen,
   FlaskConical,
 } from 'lucide-react';
 
@@ -102,13 +100,6 @@ export default function TestHubPage() {
             Back to Home
           </button>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push('/mcq-review')}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/10 border border-white/20 text-slate-300 hover:bg-white/20 transition-all text-sm"
-            >
-              <BookOpen className="w-4 h-4" />
-              Review Center
-            </button>
             <button
               onClick={() => router.push('/test/practice')}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/10 border border-white/20 text-slate-300 hover:bg-white/20 transition-all text-sm"

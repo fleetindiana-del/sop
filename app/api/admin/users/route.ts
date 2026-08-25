@@ -4,6 +4,7 @@ import { connectDB } from "@/lib/mongodb";
 import { requireSuperAdmin } from "@/lib/withAuth";
 import { syncEmployeeTrainerFlag } from "@/lib/userTrainerSync";
 import { resolveLmsEmployeeLink } from "@/lib/userEmployeeLink";
+import { isSharedLmsLogin, syncLmsPasswordFromUser } from "@/lib/lmsSharedLogin";
 import { serializeAssignedDepartments } from "@/lib/access-control";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
@@ -21,6 +22,7 @@ function toPublicUser(user: IUser) {
     designation: user.designation ?? "",
     isTrainer: user.isTrainer === true,
     lmsEmployeeId: user.lmsEmployeeId ? String(user.lmsEmployeeId) : "",
+    sharedLmsLogin: isSharedLmsLogin(user),
     pageAccess: Array.isArray(user.pageAccess) ? user.pageAccess : null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -50,6 +52,7 @@ export async function GET() {
         designation: u.designation ?? "",
         isTrainer: u.isTrainer === true,
         lmsEmployeeId: u.lmsEmployeeId ? String(u.lmsEmployeeId) : "",
+        sharedLmsLogin: isSharedLmsLogin(u),
         pageAccess: Array.isArray(u.pageAccess) ? u.pageAccess : null,
         createdAt: u.createdAt,
         updatedAt: u.updatedAt,
@@ -81,6 +84,8 @@ export async function POST(request: NextRequest) {
     );
     const designation = String(body.designation || "").trim() || undefined;
     const isTrainer = body.isTrainer === true;
+    // Absent means the caller predates the flag; those logins share a password.
+    const sharedLmsLogin = body.sharedLmsLogin === undefined ? true : body.sharedLmsLogin === true;
 
     if (!username || !name) {
       return NextResponse.json({ error: "Username and name are required" }, { status: 400 });
@@ -111,6 +116,7 @@ export async function POST(request: NextRequest) {
       designation,
       isTrainer,
       lmsEmployeeId: link.employeeId,
+      sharedLmsLogin,
     });
 
     // Trainer access is read from the Employee record, so mirror it there. Only
@@ -118,8 +124,13 @@ export async function POST(request: NextRequest) {
     // an existing trainer who merely shares the name.
     const sync = isTrainer ? await syncEmployeeTrainerFlag(user, true) : undefined;
 
+    // One password for both modules — the LMS half lives on the Employee record.
+    const lmsSync = sharedLmsLogin
+      ? await syncLmsPasswordFromUser(user, password)
+      : undefined;
+
     return NextResponse.json(
-      { success: true, user: toPublicUser(user), trainerSync: sync },
+      { success: true, user: toPublicUser(user), trainerSync: sync, lmsSync },
       { status: 201 },
     );
   } catch (error) {

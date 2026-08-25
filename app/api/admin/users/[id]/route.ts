@@ -5,6 +5,7 @@ import { connectDB } from "@/lib/mongodb";
 import { requireSuperAdmin } from "@/lib/withAuth";
 import { syncEmployeeTrainerFlag } from "@/lib/userTrainerSync";
 import { resolveLmsEmployeeLink } from "@/lib/userEmployeeLink";
+import { isSharedLmsLogin, syncLmsPasswordFromUser } from "@/lib/lmsSharedLogin";
 import { serializeAssignedDepartments } from "@/lib/access-control";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
@@ -24,6 +25,7 @@ function toPublicUser(user: IUser) {
     designation: user.designation ?? "",
     isTrainer: user.isTrainer === true,
     lmsEmployeeId: user.lmsEmployeeId ? String(user.lmsEmployeeId) : "",
+    sharedLmsLogin: isSharedLmsLogin(user),
     pageAccess: Array.isArray(user.pageAccess) ? user.pageAccess : null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -45,6 +47,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const user = await User.findById(id);
     if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
 
+    /** Kept in plain text only for the duration of this request, to hash again for the LMS. */
+    let plainPassword = "";
+
     if (body.name !== undefined) {
       const name = String(body.name || "").trim();
       if (!name) return NextResponse.json({ error: "Name cannot be empty" }, { status: 400 });
@@ -64,6 +69,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
     if (body.isTrainer !== undefined) {
       user.isTrainer = body.isTrainer === true;
+    }
+    if (body.sharedLmsLogin !== undefined) {
+      user.sharedLmsLogin = body.sharedLmsLogin === true;
     }
     if (body.lmsEmployeeId !== undefined) {
       const link = await resolveLmsEmployeeLink(body.lmsEmployeeId, id);
@@ -107,9 +115,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         );
       }
       user.passwordHash = await bcrypt.hash(password, 12);
+      plainPassword = password;
     }
 
     await user.save();
+
+    // One password for both modules, so a reset here has to reach the LMS half
+    // on the Employee record too — the dashboard hash cannot be reused.
+    const lmsSync =
+      plainPassword && isSharedLmsLogin(user)
+        ? await syncLmsPasswordFromUser(user, plainPassword)
+        : undefined;
 
     // Trainer access is read from the Employee record, so mirror it there.
     const trainerSync =
@@ -117,7 +133,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         ? await syncEmployeeTrainerFlag(user, user.isTrainer === true)
         : undefined;
 
-    return NextResponse.json({ success: true, user: toPublicUser(user), trainerSync });
+    return NextResponse.json({ success: true, user: toPublicUser(user), trainerSync, lmsSync });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to update user" },

@@ -17,8 +17,9 @@ export type SopClientUploadOptions = {
   onProgress?: (completed: number, total: number) => void;
 };
 
-function isAnnexureName(name: string): boolean {
-  return /annex(ure)?|appendix/i.test(name);
+function isAnnexureFile(file: File): boolean {
+  const relativePath = getFileRelativePath(file);
+  return /annex(ure)?|appendix/i.test(`${relativePath}/${file.name}`);
 }
 
 function isPayloadTooLarge(status: number, error?: string): boolean {
@@ -44,7 +45,7 @@ function isRetryableTransport(error?: string): boolean {
 }
 
 function mainsFirst(files: File[]): File[] {
-  return [...files.filter((f) => !isAnnexureName(f.name)), ...files.filter((f) => isAnnexureName(f.name))];
+  return [...files.filter((f) => !isAnnexureFile(f)), ...files.filter((f) => isAnnexureFile(f))];
 }
 
 function packBySize(files: File[]): File[][] {

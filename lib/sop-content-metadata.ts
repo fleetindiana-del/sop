@@ -162,7 +162,7 @@ export function extractSopContentMetadata(opts: {
     : undefined;
   const fromPath = fromPathRaw ? normalizeSopIdentifierKey(fromPathRaw) : undefined;
 
-  if (isAnnexureFileName(fileName)) {
+  if (isAnnexureFileName(fileName) || isAnnexureFileName(relativePath)) {
     const parentIdentifier = parentIdentifierFromAnnexure(fileName, relativePath, content);
     return {
       documentKind: "annexure",

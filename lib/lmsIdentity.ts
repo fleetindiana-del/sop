@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
 import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
 import { escapeRegex } from '@/lib/lms-credentials';
+import { isSharedLmsLogin } from '@/lib/lmsSharedLogin';
 import { departmentsMatch, parseAssignedDepartments } from '@/lib/access-control';
 import Employee from '@/models/Employee';
 import User from '@/models/User';
@@ -31,7 +32,9 @@ export interface LmsIdentity {
 export type LmsIdentityProblem =
   | 'no-session'
   | 'no-employee-record'
-  | 'ambiguous-employee-record';
+  | 'ambiguous-employee-record'
+  /** The login keeps a separate LMS password, so the bridge is switched off. */
+  | 'lms-login-required';
 
 export type LmsIdentityResult =
   | { ok: true; identity: LmsIdentity }
@@ -90,6 +93,21 @@ async function linkedEmployee(userId: string): Promise<EmployeeLean | null> {
 }
 
 /**
+ * Whether this login shares one password across both modules.
+ *
+ * Unticking "Same password for Dashboard and LMS" marks the person as
+ * LMS-only: they hold their own learning-module password, so a dashboard
+ * session must not open their training record on its own.
+ */
+async function sharesLmsLogin(userId: string): Promise<boolean> {
+  if (!userId) return true;
+  const user = await User.findById(userId).select('sharedLmsLogin').lean<{
+    sharedLmsLogin?: boolean;
+  } | null>();
+  return isSharedLmsLogin(user || {});
+}
+
+/**
  * Map a main-app (NextAuth) user onto their Employee record, most explicit
  * link first:
  *   0. the administrator-set link      (User.lmsEmployeeId)
@@ -110,6 +128,8 @@ async function employeeForAppUser(
   department: string,
 ): Promise<{ employee: EmployeeLean } | { problem: LmsIdentityProblem }> {
   await connectDB();
+
+  if (!(await sharesLmsLogin(userId))) return { problem: 'lms-login-required' };
 
   const linked = await linkedEmployee(userId);
   if (linked) return { employee: linked };
@@ -185,6 +205,9 @@ export async function resolveLmsIdentity(): Promise<LmsIdentity | null> {
 
 /** Message for a person whose main login could not be linked to a learner. */
 export function lmsIdentityProblemMessage(problem: LmsIdentityProblem): string {
+  if (problem === 'lms-login-required') {
+    return 'Your login uses a separate learning-module password. Sign in below with your LMS username and password.';
+  }
   if (problem === 'ambiguous-employee-record') {
     return 'Your login matches more than one employee record. Ask a Super Admin to link your login to the correct employee in Login & Passwords.';
   }

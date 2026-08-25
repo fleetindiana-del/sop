@@ -24,6 +24,20 @@ export interface IUser extends Document {
    */
   lmsEmployeeId?: mongoose.Types.ObjectId;
   /**
+   * One password for both modules.
+   *
+   * true  — the password set here signs this person into the dashboard *and*
+   *         the LMS (it is mirrored onto `Employee.lmsPasswordHash`), and a
+   *         dashboard session opens the LMS with no second sign-in.
+   * false — LMS-only person: the dashboard session does NOT bridge into the
+   *         LMS, and their learning-module password is maintained separately
+   *         on the Employee Master.
+   *
+   * Undefined on logins created before this flag existed, which is treated as
+   * true so the bridge in `lib/lmsIdentity.ts` keeps working for them.
+   */
+  sharedLmsLogin?: boolean;
+  /**
    * Allowlist of page keys from `lib/page-registry.ts`.
    * Undefined = never configured, so legacy role defaults apply.
    */
@@ -43,6 +57,7 @@ const UserSchema = new Schema<IUser>(
     designation: { type: String, trim: true },
     isTrainer: { type: Boolean, default: false },
     lmsEmployeeId: { type: Schema.Types.ObjectId, ref: "Employee", default: undefined },
+    sharedLmsLogin: { type: Boolean, default: true },
     pageAccess: { type: [String], default: undefined },
   },
   { timestamps: true },

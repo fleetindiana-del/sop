@@ -53,7 +53,6 @@ export const config = {
     "/training-content/:path*",
     "/bunny-files/:path*",
     "/mcq-bank/:path*",
-    "/mcq-review/:path*",
     "/sop-compliance-sync/:path*",
     // Learner /lms accepts either login (lib/lmsIdentity), so it stays off the
     // next-auth matcher; only the LMS admin screens require a next-auth session.

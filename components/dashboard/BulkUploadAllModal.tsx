@@ -17,6 +17,7 @@ import {
   type UploadProgress,
 } from "./BulkUploadShell";
 import { PostUploadPipelineModal } from "./PostUploadPipelineModal";
+import { getFileRelativePath } from "@/lib/upload-form";
 
 type UploadResult = SopUploadResult;
 
@@ -65,7 +66,9 @@ export function BulkUploadAllModal({
   const [pipelineIds, setPipelineIds] = useState<string[]>([]);
   const [pipelineOpen, setPipelineOpen] = useState(false);
 
-  const annexureCount = files.filter((f) => /annex(ure)?|appendix/i.test(f.name)).length;
+  const annexureCount = files.filter((f) =>
+    /annex(ure)?|appendix/i.test(`${getFileRelativePath(f)}/${f.name}`),
+  ).length;
   const mainCount = files.length - annexureCount;
 
   const reset = () => {
@@ -143,9 +146,9 @@ export function BulkUploadAllModal({
           system processes main SOPs first, then links annexures to their parent automatically.
         </p>
         <p>
-          Annexures are detected by filename (containing "Annexure" or "Appendix"). Their parent
-          SOP is resolved from the file&apos;s <strong>Ref. SOP No.</strong> header or from the
-          folder structure.
+          Annexures are detected by filename or folder (containing &quot;Annexure&quot; or
+          &quot;Appendix&quot;). Their parent SOP is resolved from the file&apos;s{" "}
+          <strong>Ref. SOP No.</strong> header or from the folder structure.
         </p>
         <p>
           After upload, you&apos;ll be prompted to start MCQ generation and compliance.
