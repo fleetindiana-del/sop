@@ -98,8 +98,13 @@ function matchesEmpFilter(r: EmployeeTrainingRecord, filter: EmpCapsuleFilter): 
       return filter.status === 'all' || employeeStatus(r) === filter.status;
     case 'slides':
     case 'videos':
-    case 'mcq':
-      return filter.status === 'all' || employeeComponentStatus(r, filter.kind) === filter.status;
+    case 'mcq': {
+      // Employees with no material of this kind are outside the column entirely,
+      // so the list matches the count on the capsule.
+      const componentStatus = employeeComponentStatus(r, filter.kind);
+      if (componentStatus === null) return false;
+      return filter.status === 'all' || componentStatus === filter.status;
+    }
     case 'training':
       return r.hasTraining;
     case 'induction':
@@ -117,7 +122,12 @@ function isDefaultEmpFilter(filter: EmpCapsuleFilter): boolean {
 // (distinct), and its department-wide status follows the rule: Completed only
 // when every assigned employee finished it; otherwise Not Completed.
 
-interface ComponentRollup { completed: number; not: number; }
+/**
+ * `applicable` is the denominator: employees whose assigned SOPs actually carry
+ * material of this kind. Counting someone with no slides as "slides not
+ * completed" implies outstanding work that does not exist.
+ */
+interface ComponentRollup { applicable: number; completed: number; not: number; }
 
 interface DeptAcc {
   totalEmployees: number; empCompleted: number; empNot: number;
@@ -127,7 +137,7 @@ interface DeptAcc {
   mcq: ComponentRollup;
 }
 
-const emptyComponentRollup = (): ComponentRollup => ({ completed: 0, not: 0 });
+const emptyComponentRollup = (): ComponentRollup => ({ applicable: 0, completed: 0, not: 0 });
 
 const emptyDeptAcc = (): DeptAcc => ({
   totalEmployees: 0, empCompleted: 0, empNot: 0,
@@ -137,14 +147,22 @@ const emptyDeptAcc = (): DeptAcc => ({
 
 type ComponentRollupKey = 'slides' | 'videos' | 'mcq';
 
-function employeeComponentStatus(r: EmployeeTrainingRecord, key: ComponentRollupKey): EmpStatus {
+/**
+ * Where this employee stands on one component column, or null when none of
+ * their SOPs carry that material and the column does not apply to them.
+ */
+function employeeComponentStatus(
+  r: EmployeeTrainingRecord,
+  key: ComponentRollupKey,
+): EmpStatus | null {
   const statuses = r.sops.map((s) => s.components[key]).filter((st) => st !== 'na');
-  if (statuses.length === 0) return 'not_completed';
-  if (statuses.every((st) => st === 'completed')) return 'completed';
-  return 'not_completed';
+  if (statuses.length === 0) return null;
+  return statuses.every((st) => st === 'completed') ? 'completed' : 'not_completed';
 }
 
-function bumpComponentRollup(rollup: ComponentRollup, status: EmpStatus) {
+function bumpComponentRollup(rollup: ComponentRollup, status: EmpStatus | null) {
+  if (status === null) return;
+  rollup.applicable++;
   if (status === 'completed') rollup.completed++;
   else rollup.not++;
 }
@@ -227,11 +245,11 @@ function deptAccToCapsule(
     totalEmployees: acc.totalEmployees,
     empCompleted: acc.empCompleted, empNot: acc.empNot,
     empTraining: acc.empTraining, empInduction: acc.empInduction,
-    slidesTotal: acc.totalEmployees, slidesCompleted: acc.slides.completed,
+    slidesTotal: acc.slides.applicable, slidesCompleted: acc.slides.completed,
     slidesNot: acc.slides.not,
-    videosTotal: acc.totalEmployees, videosCompleted: acc.videos.completed,
+    videosTotal: acc.videos.applicable, videosCompleted: acc.videos.completed,
     videosNot: acc.videos.not,
-    mcqTotal: acc.totalEmployees, mcqCompleted: acc.mcq.completed,
+    mcqTotal: acc.mcq.applicable, mcqCompleted: acc.mcq.completed,
     mcqNot: acc.mcq.not,
   };
 }

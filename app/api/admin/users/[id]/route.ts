@@ -4,6 +4,8 @@ import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import { requireSuperAdmin } from "@/lib/withAuth";
 import { syncEmployeeTrainerFlag } from "@/lib/userTrainerSync";
+import { resolveLmsEmployeeLink } from "@/lib/userEmployeeLink";
+import { serializeAssignedDepartments } from "@/lib/access-control";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
 
@@ -21,6 +23,7 @@ function toPublicUser(user: IUser) {
     department: user.department ?? "",
     designation: user.designation ?? "",
     isTrainer: user.isTrainer === true,
+    lmsEmployeeId: user.lmsEmployeeId ? String(user.lmsEmployeeId) : "",
     pageAccess: Array.isArray(user.pageAccess) ? user.pageAccess : null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -50,14 +53,22 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (body.email !== undefined) {
       user.email = String(body.email || "").trim().toLowerCase() || undefined;
     }
-    if (body.department !== undefined) {
-      user.department = String(body.department || "").trim() || undefined;
+    // `departments` is the multi-select; `department` stays for single-value callers.
+    if (body.departments !== undefined || body.department !== undefined) {
+      user.department = serializeAssignedDepartments(
+        body.departments !== undefined ? body.departments : body.department,
+      );
     }
     if (body.designation !== undefined) {
       user.designation = String(body.designation || "").trim() || undefined;
     }
     if (body.isTrainer !== undefined) {
       user.isTrainer = body.isTrainer === true;
+    }
+    if (body.lmsEmployeeId !== undefined) {
+      const link = await resolveLmsEmployeeLink(body.lmsEmployeeId, id);
+      if (!link.ok) return NextResponse.json({ error: link.error }, { status: 400 });
+      user.lmsEmployeeId = link.employeeId;
     }
     if (body.role !== undefined) {
       const role = String(body.role || "").trim().toLowerCase() as AppRole;

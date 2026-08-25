@@ -15,6 +15,16 @@ interface LmsTokenPayload {
   sub: string; // employee _id
   name: string;
   exp: number; // unix seconds
+  /**
+   * The application login (`User._id`) that was signed in when this token was
+   * issued, or null for a pure learner sign-in with no app session.
+   *
+   * The cookie outlives an app sign-out, so without this a leftover token would
+   * keep opening the previous person's training record for whoever signs in
+   * next on the same browser. `lib/lmsIdentity.ts` rejects the token when this
+   * no longer matches the current app session.
+   */
+  uid?: string | null;
 }
 
 function secret(): string {
@@ -31,16 +41,23 @@ function sign(data: string): string {
   return crypto.createHmac('sha256', secret()).update(data).digest('base64url');
 }
 
-export function createLmsToken(employeeId: string, name: string): { token: string; maxAge: number } {
+export function createLmsToken(
+  employeeId: string,
+  name: string,
+  appUserId?: string | null,
+): { token: string; maxAge: number } {
   const payload: LmsTokenPayload = {
     sub: employeeId,
     name,
     exp: Math.floor(Date.now() / 1000) + MAX_AGE_SECONDS,
+    uid: appUserId || null,
   };
   const body = b64url(JSON.stringify(payload));
   const token = `${body}.${sign(body)}`;
   return { token, maxAge: MAX_AGE_SECONDS };
 }
+
+export type { LmsTokenPayload };
 
 export function verifyLmsToken(token: string | undefined | null): LmsTokenPayload | null {
   if (!token) return null;

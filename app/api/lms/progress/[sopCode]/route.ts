@@ -9,44 +9,12 @@ import {
   lmsServerKeys,
   lmsServerTtl,
 } from '@/lib/lmsCache';
+import { LMS_STEP_IDS, recalcOverallPercent } from '@/lib/lmsCompletion';
 import LearningProgress from '@/models/lms/LearningProgress';
 
 export const dynamic = 'force-dynamic';
 
 type Params = { params: Promise<{ sopCode: string }> };
-
-function recalcOverall(steps: Record<string, unknown>, availableSteps: string[]): number {
-  if (availableSteps.length === 0) return 0;
-
-  const quizKeys = availableSteps.filter((k) => k === 'quiz' || k === 'quizGu');
-  const hasQuiz = quizKeys.length > 0;
-
-  if (hasQuiz) {
-    // The assessment is the only mandatory step. For dual (EN + GU) SOPs,
-    // passing either language quiz completes training and unlocks the certificate.
-    const quizPassed = quizKeys.some((k) => {
-      const s = steps[k] as { completed?: boolean } | undefined;
-      return s?.completed === true;
-    });
-    if (quizPassed) return 100;
-
-    // Before passing, show partial progress from optional steps capped at 90%.
-    const optionalSteps = availableSteps.filter((k) => k !== 'quiz' && k !== 'quizGu');
-    if (optionalSteps.length === 0) return 0;
-    const doneOptional = optionalSteps.filter((k) => {
-      const s = steps[k] as { completed?: boolean } | undefined;
-      return s?.completed === true;
-    }).length;
-    return Math.round((doneOptional / optionalSteps.length) * 90);
-  }
-
-  // No quiz — all steps count equally.
-  const completedCount = availableSteps.filter((key) => {
-    const step = steps[key] as { completed?: boolean } | undefined;
-    return step?.completed === true;
-  }).length;
-  return Math.round((completedCount / availableSteps.length) * 100);
-}
 
 // GET /api/lms/progress/[sopCode]
 export async function GET(_req: NextRequest, { params }: Params) {
@@ -118,8 +86,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
 
     if (typeof step === 'string' && step) {
-      const validSteps = ['videoEn', 'videoGu', 'slidesEn', 'slidesGu', 'sopPdf', 'sopPdfGu', 'quiz', 'quizGu'];
-      if (!validSteps.includes(step)) {
+      if (!(LMS_STEP_IDS as readonly string[]).includes(step)) {
         return NextResponse.json({ error: 'Invalid step' }, { status: 400 });
       }
 
@@ -168,7 +135,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
 
     // Recalculate
-    const overall = recalcOverall(
+    const overall = recalcOverallPercent(
       progress.steps as unknown as Record<string, unknown>,
       progress.availableSteps,
     );

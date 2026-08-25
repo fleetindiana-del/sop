@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import { connectDB } from "@/lib/mongodb";
 import { requireSuperAdmin } from "@/lib/withAuth";
 import { syncEmployeeTrainerFlag } from "@/lib/userTrainerSync";
+import { resolveLmsEmployeeLink } from "@/lib/userEmployeeLink";
+import { serializeAssignedDepartments } from "@/lib/access-control";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
 
@@ -18,6 +20,7 @@ function toPublicUser(user: IUser) {
     department: user.department ?? "",
     designation: user.designation ?? "",
     isTrainer: user.isTrainer === true,
+    lmsEmployeeId: user.lmsEmployeeId ? String(user.lmsEmployeeId) : "",
     pageAccess: Array.isArray(user.pageAccess) ? user.pageAccess : null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -46,6 +49,7 @@ export async function GET() {
         department: u.department ?? "",
         designation: u.designation ?? "",
         isTrainer: u.isTrainer === true,
+        lmsEmployeeId: u.lmsEmployeeId ? String(u.lmsEmployeeId) : "",
         pageAccess: Array.isArray(u.pageAccess) ? u.pageAccess : null,
         createdAt: u.createdAt,
         updatedAt: u.updatedAt,
@@ -71,7 +75,10 @@ export async function POST(request: NextRequest) {
     const password = String(body.password || "");
     const role = (String(body.role || "viewer").trim().toLowerCase() || "viewer") as AppRole;
     const email = String(body.email || "").trim().toLowerCase() || undefined;
-    const department = String(body.department || "").trim() || undefined;
+    // Accepts an array (the multi-select) or a legacy single string.
+    const department = serializeAssignedDepartments(
+      body.departments !== undefined ? body.departments : body.department,
+    );
     const designation = String(body.designation || "").trim() || undefined;
     const isTrainer = body.isTrainer === true;
 
@@ -90,6 +97,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Username already exists" }, { status: 409 });
     }
 
+    const link = await resolveLmsEmployeeLink(body.lmsEmployeeId);
+    if (!link.ok) return NextResponse.json({ error: link.error }, { status: 400 });
+
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await User.create({
       username,
@@ -100,6 +110,7 @@ export async function POST(request: NextRequest) {
       department,
       designation,
       isTrainer,
+      lmsEmployeeId: link.employeeId,
     });
 
     // Trainer access is read from the Employee record, so mirror it there. Only

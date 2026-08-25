@@ -2,15 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Pill, Shield } from "lucide-react";
+import { Shield } from "lucide-react";
 
+// Nutra Label Compliance is still reachable at /compliance/label, but it is no
+// longer surfaced as a module entry point.
 const MODULES = [
   { href: "/compliance", label: "SOP Compliance", icon: Shield, match: (path: string) => path === "/compliance" || path.startsWith("/compliance/report") },
-  { href: "/compliance/label", label: "Nutra Label Compliance", icon: Pill, match: (path: string) => path.startsWith("/compliance/label") },
 ] as const;
 
 export function ComplianceModuleNav() {
   const pathname = usePathname() || "";
+
+  // A single module is just a label — nothing to switch between.
+  if (MODULES.length < 2) return null;
 
   return (
     <nav

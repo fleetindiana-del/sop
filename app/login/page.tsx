@@ -4,12 +4,32 @@ import { signIn, useSession } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { canAccessPath, landingPathForRole } from "@/lib/page-access";
 
-function safeCallbackUrl(raw: string | null): string {
-  if (!raw) return "/dashboard";
+function safeCallbackUrl(raw: string | null): string | null {
+  if (!raw) return null;
   // Only allow same-origin relative paths (block open redirects).
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/dashboard";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
   return raw;
+}
+
+/**
+ * Where this login belongs after signing in.
+ *
+ * Admins / SOP Admins / Trainers land on the dashboard; every other login is a
+ * learner and goes straight to the LMS with their allocated exams and
+ * trainings. A `callbackUrl` is honoured only when the role can actually reach
+ * it — otherwise middleware would just bounce them back here.
+ */
+function destinationFor(
+  role: string | undefined,
+  pageAccess: string[] | undefined,
+  rawCallbackUrl: string | null,
+): string {
+  const requested = safeCallbackUrl(rawCallbackUrl);
+  const pathname = requested ? requested.split(/[?#]/)[0] : "";
+  if (requested && canAccessPath(role, pageAccess, pathname)) return requested;
+  return landingPathForRole(role);
 }
 
 function LoginForm() {
@@ -22,7 +42,11 @@ function LoginForm() {
 
   useEffect(() => {
     if (status === "authenticated" && session) {
-      const next = safeCallbackUrl(searchParams.get("callbackUrl"));
+      const next = destinationFor(
+        session.user?.role,
+        session.user?.pageAccess,
+        searchParams.get("callbackUrl"),
+      );
       window.location.replace(next);
     }
   }, [session, status, searchParams]);
@@ -40,13 +64,13 @@ function LoginForm() {
     if (loading) return;
     setLoading(true);
     setError("");
-    const callbackUrl = safeCallbackUrl(searchParams.get("callbackUrl"));
+    const rawCallbackUrl = searchParams.get("callbackUrl");
     try {
       const result = await signIn("credentials", {
         username: username.trim(),
         password,
         redirect: false,
-        callbackUrl,
+        callbackUrl: safeCallbackUrl(rawCallbackUrl) ?? undefined,
       });
 
       if (!result) {
@@ -66,8 +90,20 @@ function LoginForm() {
         return;
       }
 
+      // The role decides the landing page, so read the freshly issued session
+      // before navigating.
+      let role: string | undefined;
+      let pageAccess: string[] | undefined;
+      try {
+        const fresh = await fetch("/api/auth/session").then((r) => r.json());
+        role = fresh?.user?.role;
+        pageAccess = fresh?.user?.pageAccess;
+      } catch {
+        /* fall back to the default landing page */
+      }
+
       // Hard navigation so the session cookie is always picked up by middleware.
-      window.location.assign(callbackUrl);
+      window.location.assign(destinationFor(role, pageAccess, rawCallbackUrl));
     } catch (err) {
       console.error("[login] signIn error:", err);
       setError(

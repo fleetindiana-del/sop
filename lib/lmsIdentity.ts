@@ -6,6 +6,7 @@ import { verifyLmsToken, LMS_COOKIE } from '@/lib/lms-session';
 import { escapeRegex } from '@/lib/lms-credentials';
 import { departmentsMatch, parseAssignedDepartments } from '@/lib/access-control';
 import Employee from '@/models/Employee';
+import User from '@/models/User';
 
 /**
  * Who the LMS is acting as for this request.
@@ -72,8 +73,26 @@ function preferByDepartment(rows: EmployeeLean[], userDepartment: string): Emplo
 }
 
 /**
+ * The Employee explicitly linked to this login on the User record. This is the
+ * mapping an administrator sets in Login & Passwords, so it wins over every
+ * heuristic below — including for a Super Admin or SOP Admin, whose display
+ * name rarely matches an employee at all.
+ */
+async function linkedEmployee(userId: string): Promise<EmployeeLean | null> {
+  if (!userId) return null;
+  const user = await User.findById(userId).select('lmsEmployeeId').lean<{
+    lmsEmployeeId?: unknown;
+  } | null>();
+  if (!user?.lmsEmployeeId) return null;
+  return Employee.findOne({ _id: user.lmsEmployeeId, isActive: true })
+    .select(LEAN_FIELDS)
+    .lean<EmployeeLean | null>();
+}
+
+/**
  * Map a main-app (NextAuth) user onto their Employee record, most explicit
  * link first:
+ *   0. the administrator-set link      (User.lmsEmployeeId)
  *   1. the generated LMS handle        (Employee.lmsUsername === username)
  *   2. the employee code               (Employee.employeeId  === username)
  *   3. the display name                (Employee.name        === name)
@@ -85,11 +104,15 @@ function preferByDepartment(rows: EmployeeLean[], userDepartment: string): Emplo
  * is worse than asking an admin to set the LMS username.
  */
 async function employeeForAppUser(
+  userId: string,
   username: string,
   name: string,
   department: string,
 ): Promise<{ employee: EmployeeLean } | { problem: LmsIdentityProblem }> {
   await connectDB();
+
+  const linked = await linkedEmployee(userId);
+  if (linked) return { employee: linked };
 
   if (username) {
     const byHandle = await Employee.findOne({ lmsUsername: ci(username), isActive: true })
@@ -125,17 +148,27 @@ async function employeeForAppUser(
 export async function resolveLmsIdentityDetailed(): Promise<LmsIdentityResult> {
   const jar = await cookies();
   const payload = verifyLmsToken(jar.get(LMS_COOKIE)?.value);
-  if (payload) {
+  const session = await getServerSession(authOptions);
+  const userId = String(session?.user?.id || '').trim();
+
+  // The learner cookie lives 12h and survives an application sign-out, so it is
+  // honoured only for the login it was issued under. Without this check the
+  // previous person's cookie outranks whoever signs in next on the same
+  // browser, and the LMS opens their training record instead.
+  //
+  // A token minted before this field existed has `uid === undefined`, which
+  // matches only when nobody is signed in to the application — so a stale one
+  // is discarded rather than trusted.
+  if (payload && (payload.uid ?? null) === (userId || null)) {
     return { ok: true, identity: { sub: payload.sub, name: payload.name, source: 'lms' } };
   }
 
-  const session = await getServerSession(authOptions);
   const username = String(session?.user?.username || '').trim();
   const name = String(session?.user?.name || '').trim();
   const department = String(session?.user?.department || '').trim();
   if (!username && !name) return { ok: false, problem: 'no-session' };
 
-  const found = await employeeForAppUser(username, name, department);
+  const found = await employeeForAppUser(userId, username, name, department);
   if ('problem' in found) return { ok: false, problem: found.problem };
 
   return {
@@ -153,10 +186,10 @@ export async function resolveLmsIdentity(): Promise<LmsIdentity | null> {
 /** Message for a person whose main login could not be linked to a learner. */
 export function lmsIdentityProblemMessage(problem: LmsIdentityProblem): string {
   if (problem === 'ambiguous-employee-record') {
-    return 'Your login matches more than one employee record. Ask an administrator to set your LMS username on the correct employee.';
+    return 'Your login matches more than one employee record. Ask a Super Admin to link your login to the correct employee in Login & Passwords.';
   }
   if (problem === 'no-employee-record') {
-    return 'No active employee record is linked to your login. Ask an administrator to add you to the Employee Master or set your LMS username.';
+    return 'No active employee record is linked to your login. Ask a Super Admin to link your login to an employee in Login & Passwords, or to add you to the Employee Master.';
   }
   return 'Not authenticated';
 }

@@ -15,6 +15,15 @@ export interface IUser extends Document {
    */
   isTrainer?: boolean;
   /**
+   * The Employee this login *is*, in the learning module.
+   *
+   * Set from Login & Passwords. It is the only unambiguous link between an
+   * application login and an LMS learner record — without it `lib/lmsIdentity.ts`
+   * has to guess from the username/display name, which fails outright when two
+   * active employees share a name. Unset = fall back to that guess.
+   */
+  lmsEmployeeId?: mongoose.Types.ObjectId;
+  /**
    * Allowlist of page keys from `lib/page-registry.ts`.
    * Undefined = never configured, so legacy role defaults apply.
    */
@@ -33,6 +42,7 @@ const UserSchema = new Schema<IUser>(
     department: { type: String, trim: true },
     designation: { type: String, trim: true },
     isTrainer: { type: Boolean, default: false },
+    lmsEmployeeId: { type: Schema.Types.ObjectId, ref: "Employee", default: undefined },
     pageAccess: { type: [String], default: undefined },
   },
   { timestamps: true },

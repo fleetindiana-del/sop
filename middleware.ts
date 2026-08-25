@@ -1,7 +1,7 @@
 import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
 import type { AppRole } from "@/lib/auth";
-import { canAccessPath } from "@/lib/page-access";
+import { canAccessPath, landingPathForRole } from "@/lib/page-access";
 
 function isPublicPath(pathname: string): boolean {
   return pathname === "/compliance/label" || pathname.startsWith("/compliance/label/");
@@ -18,8 +18,10 @@ export default withAuth(
     const pageAccess = req.nextauth.token?.pageAccess as string[] | undefined;
 
     // Page permissions come from lib/page-registry.ts, managed at /admin/access.
+    // Learner-only logins land in the LMS instead of the dashboard, which they
+    // cannot reach either.
     if (!canAccessPath(role, pageAccess, path)) {
-      const url = new URL("/dashboard", req.url);
+      const url = new URL(landingPathForRole(role), req.url);
       url.searchParams.set("denied", path);
       return NextResponse.redirect(url);
     }

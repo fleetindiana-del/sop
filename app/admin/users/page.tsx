@@ -31,6 +31,8 @@ interface AppUser {
   department: string;
   designation: string;
   isTrainer?: boolean;
+  /** Employee `_id` this login is in the LMS; '' when never linked. */
+  lmsEmployeeId?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -38,6 +40,14 @@ interface AppUser {
 interface DesignationOption {
   id: string;
   name: string;
+}
+
+interface EmployeeOption {
+  id: string;
+  name: string;
+  department: string;
+  designation: string;
+  employeeCode: string;
 }
 
 const ROLES: AppRole[] = ['admin', 'sop_admin', 'trainer', 'viewer'];
@@ -50,7 +60,11 @@ const ROLE_LABEL: Record<AppRole, string> = {
   trainer: 'Trainer',
   viewer: 'Viewer',
 };
-const DEPARTMENTS = ['QA', 'QC', 'Microbiology', 'Production', 'Store', 'Engineering', 'Personnel', 'General'];
+/**
+ * Only used until `/api/departments` answers — the real catalogue is loaded at
+ * mount so a department added after this file was written is still selectable.
+ */
+const FALLBACK_DEPARTMENTS = ['QA', 'QC', 'Microbiology', 'Production', 'Store', 'Engineering', 'Personnel'];
 
 const ROLE_STYLE: Record<AppRole, string> = {
   admin: 'bg-violet-100 text-violet-800 border-violet-200',
@@ -64,12 +78,19 @@ const emptyForm = {
   name: '',
   email: '',
   role: 'viewer' as AppRole,
-  department: 'QA',
+  /** Assigned departments. Stored on the user as a comma-separated list. */
+  departments: [] as string[],
   designation: '',
   isTrainer: false,
+  lmsEmployeeId: '',
   password: '',
   confirmPassword: '',
 };
+
+/** Split the stored comma-separated `User.department` back into a list. */
+function splitDepartments(value: string): string[] {
+  return value.split(',').map((d) => d.trim()).filter(Boolean);
+}
 
 /**
  * The Trainer flag only grants LMS trainer access once it reaches the matching
@@ -104,6 +125,8 @@ export default function AdminUsersPage() {
   const [editing, setEditing] = useState<AppUser | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [departments, setDepartments] = useState<string[]>(FALLBACK_DEPARTMENTS);
+  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,6 +171,51 @@ export default function AdminUsersPage() {
     return () => { cancelled = true; };
   }, []);
 
+  // The full department catalogue (SOP registry ∪ Department master) so every
+  // department can be assigned here, not just a list hardcoded in this file.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/departments');
+        const json = await res.json();
+        if (cancelled || !res.ok || !Array.isArray(json.departments)) return;
+        const list = json.departments
+          .map((d: unknown) => String(d || '').trim())
+          .filter(Boolean);
+        if (list.length) setDepartments(list);
+      } catch {
+        /* keep the fallback list */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Employee Master, for linking a login to the learner record it *is* in the
+  // LMS. skipSync keeps this off the slow matrix re-scan path.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/employees?skipSync=1');
+        const json = await res.json();
+        if (cancelled || !res.ok || !Array.isArray(json.employees)) return;
+        setEmployees(
+          json.employees.map((e: Record<string, unknown>) => ({
+            id: String(e._id),
+            name: String(e.name || '').trim(),
+            department: String(e.department || '').trim(),
+            designation: String(e.designation || '').trim(),
+            employeeCode: String(e.employeeId || '').trim(),
+          })).filter((e: EmployeeOption) => e.name),
+        );
+      } catch {
+        /* the picker degrades to "not linked" */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return users;
@@ -175,9 +243,10 @@ export default function AdminUsersPage() {
       name: user.name,
       email: user.email,
       role: user.role,
-      department: user.department || 'QA',
+      departments: splitDepartments(user.department || ''),
       designation: user.designation,
       isTrainer: user.isTrainer === true,
+      lmsEmployeeId: user.lmsEmployeeId || '',
       password: '',
       confirmPassword: '',
     });
@@ -213,13 +282,14 @@ export default function AdminUsersPage() {
 
     try {
       if (editing) {
-        const payload: Record<string, string | boolean> = {
+        const payload: Record<string, string | boolean | string[]> = {
           name: form.name.trim(),
           email: form.email.trim(),
           role: form.role,
-          department: form.department,
+          departments: form.departments,
           designation: form.designation.trim(),
           isTrainer: form.isTrainer,
+          lmsEmployeeId: form.lmsEmployeeId,
         };
         if (form.password) payload.password = form.password;
 
@@ -244,9 +314,10 @@ export default function AdminUsersPage() {
             name: form.name.trim(),
             email: form.email.trim(),
             role: form.role,
-            department: form.department,
+            departments: form.departments,
             designation: form.designation.trim(),
             isTrainer: form.isTrainer,
+            lmsEmployeeId: form.lmsEmployeeId,
             password: form.password,
           }),
         });
@@ -479,31 +550,73 @@ export default function AdminUsersPage() {
                 />
               </label>
 
-              <div className="grid grid-cols-2 gap-3">
-                <label className="block text-xs font-semibold text-slate-600">
-                  Role
-                  <select
-                    value={form.role}
-                    onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as AppRole }))}
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                  >
-                    {ROLES.map((r) => (
-                      <option key={r} value={r}>{ROLE_LABEL[r]}</option>
+              <label className="block text-xs font-semibold text-slate-600">
+                Role
+                <select
+                  value={form.role}
+                  onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as AppRole }))}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                >
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>{ROLE_LABEL[r]}</option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="text-xs font-semibold text-slate-600">
+                Departments
+                <div className="mt-1 flex flex-wrap gap-1.5 rounded-lg border border-slate-200 p-2">
+                  {departments.map((d) => {
+                    const on = form.departments.some(
+                      (x) => x.toLowerCase() === d.toLowerCase(),
+                    );
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => setForm((f) => ({
+                          ...f,
+                          departments: on
+                            ? f.departments.filter((x) => x.toLowerCase() !== d.toLowerCase())
+                            : [...f.departments, d],
+                        }))}
+                        className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+                          on
+                            ? 'border-violet-300 bg-violet-100 text-violet-800'
+                            : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
+                        }`}
+                      >
+                        {d}
+                      </button>
+                    );
+                  })}
+                  {/* A department this user already holds that is no longer in the
+                      catalogue must stay visible, or saving would drop it. */}
+                  {form.departments
+                    .filter((d) => !departments.some((x) => x.toLowerCase() === d.toLowerCase()))
+                    .map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        title="No longer in the department master — click to remove"
+                        onClick={() => setForm((f) => ({
+                          ...f,
+                          departments: f.departments.filter((x) => x !== d),
+                        }))}
+                        className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800"
+                      >
+                        {d} ×
+                      </button>
                     ))}
-                  </select>
-                </label>
-                <label className="block text-xs font-semibold text-slate-600">
-                  Department
-                  <select
-                    value={form.department}
-                    onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                  >
-                    {DEPARTMENTS.map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                </label>
+                </div>
+                <p className="mt-1 font-normal text-[11px] text-slate-400">
+                  {form.role === 'admin' || form.role === 'sop_admin'
+                    ? 'Super Admin and SOP Admin see every department regardless of what is selected here.'
+                    : form.departments.length === 0
+                      ? 'No department selected — this login will see no department-scoped data.'
+                      : `Sees data for ${form.departments.length} department${form.departments.length === 1 ? '' : 's'}.`}
+                </p>
               </div>
 
               <label className="block text-xs font-semibold text-slate-600">
@@ -524,6 +637,30 @@ export default function AdminUsersPage() {
                     <option key={d.id} value={d.name}>{d.name}</option>
                   ))}
                 </select>
+              </label>
+
+              <label className="block text-xs font-semibold text-slate-600">
+                LMS employee record
+                <select
+                  value={form.lmsEmployeeId}
+                  onChange={(e) => setForm((f) => ({ ...f, lmsEmployeeId: e.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                >
+                  <option value="">— Match automatically by name —</option>
+                  {employees.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                      {e.employeeCode ? ` (${e.employeeCode})` : ''}
+                      {e.department ? ` · ${e.department}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 font-normal text-[11px] text-slate-400">
+                  Which learner this login opens in the LMS. Set it whenever two
+                  employees share a name, or for an admin whose display name does
+                  not match their employee record — otherwise the LMS has to guess
+                  and may refuse to open.
+                </p>
               </label>
 
               <label className="flex items-start gap-2.5 rounded-xl border border-sky-100 bg-sky-50/60 p-3">

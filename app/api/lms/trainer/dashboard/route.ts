@@ -30,21 +30,18 @@ import {
   type LmsScheduleStatus,
 } from '@/lib/lmsTrainingCycle';
 import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
+import {
+  componentStatuses,
+  isSopComplete,
+  isStepDone,
+  type ComponentKey,
+  type ComponentStatus,
+} from '@/lib/lmsCompletion';
 import type { ISOP } from '@/models/SOP';
 
 export const dynamic = 'force-dynamic';
 
-type ComponentStatus = 'completed' | 'not_completed' | 'na';
 type SopStatus = 'completed' | 'not_completed';
-
-const COMPONENT_GROUPS = {
-  videos: ['videoEn', 'videoGu'],
-  slides: ['slidesEn', 'slidesGu'],
-  sopDoc: ['sopPdf', 'sopPdfGu'],
-  mcq: ['quiz', 'quizGu'],
-} as const;
-
-type ComponentKey = keyof typeof COMPONENT_GROUPS;
 
 function stripVersion(code: string): string {
   return String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
@@ -52,23 +49,6 @@ function stripVersion(code: string): string {
 
 function empKey(department: string, name: string): string {
   return `${department}||${name}`.trim().toLowerCase();
-}
-
-function isStepDone(steps: Record<string, unknown> | undefined, stepId: string): boolean {
-  const s = steps?.[stepId] as { completed?: boolean } | undefined;
-  return Boolean(s && s.completed);
-}
-
-function componentStatus(
-  availableSet: Set<string>,
-  steps: Record<string, unknown> | undefined,
-  groupSteps: readonly string[],
-): ComponentStatus {
-  const present = groupSteps.filter((s) => availableSet.has(s));
-  if (present.length === 0) return 'na';
-  const done = present.filter((s) => isStepDone(steps, s)).length;
-  if (done === present.length) return 'completed';
-  return 'not_completed';
 }
 
 export interface TrainerSopRow {
@@ -116,7 +96,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const body = await getOrBuildLmsCache(
-      `${lmsServerKeys.trainerDashboard(trainer.employeeId)}:${deptParam || 'all'}`,
+      // The scope is part of the key: the same employee sees every department
+      // through the admin login and only their own through the learner login.
+      `${lmsServerKeys.trainerDashboard(trainer.employeeId)}:${deptParam || 'all'}:${
+        trainer.allDepartments ? 'admin' : 'trainer'
+      }`,
       lmsServerTtl.adminEmployeeTraining,
       async () => {
         await connectDB();
@@ -131,6 +115,7 @@ export async function GET(req: NextRequest) {
               name: trainer.name,
               department: trainer.department,
               trainerDepartments: trainer.trainerDepartments,
+              allDepartments: trainer.allDepartments === true,
             },
             trainingCycleStart: formatCycleStart(cycle),
             records: [] as TrainerEmployeeRecord[],
@@ -264,9 +249,12 @@ export async function GET(req: NextRequest) {
             totalSteps += available.length;
             doneSteps += doneCount;
 
-            const fullyDone =
-              (prog?.status === 'completed' && (prog.overallPercentage ?? 0) >= 100) ||
-              (available.length > 0 && doneCount === available.length);
+            const fullyDone = isSopComplete({
+              steps,
+              availableSteps: available,
+              status: prog?.status,
+              overallPercentage: prog?.overallPercentage,
+            });
             const status: SopStatus = fullyDone ? 'completed' : 'not_completed';
             if (status === 'completed') completedSops++;
             else notCompletedSops++;
@@ -293,12 +281,7 @@ export async function GET(req: NextRequest) {
             if (hasGujaratiScript(english)) english = a.sopCode;
             const gujarati = resolved?.gujaratiName;
 
-            const components = Object.fromEntries(
-              (Object.keys(COMPONENT_GROUPS) as ComponentKey[]).map((key) => [
-                key,
-                componentStatus(availableSet, steps, COMPONENT_GROUPS[key]),
-              ]),
-            ) as Record<ComponentKey, ComponentStatus>;
+            const components = componentStatuses(availableSet, steps);
 
             const progressPct =
               available.length > 0
@@ -380,6 +363,7 @@ export async function GET(req: NextRequest) {
             name: trainer.name,
             department: trainer.department,
             trainerDepartments: trainer.trainerDepartments,
+            allDepartments: trainer.allDepartments === true,
           },
           trainingCycleStart: formatCycleStart(cycle),
           records,

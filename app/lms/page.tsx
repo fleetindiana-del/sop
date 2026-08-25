@@ -11,7 +11,8 @@ import {
   UserCheck,
 } from 'lucide-react';
 import Link from 'next/link';
-import { signOut } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
+import { isPrivilegedRole } from '@/lib/page-access';
 import {
   clearLmsClientCache,
   lmsClientFields,
@@ -27,6 +28,15 @@ import {
   localDateOnlyIso,
   type LmsScheduleStatus,
 } from '@/lib/lmsTrainingCycle';
+import {
+  buildProgressMap,
+  getProgress,
+  isActivelyInProgress,
+  isFullyComplete,
+  progressLookupKey,
+  stripVersion,
+  type ProgressRecord,
+} from '@/lib/lmsProgressLookup';
 import type { SopAssetFlags } from '@/app/api/lms/assets/route';
 import type { TrainerBulkBridge, TrainerTableData } from '@/components/lms/TrainerLmsSchedulePanel';
 
@@ -87,14 +97,6 @@ interface CertRecord {
   completedAt: string;
   quizScore: number;
   hasPractical: boolean;
-}
-
-interface ProgressRecord {
-  sopCode: string;
-  status: 'not_started' | 'in_progress' | 'completed';
-  overallPercentage: number;
-  lastAccessedAt: string;
-  completedAt?: string;
 }
 
 type FilterTab = 'all' | 'in_progress' | 'completed' | 'overdue' | 'due' | 'upcoming' | 'ignored';
@@ -214,62 +216,6 @@ function validAssignments(list: SopAssignment[]): SopAssignment[] {
   return list.filter((a) => !isInvalidSopAssignmentCode(a.sopCode));
 }
 
-function stripVersion(code: string): string {
-  return String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
-}
-
-/** Normalize SOP codes so QAGE4 and QAGE04 resolve to the same progress lookup. */
-function progressLookupKey(code: string): string {
-  return stripVersion(code).replace(/^([A-Z]+)0+(\d+)/, '$1$2');
-}
-
-function buildProgressMap(records: ProgressRecord[]): Map<string, ProgressRecord> {
-  const map = new Map<string, ProgressRecord>();
-  for (const p of records) {
-    const exact = String(p.sopCode || '').trim();
-    if (!exact) continue;
-    const norm = progressLookupKey(exact);
-    const prefer = (existing: ProgressRecord | undefined, next: ProgressRecord) => {
-      if (!existing) return next;
-      // Keep the more advanced / more recently accessed record for a SOP family.
-      if ((next.overallPercentage ?? 0) !== (existing.overallPercentage ?? 0)) {
-        return (next.overallPercentage ?? 0) > (existing.overallPercentage ?? 0) ? next : existing;
-      }
-      return new Date(next.lastAccessedAt ?? 0).getTime() >= new Date(existing.lastAccessedAt ?? 0).getTime()
-        ? next
-        : existing;
-    };
-    map.set(exact, prefer(map.get(exact), p));
-    map.set(norm, prefer(map.get(norm), p));
-    const stripped = stripVersion(exact);
-    if (stripped !== exact && stripped !== norm) {
-      map.set(stripped, prefer(map.get(stripped), p));
-    }
-  }
-  return map;
-}
-
-function getProgress(
-  map: Map<string, ProgressRecord>,
-  sopCode: string,
-): ProgressRecord | undefined {
-  const exact = String(sopCode || '').trim();
-  if (!exact) return undefined;
-  return (
-    map.get(exact) ||
-    map.get(progressLookupKey(exact)) ||
-    map.get(stripVersion(exact))
-  );
-}
-
-/** True only when the learner has real started progress on this SOP. */
-function isActivelyInProgress(progress?: ProgressRecord): boolean {
-  if (!progress) return false;
-  if (progress.status !== 'in_progress') return false;
-  if ((progress.overallPercentage ?? 0) <= 0) return false;
-  return true;
-}
-
 function cleanDisplayText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -285,11 +231,6 @@ function displayTrainingName(a: SopAssignment): { english: string; gujarati?: st
     english = gujarati || a.sopCode;
   }
   return { english, gujarati: gujarati && gujarati !== english ? gujarati : undefined };
-}
-
-/** Certificate only when training is fully done (100%), not the 90% pre-quiz cap. */
-function isFullyComplete(progress?: ProgressRecord): boolean {
-  return progress?.status === 'completed' && (progress.overallPercentage ?? 0) >= 100;
 }
 
 /** Document expiry (calendar day), independent of training-schedule due/overdue. */
@@ -1403,6 +1344,9 @@ function Dashboard({
   onLogout: () => void;
 }) {
   const router = useRouter();
+  // Present only for the main-application login; LMS-only learners have none.
+  const { data: appSession } = useSession();
+  const isPrivileged = isPrivilegedRole(appSession?.user?.role);
   const [assignments, setAssignments] = useState<SopAssignment[]>([]);
   const [progressMap, setProgressMap] = useState<Map<string, ProgressRecord>>(new Map());
   const [certificates, setCertificates] = useState<CertRecord[]>([]);
@@ -1800,6 +1744,24 @@ function Dashboard({
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            {/* Every learner: my completed vs remaining trainings. */}
+            <Link
+              href="/lms/my-record"
+              className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+              title="Which trainings you have completed and how many are left"
+            >
+              <ClipboardList className="h-3.5 w-3.5" /> Employee Training Record
+            </Link>
+            {/* Admin / SOP Admin / Trainer: everyone's training, every department. */}
+            {isPrivileged && (
+              <Link
+                href="/lms/admin/employee-training"
+                className="flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-100"
+                title="Training status for every employee and trainer, by department"
+              >
+                <UserCheck className="h-3.5 w-3.5" /> All Employees
+              </Link>
+            )}
             {employee.isTrainer && (
               <Link
                 href="/lms/trainer"
@@ -2033,6 +1995,41 @@ function Dashboard({
   );
 }
 
+/**
+ * The login card, plus a way through for administrators.
+ *
+ * An Admin / SOP Admin / Trainer often has no Employee record of their own, so
+ * the learner sign-in is a dead end for them — but the organisation-wide
+ * training view is exactly what they came for. Offer it here rather than
+ * leaving them at a form they cannot complete.
+ */
+function LmsSignedOut({
+  notice,
+  onLogin,
+}: {
+  notice?: string;
+  onLogin: (emp: Employee) => void;
+}) {
+  const { data: session } = useSession();
+
+  return (
+    <>
+      <LoginCard notice={notice} onLogin={onLogin} />
+      {isPrivilegedRole(session?.user?.role) && (
+        <div className="fixed inset-x-0 bottom-6 flex justify-center px-4">
+          <Link
+            href="/lms/admin/employee-training"
+            className="flex items-center gap-1.5 rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-semibold text-violet-700 shadow-lg hover:bg-violet-50"
+          >
+            <UserCheck className="h-3.5 w-3.5" />
+            View training records for all employees
+          </Link>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ─── Root page ────────────────────────────────────────────────────────────────
 
 export default function LmsPage() {
@@ -2086,7 +2083,7 @@ export default function LmsPage() {
   }
 
   if (!employee) {
-    return <LoginCard notice={loginNotice} onLogin={setEmployee} />;
+    return <LmsSignedOut notice={loginNotice} onLogin={setEmployee} />;
   }
 
   return (

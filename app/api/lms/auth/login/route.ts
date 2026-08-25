@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { cookies } from 'next/headers';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
 import { createLmsToken, LMS_COOKIE } from '@/lib/lms-session';
 import { escapeRegex } from '@/lib/lms-credentials';
@@ -33,7 +35,14 @@ export async function POST(req: NextRequest) {
     const ok = await bcrypt.compare(String(password), employee.lmsPasswordHash);
     if (!ok) return invalid;
 
-    const { token, maxAge } = createLmsToken(employee._id.toString(), employee.name);
+    // Bind the cookie to the application login (if any) that created it, so it
+    // stops being honoured once somebody else signs in on this browser.
+    const session = await getServerSession(authOptions);
+    const { token, maxAge } = createLmsToken(
+      employee._id.toString(),
+      employee.name,
+      session?.user?.id || null,
+    );
     const jar = await cookies();
     jar.set(LMS_COOKIE, token, {
       httpOnly: true,

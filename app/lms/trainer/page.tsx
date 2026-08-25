@@ -14,6 +14,7 @@ import {
 import { TrainerMonthlyExams, DeptFilterBtn } from '@/components/lms/TrainerMonthlyExams';
 import { TrainerRosterPanel } from '@/components/lms/TrainerRosterPanel';
 import { TrainerAttendancePanel } from '@/components/lms/TrainerAttendancePanel';
+import { getDeptLabelClasses, normalizeDepartment } from '@/lib/department-colors';
 
 type ScheduleStatus = 'ignored' | 'upcoming' | 'due' | 'overdue' | 'missed';
 type SopStatus = 'completed' | 'not_completed';
@@ -60,6 +61,8 @@ interface DashboardPayload {
     name: string;
     department: string;
     trainerDepartments: string[];
+    /** Scope came from the Super Admin / SOP Admin role — every department. */
+    allDepartments?: boolean;
   };
   trainingCycleStart: string;
   records: TrainerEmployeeRecord[];
@@ -319,10 +322,39 @@ export default function LmsTrainerPage() {
             <div>
               <h1 className="text-sm font-bold tracking-tight text-gray-900">Trainer View</h1>
               {data && (
-                <p className="text-[11px] text-gray-400">
-                  {data.trainer.name} · {data.trainer.trainerDepartments.join(', ')}
-                  {data.trainingCycleStart ? ` · Cycle from ${data.trainingCycleStart}` : ''}
-                </p>
+                <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[11px] text-gray-400">
+                  <span>{data.trainer.name}</span>
+                  <span aria-hidden>·</span>
+                  {/* The departments a trainer covers drive every number on this
+                      board, so name them rather than leaving them implied. */}
+                  {data.trainer.allDepartments ? (
+                    <span
+                      className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700"
+                      title={`Administrator scope — all ${depts.length} departments`}
+                    >
+                      All departments
+                    </span>
+                  ) : depts.length === 0 ? (
+                    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                      No department assigned
+                    </span>
+                  ) : (
+                    depts.map((d) => (
+                      <span
+                        key={d}
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${getDeptLabelClasses(normalizeDepartment(d))}`}
+                      >
+                        {normalizeDepartment(d)}
+                      </span>
+                    ))
+                  )}
+                  {data.trainingCycleStart ? (
+                    <>
+                      <span aria-hidden>·</span>
+                      <span>Cycle from {data.trainingCycleStart}</span>
+                    </>
+                  ) : null}
+                </div>
               )}
             </div>
           </div>

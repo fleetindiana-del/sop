@@ -28,6 +28,25 @@ export function departmentsMatch(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
+/**
+ * Normalise submitted department(s) into the comma-separated form
+ * `User.department` stores. Accepts an array (multi-select) or a single string,
+ * so both the user-setup form and older single-value callers work unchanged.
+ * Returns `undefined` when nothing is assigned.
+ */
+export function serializeAssignedDepartments(value: unknown): string | undefined {
+  const list = Array.isArray(value)
+    ? value.map((d) => String(d ?? "").trim())
+    : parseAssignedDepartments(String(value ?? ""));
+  const unique: string[] = [];
+  for (const name of list) {
+    if (!name) continue;
+    if (unique.some((d) => departmentsMatch(d, name))) continue;
+    unique.push(name);
+  }
+  return unique.length ? unique.join(", ") : undefined;
+}
+
 export function canAccessDepartment(
   role: AppRole,
   userDepartment: string | undefined | null,

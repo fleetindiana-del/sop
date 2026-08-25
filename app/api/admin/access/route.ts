@@ -10,13 +10,14 @@ import { isDashboardDepartmentName } from "@/lib/dashboardDepartments";
 import { parseAssignedDepartments } from "@/lib/access-control";
 import { effectivePageKeys } from "@/lib/page-access";
 import { APP_PAGES, sanitizePageAccess } from "@/lib/page-registry";
+import type { AppRole } from "@/lib/auth";
 
 type UserAccessRow = {
   _id: mongoose.Types.ObjectId;
   username: string;
   name: string;
   email?: string;
-  role: "admin" | "trainer" | "viewer";
+  role: AppRole;
   department?: string;
   designation?: string;
   pageAccess?: string[];
@@ -114,14 +115,19 @@ export async function PATCH(request: NextRequest) {
         return NextResponse.json({ error: "departments must be an array" }, { status: 400 });
       }
       const valid = new Set((await listDepartments()).map((d) => d.toLowerCase()));
-      const cleaned = [
-        ...new Set(
-          body.departments
-            .map((d: unknown) => String(d || "").trim())
-            .filter((d: string) => d && valid.has(d.toLowerCase())),
-        ),
-      ];
-      user.department = cleaned.length ? cleaned.join(", ") : undefined;
+      const requested = [
+        ...new Set(body.departments.map((d: unknown) => String(d || "").trim()).filter(Boolean)),
+      ] as string[];
+      // Report unknown names instead of dropping them: silently saving a subset
+      // looks like the change applied when it did not.
+      const unknown = requested.filter((d) => !valid.has(d.toLowerCase()));
+      if (unknown.length) {
+        return NextResponse.json(
+          { error: `Unknown department(s): ${unknown.join(", ")}` },
+          { status: 400 },
+        );
+      }
+      user.department = requested.length ? requested.join(", ") : undefined;
     }
 
     await user.save();

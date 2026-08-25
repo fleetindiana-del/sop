@@ -3,14 +3,42 @@ import { parseAssignedDepartments, departmentsMatch } from "@/lib/access-control
 
 type RoleLike = string | undefined | null;
 
+/** The LMS learner module — the only area a learner-only login reaches. */
+export const LMS_LANDING_PATH = "/lms";
+
+/**
+ * Roles that run the application: Super Admin, SOP Admin and Trainer. Everyone
+ * else (i.e. `viewer`) is a learner — they sign in to take their allocated
+ * exams and trainings, not to administer SOPs.
+ */
+const PRIVILEGED_ROLES = new Set(["admin", "sop_admin", "trainer"]);
+
+export function isPrivilegedRole(role: RoleLike): boolean {
+  return PRIVILEGED_ROLES.has(String(role || ""));
+}
+
+/** A login with no application sections — LMS only. */
+export function isLearnerOnly(role: RoleLike): boolean {
+  return !isPrivilegedRole(role);
+}
+
+/** Where a login lands after sign-in, and where a denied request is sent. */
+export function landingPathForRole(role: RoleLike): string {
+  return isLearnerOnly(role) ? LMS_LANDING_PATH : "/dashboard";
+}
+
 /**
  * Page-level access.
  *
  * - Super Admin reaches everything; SOP Admin everything except the pages
  *   flagged `superAdminOnly` (user administration).
- * - A user whose `pageAccess` was never configured (`undefined`/`null`) keeps
- *   the legacy role behaviour: every page except the admin-only ones and those
- *   flagged `restrictedByDefault`.
+ * - An explicit grant in `pageAccess` always wins, whatever the role.
+ * - A learner-only role (see {@link isLearnerOnly}) reaches nothing else in the
+ *   registry — not even the pages flagged `alwaysAllowed`. `/lms` itself is not
+ *   a registry page, so it stays open to them.
+ * - A privileged user whose `pageAccess` was never configured
+ *   (`undefined`/`null`) keeps the legacy role behaviour: every page except the
+ *   admin-only ones and those flagged `restrictedByDefault`.
  * - Once `pageAccess` is set (an array, possibly empty) it is the allowlist,
  *   plus pages flagged `alwaysAllowed` in the registry.
  * - Paths not present in the registry are not gated here.
@@ -25,9 +53,12 @@ export function canAccessPageKey(
   if (page.superAdminOnly) return role === "admin";
   if (role === "admin" || role === "sop_admin") return true;
   if (page.adminOnly) return false;
+  // An administrator can still hand a learner a specific page.
+  if (Array.isArray(pageAccess) && pageAccess.includes(page.key)) return true;
+  if (isLearnerOnly(role)) return false;
   if (page.alwaysAllowed) return true;
   if (!Array.isArray(pageAccess)) return !page.restrictedByDefault;
-  return pageAccess.includes(page.key);
+  return false;
 }
 
 export function canAccessPath(

@@ -31,6 +31,15 @@ import {
   getTrainingCycleStart,
   type LmsScheduleStatus,
 } from '@/lib/lmsTrainingCycle';
+import {
+  COMPONENT_GROUPS,
+  componentStatuses,
+  isSopComplete,
+  isStepDone,
+  type ComponentKey,
+  type ComponentStatus,
+  type SopStatus,
+} from '@/lib/lmsCompletion';
 import type { ISOP } from '@/models/SOP';
 
 export const dynamic = 'force-dynamic';
@@ -89,20 +98,7 @@ async function buildSopScheduleByDept(): Promise<Map<string, Map<string, number[
   return byDept;
 }
 
-/** Per training-component completion state for a single SOP. */
-export type ComponentStatus = 'completed' | 'not_completed' | 'na';
-/** Roll-up completion state for a single assigned SOP. */
-export type SopStatus = 'completed' | 'not_completed';
-
-// Which raw progress step keys feed each component column shown to the admin.
-const COMPONENT_GROUPS = {
-  videos: ['videoEn', 'videoGu'],
-  slides: ['slidesEn', 'slidesGu'],
-  sopDoc: ['sopPdf', 'sopPdfGu'],
-  mcq:    ['quiz', 'quizGu'],
-} as const;
-
-type ComponentKey = keyof typeof COMPONENT_GROUPS;
+export type { ComponentStatus, SopStatus } from '@/lib/lmsCompletion';
 
 export interface SopBreakdown {
   sopCode: string;
@@ -153,26 +149,6 @@ export interface EmployeeTrainingRecord {
 
 function empKey(department: string, name: string): string {
   return `${department}||${name}`.trim().toLowerCase();
-}
-
-type StepState = { completed?: boolean } | undefined;
-
-function isStepDone(steps: Record<string, unknown> | undefined, stepId: string): boolean {
-  const s = steps?.[stepId] as StepState;
-  return Boolean(s && s.completed);
-}
-
-/** Status of a component column given the SOP's available steps + learner progress. */
-function componentStatus(
-  availableSet: Set<string>,
-  steps: Record<string, unknown> | undefined,
-  groupSteps: readonly string[],
-): ComponentStatus {
-  const present = groupSteps.filter((s) => availableSet.has(s));
-  if (present.length === 0) return 'na'; // SOP has no material of this kind
-  const done = present.filter((s) => isStepDone(steps, s)).length;
-  if (done === present.length) return 'completed';
-  return 'not_completed';
 }
 
 function buildMonthlyBreakdown(sops: SopBreakdown[]) {
@@ -237,14 +213,26 @@ export async function GET(req: NextRequest) {
 
         // Progress keyed by employeeId + uppercased SOP code (matches the
         // convention used by the training-status endpoint).
+        // `status` / `overallPercentage` are the learner's own stored result —
+        // what they were shown and what their certificate was issued against.
+        // Without them this roll-up recomputed completion from raw steps alone
+        // and disagreed with the learner's own screen.
         const progressList = await LearningProgress.find({ employeeId: { $in: employeeIds } })
-          .select('employeeId sopCode steps')
+          .select('employeeId sopCode steps status overallPercentage')
           .lean();
-        const progressMap = new Map<string, Record<string, unknown>>();
+        const progressMap = new Map<string, {
+          steps: Record<string, unknown>;
+          status?: string;
+          overallPercentage?: number;
+        }>();
         for (const p of progressList) {
           const id  = String((p as { employeeId: unknown }).employeeId);
           const sop = String((p as { sopCode: string }).sopCode).toUpperCase();
-          progressMap.set(`${id}::${sop}`, (p as { steps?: Record<string, unknown> }).steps || {});
+          progressMap.set(`${id}::${sop}`, {
+            steps: (p as { steps?: Record<string, unknown> }).steps || {},
+            status: (p as { status?: string }).status,
+            overallPercentage: (p as { overallPercentage?: number }).overallPercentage,
+          });
         }
 
         const assignmentKeyLocal = (code: string) =>
@@ -396,15 +384,21 @@ export async function GET(req: NextRequest) {
 
             const available = availableByCode.get(a.sopCode) ?? [];
             const availableSet = new Set(available);
-            const steps = progressMap.get(`${id}::${a.sopCode.toUpperCase()}`);
+            const prog = progressMap.get(`${id}::${a.sopCode.toUpperCase()}`);
+            const steps = prog?.steps;
 
             const doneCount = available.filter((s) => isStepDone(steps, s)).length;
             totalSteps += available.length;
             doneSteps += doneCount;
 
-            let status: SopStatus;
-            if (available.length > 0 && doneCount === available.length) status = 'completed';
-            else status = 'not_completed';
+            const status: SopStatus = isSopComplete({
+              steps,
+              availableSteps: available,
+              status: prog?.status,
+              overallPercentage: prog?.overallPercentage,
+            })
+              ? 'completed'
+              : 'not_completed';
 
             if (status === 'completed') completedSops++;
             else notCompletedSops++;
@@ -420,12 +414,7 @@ export async function GET(req: NextRequest) {
               if (scheduleStatus === 'ignored') ignoredSops++;
             }
 
-            const components = Object.fromEntries(
-              (Object.keys(COMPONENT_GROUPS) as ComponentKey[]).map((key) => [
-                key,
-                componentStatus(availableSet, steps, COMPONENT_GROUPS[key]),
-              ]),
-            ) as Record<ComponentKey, ComponentStatus>;
+            const components = componentStatuses(availableSet, steps);
 
             const { english, gujarati } = resolveAssignmentNames(a.sopCode, a.sopName);
 

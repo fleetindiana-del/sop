@@ -9,6 +9,7 @@ import {
 import { signOut, useSession } from "next-auth/react";
 import type { DashboardStats } from "@/lib/types";
 import type { AppRole } from "@/lib/auth";
+import { clearLmsClientCache } from "@/lib/lmsCache";
 import { NotificationBell } from "./NotificationBell";
 
 interface DashboardHeaderProps {
@@ -101,7 +102,14 @@ export function DashboardHeader({ stats, onExpiryFilter }: DashboardHeaderProps)
             type="button"
             className="rounded p-1.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
             aria-label="Logout"
-            onClick={() => signOut({ callbackUrl: "/login" })}
+            onClick={async () => {
+              // The learner cookie and the cached LMS dashboard outlive the app
+              // session, so drop both here — otherwise the next person to sign
+              // in on this browser opens this user's training record.
+              await fetch("/api/lms/auth/logout", { method: "POST" }).catch(() => {});
+              clearLmsClientCache();
+              void signOut({ callbackUrl: "/login" });
+            }}
           >
             <LogOut className="h-4 w-4" />
           </button>
