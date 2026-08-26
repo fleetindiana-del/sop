@@ -48,8 +48,23 @@ export interface MonthlyExamRow {
   carriedFromMonth?: number;
 }
 
+interface MonthlyTrainerSummary {
+  id: string;
+  name: string;
+  department: string;
+  trainerDepartments: string[];
+}
+
 interface MonthlyPayload {
-  trainer: { id: string; name: string; department: string; trainerDepartments: string[] };
+  trainer: {
+    id: string;
+    name: string;
+    department: string;
+    trainerDepartments: string[];
+    /** Super Admin / SOP Admin — every department, plus the trainer-wise filter. */
+    allDepartments?: boolean;
+  };
+  trainers?: MonthlyTrainerSummary[];
   trainingCycleStart: string;
   year: number;
   currentMonth: number;
@@ -524,6 +539,8 @@ export function TrainerMonthlyExams({
   /** Empty = all months. Otherwise one or more selected calendar months (1–12). */
   const [selectedMonths, setSelectedMonths] = useState<number[]>([new Date().getMonth() + 1]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+  /** Super Admin / SOP Admin: null = all trainers. */
+  const [selectedTrainerId, setSelectedTrainerId] = useState<string | null>(null);
   const [includeIgnored, setIncludeIgnored] = useState(false);
   const [deptInternal, setDeptInternal] = useState('All');
   const dept = deptProp ?? deptInternal;
@@ -760,8 +777,71 @@ export function TrainerMonthlyExams({
     return monthFilteredRows;
   }, [summaryFocus, carriedRows, nearExpiryRows, monthDueRows, monthFilteredRows]);
 
+  const showTrainerSection = data?.trainer.allDepartments === true;
+
+  const byTrainer = useMemo(() => {
+    if (!showTrainerSection) return [];
+    const employeeDeptScope = resolveTrainerDeptFilter(data?.trainer.trainerDepartments ?? [], dept);
+    return (data?.trainers ?? [])
+      .filter((t) =>
+        employeeDeptScope.length === 0
+        || t.trainerDepartments.some((d) => deptMatchesTrainerScope(d, employeeDeptScope)),
+      )
+      .map((t) => {
+        const rows = searchFilteredRows.filter((r) =>
+          deptMatchesTrainerScope(r.department, t.trainerDepartments),
+        );
+        const extras = buildMonthScopeExtras(
+          rows,
+          countScope.months,
+          countScope.viewYear,
+          countScope.expiryYear,
+          countScope.carryIntoMonth,
+        );
+        return {
+          ...t,
+          layers: fourLayersFromExtras(extras, layerFromEmployeeSops),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [showTrainerSection, data, dept, searchFilteredRows, countScope]);
+
+  const selectedTrainer = useMemo(() => {
+    if (!showTrainerSection || !selectedTrainerId) return null;
+    return byTrainer.find((t) => t.id === selectedTrainerId) ?? null;
+  }, [showTrainerSection, selectedTrainerId, byTrainer]);
+
+  const trainerDeptScope = selectedTrainer?.trainerDepartments ?? null;
+
+  const boardSearchRows = useMemo(() => {
+    if (!trainerDeptScope) return searchFilteredRows;
+    return searchFilteredRows.filter((r) => deptMatchesTrainerScope(r.department, trainerDeptScope));
+  }, [searchFilteredRows, trainerDeptScope]);
+
+  const boardScopedExamRows = useMemo(() => {
+    if (!trainerDeptScope) return scopedExamRows;
+    return scopedExamRows.filter((r) => deptMatchesTrainerScope(r.department, trainerDeptScope));
+  }, [scopedExamRows, trainerDeptScope]);
+
+  const boardNearExpiryRows = useMemo(() => {
+    if (!trainerDeptScope) return nearExpiryRows;
+    return nearExpiryRows.filter((r) => deptMatchesTrainerScope(r.department, trainerDeptScope));
+  }, [nearExpiryRows, trainerDeptScope]);
+
+  const allTrainerLayers = useMemo(
+    () => fourLayersFromExtras(selectedScopeExtras, layerFromEmployeeSops),
+    [selectedScopeExtras],
+  );
+
+  const selectTrainer = (id: string | null) => {
+    const next = id !== null && selectedTrainerId === id ? null : id;
+    if (next === selectedTrainerId) return;
+    setSelectedTrainerId(next);
+    setSelectedEmployeeId(null);
+  };
+
   const byEmployeeAll = useMemo(() => {
-    const inScope = new Set(scopedExamRows.map((r) => r.employeeId));
+    const inScope = new Set(boardScopedExamRows.map((r) => r.employeeId));
     const map = new Map<string, {
       employeeId: string;
       employeeName: string;
@@ -777,7 +857,7 @@ export function TrainerMonthlyExams({
       overdue: number;
       ignored: number;
     }>();
-    for (const r of searchFilteredRows) {
+    for (const r of boardSearchRows) {
       if (!inScope.has(r.employeeId)) continue;
       let entry = map.get(r.employeeId);
       if (!entry) {
@@ -822,7 +902,7 @@ export function TrainerMonthlyExams({
         };
       })
       .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
-  }, [searchFilteredRows, scopedExamRows, countScope]);
+  }, [boardSearchRows, boardScopedExamRows, countScope]);
 
   const byEmployee = useMemo(() => {
     if (!selectedSopCode) return byEmployeeAll;
@@ -850,8 +930,8 @@ export function TrainerMonthlyExams({
   }, [byEmployeeAll, selectedSopCode, countScope]);
 
   const bySopAll = useMemo(
-    () => groupSopLines(scopedExamRows, mcqByCode, attendanceSheets, countScope),
-    [scopedExamRows, mcqByCode, attendanceSheets, countScope],
+    () => groupSopLines(boardScopedExamRows, mcqByCode, attendanceSheets, countScope),
+    [boardScopedExamRows, mcqByCode, attendanceSheets, countScope],
   );
 
   const bySop = useMemo(() => {
@@ -867,14 +947,14 @@ export function TrainerMonthlyExams({
     if (summaryFocus === 'carried' || summaryFocus === 'month') return [];
     const dueCodes = new Set(bySopAll.map((s) => s.sopCode));
     const source = selectedEmployeeId
-      ? nearExpiryRows.filter((r) => r.employeeId === selectedEmployeeId)
-      : nearExpiryRows;
+      ? boardNearExpiryRows.filter((r) => r.employeeId === selectedEmployeeId)
+      : boardNearExpiryRows;
     const extra = source.filter((r) => {
       const code = r.sopCode.trim().toUpperCase();
       return Boolean(code) && !dueCodes.has(code);
     });
     return groupSopLines(extra, mcqByCode, attendanceSheets, countScope);
-  }, [summaryFocus, bySopAll, nearExpiryRows, selectedEmployeeId, mcqByCode, attendanceSheets, countScope]);
+  }, [summaryFocus, bySopAll, boardNearExpiryRows, selectedEmployeeId, mcqByCode, attendanceSheets, countScope]);
 
   const toggleSopSort = (key: SopSortKey) => {
     setSopSort((prev) => (
@@ -1226,11 +1306,114 @@ export function TrainerMonthlyExams({
         </div>
       </div>
 
+      {showTrainerSection && (
+        <div className="overflow-hidden border border-gray-200 bg-white">
+          <div className="flex flex-wrap items-center gap-2 border-b border-gray-300 bg-gray-100 px-3 py-1.5">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-gray-700">
+              Trainer-wise required SOP exams
+            </h2>
+            {selectedTrainer && (
+              <div className="flex items-center gap-2 rounded border border-gray-200 bg-white px-2 py-0.5 text-[10px] text-gray-700">
+                <span>
+                  <span className="font-bold">{selectedTrainer.name}</span>
+                  {selectedTrainer.trainerDepartments.length > 0 && (
+                    <span className="ml-1 text-gray-500">
+                      · {selectedTrainer.trainerDepartments.join(', ')}
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => selectTrainer(null)}
+                  className="rounded p-0.5 text-gray-400 hover:bg-gray-50 hover:text-gray-700"
+                  title="Show all trainers"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="flex max-h-96 flex-wrap content-start gap-2 overflow-y-auto bg-gray-50 px-1 py-2 sm:px-2">
+            <div
+              className={`flex w-[7.25rem] flex-col rounded-[10px] border px-1.5 py-1 text-left shadow-sm ${
+                !selectedTrainer ? 'border-purple-300 bg-purple-50 ring-1 ring-purple-300' : 'border-gray-200 bg-white'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => selectTrainer(null)}
+                className="mb-0.5 w-full truncate text-left text-[11px] font-bold leading-tight text-gray-800"
+              >
+                All
+              </button>
+              <FourLayerPills
+                layers={allTrainerLayers}
+                onOpen={(scope, kind) => {
+                  selectTrainer(null);
+                  openMonthSopPopup(
+                    scope === 'carried' ? 'all trainers · carried-forward'
+                      : scope === 'near' ? 'all trainers · near-expiry'
+                        : 'all trainers',
+                    allTrainerLayers[scope].rows,
+                    kind,
+                  );
+                }}
+              />
+            </div>
+            {byTrainer.map((trainer) => {
+              const active = selectedTrainerId === trainer.id;
+              return (
+                <div
+                  key={trainer.id}
+                  className={`flex w-[7.25rem] flex-col rounded-[10px] border px-1.5 py-1 text-left shadow-sm ${
+                    active ? 'border-purple-300 bg-purple-50 ring-1 ring-purple-300' : 'border-gray-200 bg-white'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => selectTrainer(trainer.id)}
+                    className="mb-0.5 w-full truncate text-left text-[11px] font-bold leading-tight text-gray-800"
+                    title={
+                      trainer.trainerDepartments.length > 0
+                        ? `${trainer.name} · ${trainer.trainerDepartments.join(', ')}`
+                        : trainer.name
+                    }
+                  >
+                    {trainer.name}
+                  </button>
+                  <FourLayerPills
+                    layers={trainer.layers}
+                    onOpen={(scope, kind) => {
+                      if (selectedTrainerId !== trainer.id) {
+                        setSelectedTrainerId(trainer.id);
+                        setSelectedEmployeeId(null);
+                      }
+                      openMonthSopPopup(
+                        scope === 'carried' ? `${trainer.name} · carried-forward`
+                          : scope === 'near' ? `${trainer.name} · near-expiry`
+                            : trainer.name,
+                        trainer.layers[scope].rows,
+                        kind,
+                      );
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Employee-wise required exams for the selected months */}
       <div className="overflow-hidden border border-gray-200 bg-white">
         <div className="flex flex-wrap items-center gap-2 border-b border-gray-300 bg-gray-100 px-3 py-1.5">
           <h2 className="text-xs font-bold uppercase tracking-widest text-gray-700">
             Employee-wise required SOP exams
+            {selectedTrainer && (
+              <span className="ml-1 font-normal normal-case tracking-normal text-purple-800">
+                · {selectedTrainer.name}
+              </span>
+            )}
             {summaryFocus === 'carried' && (
               <span className="ml-1 font-normal normal-case tracking-normal text-amber-800">· carried-forward</span>
             )}
@@ -1264,9 +1447,11 @@ export function TrainerMonthlyExams({
         </div>
         {byEmployee.length === 0 ? (
           <p className="py-8 text-center text-xs text-gray-500">
-            {selectedSopCode
-              ? 'No employees are assigned this SOP exam in the selected months.'
-              : 'No employees have SOP exams in the selected months.'}
+            {selectedTrainer
+              ? 'No employees for this trainer have SOP exams in the selected months.'
+              : selectedSopCode
+                ? 'No employees are assigned this SOP exam in the selected months.'
+                : 'No employees have SOP exams in the selected months.'}
           </p>
         ) : (
           <div className="flex max-h-96 flex-wrap content-start gap-2 overflow-y-auto bg-gray-50 px-1 py-2 sm:px-2">
@@ -1309,6 +1494,11 @@ export function TrainerMonthlyExams({
         <div className="flex flex-wrap items-center gap-2 border-b border-gray-300 bg-gray-100 px-3 py-2">
           <h2 className="text-xs font-bold uppercase tracking-widest text-gray-700">
             SOP-wise required exams
+            {selectedTrainer && (
+              <span className="ml-1 font-normal normal-case tracking-normal text-purple-800">
+                · {selectedTrainer.name}
+              </span>
+            )}
             {summaryFocus === 'carried' && (
               <span className="ml-1 font-normal normal-case tracking-normal text-amber-800">· carried-forward</span>
             )}
@@ -1365,7 +1555,9 @@ export function TrainerMonthlyExams({
           <p className="py-12 text-center text-xs text-gray-500">
             {selectedEmployeeId
               ? 'This employee has no SOP exams in the selected months.'
-              : 'No SOP exams in the selected months.'}
+              : selectedTrainer
+                ? 'This trainer has no SOP exams in the selected months.'
+                : 'No SOP exams in the selected months.'}
           </p>
         ) : (
           <div className="max-h-[28rem] min-w-0 overflow-auto">
@@ -3331,14 +3523,14 @@ export function DeptFilterBtn({
 }) {
   if (departments.length <= 1) return null;
   return (
-    <span className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-purple-200 bg-white p-0.5">
+    <div className="flex flex-wrap items-center justify-end gap-1">
       <button
         type="button"
         onClick={() => onChange('All')}
-        className={`rounded-md px-2.5 py-1 text-[10px] font-semibold transition ${
+        className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
           value === 'All'
-            ? 'bg-purple-600 text-white shadow-sm'
-            : 'text-purple-700 hover:bg-purple-50'
+            ? 'bg-purple-600 text-white'
+            : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
         }`}
       >
         All depts
@@ -3348,16 +3540,16 @@ export function DeptFilterBtn({
           key={d}
           type="button"
           onClick={() => onChange(d)}
-          className={`rounded-md px-2.5 py-1 text-[10px] font-semibold transition ${
+          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
             value === d
-              ? 'bg-purple-600 text-white shadow-sm'
-              : 'text-purple-700 hover:bg-purple-50'
+              ? 'bg-purple-600 text-white'
+              : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
           }`}
         >
           {d}
         </button>
       ))}
-    </span>
+    </div>
   );
 }
 

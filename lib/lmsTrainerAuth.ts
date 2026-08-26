@@ -48,10 +48,12 @@ export async function requireLmsTrainer(): Promise<
     };
   }
 
-  // Only the application login carries the admin role. A learner-cookie session
-  // is deliberately acting as one specific employee — even in an admin's own
-  // browser — so it keeps that employee's department scope.
-  const session = payload.source === 'app' ? await getServerSession(authOptions) : null;
+  // Super Admin / SOP Admin keep all-department trainer scope whenever a
+  // dashboard session is present — including when the LMS cookie is their own
+  // employee identity. Without this they would be treated as a learner and
+  // denied Trainer View unless Employee.isTrainer is set. A learner-only LMS
+  // session (no dashboard login) still requires the trainer flag.
+  const session = await getServerSession(authOptions);
   const isAppAdmin = Boolean(session?.user?.role && isAdmin(session.user.role));
 
   await connectDB();

@@ -596,7 +596,7 @@ export function DashboardClient() {
         />
       )}
 
-      <div id="sop-registry">
+      <div id="sop-registry" className="min-w-0 w-full">
         <SOPRegistryTable
           items={items}
           total={total}

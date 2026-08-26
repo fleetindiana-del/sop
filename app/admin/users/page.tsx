@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
+import { isLearnerOnly } from '@/lib/page-access';
 import {
   ArrowDown,
   ArrowLeft,
@@ -102,11 +103,20 @@ const emptyForm = {
   designation: '',
   isTrainer: false,
   lmsEmployeeId: '',
-  /** Default on: one password for both modules is the common case. */
-  sharedLmsLogin: true,
+  /** Default follows the role — see {@link defaultSharedLmsLogin}. */
+  sharedLmsLogin: false,
   password: '',
   confirmPassword: '',
 };
+
+/**
+ * A learner has no dashboard to bridge from, so their LMS password is kept on
+ * the Employee record instead. Everyone who signs in to the dashboard defaults
+ * to one password for both modules.
+ */
+function defaultSharedLmsLogin(role: AppRole): boolean {
+  return !isLearnerOnly(role);
+}
 
 /** Split the stored comma-separated `User.department` back into a list. */
 function splitDepartments(value: string): string[] {
@@ -874,7 +884,16 @@ export default function AdminUsersPage() {
                       Role
                       <select
                         value={form.role}
-                        onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as AppRole }))}
+                        onChange={(e) => {
+                          const role = e.target.value as AppRole;
+                          // The shared-password default belongs to the role, so
+                          // switching role re-applies it.
+                          setForm((f) => ({
+                            ...f,
+                            role,
+                            sharedLmsLogin: defaultSharedLmsLogin(role),
+                          }));
+                        }}
                         className={INPUT_CLS}
                       >
                         {ROLES.map((r) => (

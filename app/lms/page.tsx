@@ -13,6 +13,7 @@ import {
 import Link from 'next/link';
 import { signOut, useSession } from 'next-auth/react';
 import { isPrivilegedRole } from '@/lib/page-access';
+import { isAdmin } from '@/lib/roles';
 import {
   clearLmsClientCache,
   lmsClientFields,
@@ -1347,6 +1348,8 @@ function Dashboard({
   // Present only for the main-application login; LMS-only learners have none.
   const { data: appSession } = useSession();
   const isPrivileged = isPrivilegedRole(appSession?.user?.role);
+  const isAppAdmin = Boolean(appSession?.user?.role && isAdmin(appSession.user.role));
+  const canOpenTrainerView = employee.isTrainer === true || isAppAdmin;
   const [assignments, setAssignments] = useState<SopAssignment[]>([]);
   const [progressMap, setProgressMap] = useState<Map<string, ProgressRecord>>(new Map());
   const [certificates, setCertificates] = useState<CertRecord[]>([]);
@@ -1762,11 +1765,15 @@ function Dashboard({
                 <UserCheck className="h-3.5 w-3.5" /> All Employees
               </Link>
             )}
-            {employee.isTrainer && (
+            {canOpenTrainerView && (
               <Link
                 href="/lms/trainer"
                 className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
-                title="View training progress for employees in your departments"
+                title={
+                  isAppAdmin
+                    ? 'View required SOP exams for every trainer and their employees'
+                    : 'View training progress for employees in your departments'
+                }
               >
                 <Users className="h-3.5 w-3.5" /> Trainer View
               </Link>

@@ -14,7 +14,6 @@ import {
 import { TrainerMonthlyExams, DeptFilterBtn } from '@/components/lms/TrainerMonthlyExams';
 import { TrainerRosterPanel } from '@/components/lms/TrainerRosterPanel';
 import { TrainerAttendancePanel } from '@/components/lms/TrainerAttendancePanel';
-import { getDeptLabelClasses, normalizeDepartment } from '@/lib/department-colors';
 
 type ScheduleStatus = 'ignored' | 'upcoming' | 'due' | 'overdue' | 'missed';
 type SopStatus = 'completed' | 'not_completed';
@@ -313,53 +312,41 @@ export default function LmsTrainerPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1920px] items-center gap-3 px-3 py-2 sm:px-5">
-          <div className="flex shrink-0 items-center gap-3">
-            <Link href="/lms" className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-800">
-              <ArrowLeft className="h-3.5 w-3.5" /> My Training
-            </Link>
-            <div className="h-4 w-px bg-gray-200" />
-            <div>
-              <h1 className="text-sm font-bold tracking-tight text-gray-900">Trainer View</h1>
-              {data && (
-                <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[11px] text-gray-400">
-                  <span>{data.trainer.name}</span>
-                  <span aria-hidden>·</span>
-                  {/* The departments a trainer covers drive every number on this
-                      board, so name them rather than leaving them implied. */}
-                  {data.trainer.allDepartments ? (
-                    <span
-                      className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700"
-                      title={`Administrator scope — all ${depts.length} departments`}
-                    >
-                      All departments
-                    </span>
-                  ) : depts.length === 0 ? (
-                    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                      No department assigned
-                    </span>
-                  ) : (
-                    depts.map((d) => (
-                      <span
-                        key={d}
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${getDeptLabelClasses(normalizeDepartment(d))}`}
-                      >
-                        {normalizeDepartment(d)}
-                      </span>
-                    ))
-                  )}
-                  {data.trainingCycleStart ? (
-                    <>
-                      <span aria-hidden>·</span>
-                      <span>Cycle from {data.trainingCycleStart}</span>
-                    </>
-                  ) : null}
-                </div>
-              )}
+        <div className="mx-auto w-full max-w-[1920px] px-3 py-2 sm:px-5">
+          <div className="flex items-center gap-3">
+            <div className="flex min-w-0 shrink-0 items-center gap-3">
+              <Link href="/lms" className="flex shrink-0 items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-800">
+                <ArrowLeft className="h-3.5 w-3.5" /> My Training
+              </Link>
+              <div className="h-4 w-px shrink-0 bg-gray-200" />
+              <div className="min-w-0">
+                <h1 className="text-sm font-bold tracking-tight text-gray-900">Trainer View</h1>
+                {data && (
+                  <p className="mt-0.5 truncate text-[11px] text-gray-400">
+                    {data.trainer.name}
+                    {data.trainingCycleStart ? ` · Cycle from ${data.trainingCycleStart}` : ''}
+                  </p>
+                )}
+              </div>
             </div>
+            {depts.length > 1 && (
+              <div className="min-w-0 flex-1">
+                <DeptFilterBtn value={dept} onChange={setDept} departments={depts} />
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => void load(true)}
+              disabled={loading}
+              className="shrink-0 rounded-lg border border-gray-200 p-1.5 text-gray-400 hover:bg-gray-50"
+              title="Refresh"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+            </button>
           </div>
-          <div className="flex min-w-0 flex-1 justify-center">
-            <div className="flex flex-wrap justify-center rounded-lg border border-gray-200 bg-white p-0.5">
+
+          <div className="mt-2 overflow-x-auto">
+            <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
               {([
                 { id: 'monthly', label: 'Monthly Exams', Icon: CalendarRange },
                 { id: 'employee', label: 'By Employee', Icon: Users },
@@ -372,7 +359,7 @@ export default function LmsTrainerPage() {
                   key={v.id}
                   type="button"
                   onClick={() => setViewMode(v.id)}
-                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                  className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition ${
                     viewMode === v.id ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-50'
                   }`}
                 >
@@ -381,17 +368,6 @@ export default function LmsTrainerPage() {
               ))}
             </div>
           </div>
-          {depts.length > 1 && (
-            <DeptFilterBtn value={dept} onChange={setDept} departments={depts} />
-          )}
-          <button
-            type="button"
-            onClick={() => void load(true)}
-            disabled={loading}
-            className="shrink-0 rounded-lg border border-gray-200 p-1.5 text-gray-400 hover:bg-gray-50"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
         </div>
       </header>
 

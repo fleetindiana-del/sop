@@ -468,7 +468,7 @@ export function SOPRegistryTable({
   };
 
   return (
-    <section className="mx-auto w-full max-w-full overflow-hidden px-1 pb-2 sm:px-2">
+    <section className="mx-auto w-full min-w-0 max-w-full px-1 pb-2 sm:px-2">
       <EditSOPModal
         open={editIdentifier !== null}
         identifier={editIdentifier}
@@ -506,7 +506,7 @@ export function SOPRegistryTable({
           setDeleteError(null);
         }}
       />
-      <div className="flex flex-col w-full bg-gray-50">
+      <div className="flex min-w-0 w-full flex-col bg-gray-50">
 
         {/* Toolbar row */}
         <div className="flex flex-wrap items-center gap-2 border-b border-gray-300 bg-gray-100 px-3 py-2">
@@ -571,11 +571,12 @@ export function SOPRegistryTable({
           <span className="text-gray-500">Results</span>
         </div>
 
-        {/* Table — vertical scroll only; columns share viewport width */}
+        {/* Table — vertical scroll in the grid; horizontal scrollbar sits below it */}
         <div
-          className="w-full max-w-full overflow-x-hidden overflow-y-auto overscroll-y-contain max-h-[calc(100vh-180px)]"
+          className="w-full min-w-0 max-w-full max-h-[calc(100vh-180px)] overflow-x-scroll overflow-y-auto overscroll-contain [scrollbar-gutter:stable] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-400 hover:[&::-webkit-scrollbar-thumb]:bg-slate-500"
+          style={{ scrollbarWidth: "thin", scrollbarColor: "#94a3b8 #e5e7eb" }}
         >
-          <table className="w-full table-fixed border-collapse text-left">
+          <table className="w-full min-w-[110rem] table-fixed border-collapse text-left">
             <colgroup>
               <col style={{ width: "1.5%" }} />
               <col style={{ width: "2%" }} />

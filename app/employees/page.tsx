@@ -66,6 +66,13 @@ const EMPTY_MONTHLY_BREAKDOWN: MonthBreakdown[] = Array.from({ length: 12 }, () 
   notCompleted: 0,
 }));
 
+/**
+ * The roster splits in two: current employees and the ones marked Left
+ * (`isActive = false`). Mixing them made it impossible to tell at a glance who
+ * is still on the floor, so each gets its own tab.
+ */
+type StatusTab = 'active' | 'left';
+
 // ─── Add / Edit modal ─────────────────────────────────────────────────────────
 
 function EmployeeModal({
@@ -601,6 +608,8 @@ export default function EmployeesPage() {
   const [employees,  setEmployees]  = useState<Employee[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [activeDept, setActiveDept] = useState<Dept | 'All'>('All');
+  /** Which roster this page is showing — people still here, or people marked Left. */
+  const [statusTab,  setStatusTab]  = useState<StatusTab>('active');
   const [selectedDesignations, setSelectedDesignations] = useState<string[]>([]);
   const [search,     setSearch]     = useState('');
   const [showAdd,    setShowAdd]    = useState(false);
@@ -644,33 +653,42 @@ export default function EmployeesPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Everything below the tabs — pills, search, grid — works on the roster of the
+  // selected tab only, so a count never mixes current and left employees.
+  const tabEmployees = useMemo(
+    () => employees.filter((e) => (statusTab === 'left' ? !e.isActive : e.isActive)),
+    [employees, statusTab],
+  );
+
+  const leftCount = useMemo(() => employees.filter((e) => !e.isActive).length, [employees]);
+
   const countsByDept = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const e of employees) {
-      if (e.isActive) m[e.department] = (m[e.department] || 0) + 1;
+    for (const e of tabEmployees) {
+      m[e.department] = (m[e.department] || 0) + 1;
     }
     return m;
-  }, [employees]);
+  }, [tabEmployees]);
 
   const designations = useMemo(() => {
     const pool = activeDept === 'All'
-      ? employees
-      : employees.filter((e) => e.department === activeDept);
+      ? tabEmployees
+      : tabEmployees.filter((e) => e.department === activeDept);
     return [...new Set(pool.map((e) => e.designation).filter(Boolean))].sort((a, b) =>
       a.localeCompare(b),
     );
-  }, [employees, activeDept]);
+  }, [tabEmployees, activeDept]);
 
   const countsByDesignation = useMemo(() => {
     const pool = activeDept === 'All'
-      ? employees
-      : employees.filter((e) => e.department === activeDept);
+      ? tabEmployees
+      : tabEmployees.filter((e) => e.department === activeDept);
     const m: Record<string, number> = {};
     for (const e of pool) {
       if (e.designation) m[e.designation] = (m[e.designation] || 0) + 1;
     }
     return m;
-  }, [employees, activeDept]);
+  }, [tabEmployees, activeDept]);
 
   useEffect(() => {
     setSelectedDesignations((prev) => prev.filter((d) => designations.includes(d)));
@@ -695,7 +713,7 @@ export default function EmployeesPage() {
 
   const gridRows = useMemo((): EmployeeGridRow[] => {
     const term = search.trim().toLowerCase();
-    return employees
+    return tabEmployees
       .filter((e) => {
         if (activeDept !== 'All' && e.department !== activeDept) return false;
         if (selectedDesignations.length > 0 && !selectedDesignations.includes(e.designation)) return false;
@@ -745,7 +763,7 @@ export default function EmployeesPage() {
           trainingLoaded:   false,
         };
       });
-  }, [employees, activeDept, selectedDesignations, search, trainingMap]);
+  }, [tabEmployees, activeDept, selectedDesignations, search, trainingMap]);
 
   const handleGenerateLogins = useCallback(async () => {
     setGenerating(true);
@@ -859,6 +877,42 @@ export default function EmployeesPage() {
           </div>
         )}
 
+        {/* Current vs Left roster */}
+        <div className="mb-2 flex shrink-0 items-center gap-1 border-b border-gray-200">
+          {([
+            { key: 'active' as StatusTab, label: 'Current Employees', count: employees.length - leftCount, Icon: UserCheck },
+            { key: 'left' as StatusTab,   label: 'Left Employees',    count: leftCount,                    Icon: UserX },
+          ]).map(({ key, label, count, Icon }) => {
+            const on = statusTab === key;
+            return (
+              <button
+                suppressHydrationWarning
+                key={key}
+                onClick={() => setStatusTab(key)}
+                className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition ${
+                  on
+                    ? key === 'left'
+                      ? 'border-red-500 text-red-600'
+                      : 'border-purple-600 text-purple-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                    on
+                      ? key === 'left' ? 'bg-red-100 text-red-700' : 'bg-purple-100 text-purple-700'
+                      : 'bg-gray-100 text-gray-500'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
         {/* Department pills */}
         <div className="mb-2 flex shrink-0 flex-wrap gap-1.5">
           <button
@@ -868,7 +922,7 @@ export default function EmployeesPage() {
           >
             All
             <span className="ml-1 rounded-full bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-700">
-              {employees.filter(e => e.isActive).length}
+              {tabEmployees.length}
             </span>
           </button>
           {DEPARTMENTS.map((d) => (
@@ -962,7 +1016,9 @@ export default function EmployeesPage() {
         {!loading && gridRows.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-gray-200 bg-white py-16">
             <UserRound className="mb-3 h-10 w-10 text-gray-200" />
-            <p className="text-sm font-medium text-gray-500">No employees found</p>
+            <p className="text-sm font-medium text-gray-500">
+              {statusTab === 'left' ? 'No employees marked as Left' : 'No employees found'}
+            </p>
             {hasActiveFilters && (
               <p className="mt-1 text-xs text-gray-400">Try adjusting your filters or search.</p>
             )}
@@ -975,7 +1031,7 @@ export default function EmployeesPage() {
                 <X className="h-3.5 w-3.5" /> Clear filters
               </button>
             )}
-            {!hasActiveFilters && (
+            {!hasActiveFilters && statusTab === 'active' && (
               <button
                 suppressHydrationWarning
                 onClick={() => setShowAdd(true)}

@@ -5,6 +5,7 @@ import { requireAuth } from "@/lib/withAuth";
 import { syncEmployeeTrainerFlag } from "@/lib/userTrainerSync";
 import { resolveLmsEmployeeLink } from "@/lib/userEmployeeLink";
 import { isSharedLmsLogin, syncLmsPasswordFromUser } from "@/lib/lmsSharedLogin";
+import { isLearnerOnly } from "@/lib/page-access";
 import { serializeAssignedDepartments } from "@/lib/access-control";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
@@ -84,8 +85,10 @@ export async function POST(request: NextRequest) {
     );
     const designation = String(body.designation || "").trim() || undefined;
     const isTrainer = body.isTrainer === true;
-    // Absent means the caller predates the flag; those logins share a password.
-    const sharedLmsLogin = body.sharedLmsLogin === undefined ? true : body.sharedLmsLogin === true;
+    // Absent: fall back to the role default — learners keep a separate LMS
+    // password on their Employee record, dashboard logins share one.
+    const sharedLmsLogin =
+      body.sharedLmsLogin === undefined ? !isLearnerOnly(role) : body.sharedLmsLogin === true;
 
     if (!username || !name) {
       return NextResponse.json({ error: "Username and name are required" }, { status: 400 });

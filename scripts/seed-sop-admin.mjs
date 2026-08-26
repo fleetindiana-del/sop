@@ -1,8 +1,8 @@
 /**
  * Seed the SOP Admin account for Rahul Garambha.
  *
- * SOP Admin has every administrative capability except user administration
- * (Login & Passwords, Access Management), which stays Super-Admin-only.
+ * SOP Admin has every administrative capability a Super Admin has, user
+ * administration (Login & Passwords, Access Management) included.
  *
  * Idempotent: if the account already exists it is promoted to `sop_admin` and
  * its name/department are corrected, but the password is left alone so a
@@ -102,7 +102,7 @@ try {
   }
 
   console.log("DB:", mongoose.connection.db.databaseName);
-  console.log("Role: sop_admin — all admin capability except Login & Passwords / Access Management");
+  console.log("Role: sop_admin — full admin capability, Login & Passwords / Access Management included");
 } catch (err) {
   console.error("FAIL:", err.message);
   process.exit(1);
