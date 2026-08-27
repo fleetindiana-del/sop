@@ -123,7 +123,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const body = await getOrBuildLmsCache(
-          `lms:trainer:monthly:v12:${trainer.employeeId}:${trainer.allDepartments ? 'admin' : 'trainer'}:${deptParam || 'all'}:${yearParam || 'all'}:${includeIgnored ? 'inc' : 'exc'}`,
+          `lms:trainer:monthly:v13:${trainer.employeeId}:${trainer.allDepartments ? 'admin' : 'trainer'}:${deptParam || 'all'}:${yearParam || 'all'}:${includeIgnored ? 'inc' : 'exc'}`,
       lmsServerTtl.adminEmployeeTraining,
       async () => {
         await connectDB();

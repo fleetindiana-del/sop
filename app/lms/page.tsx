@@ -1637,9 +1637,10 @@ function Dashboard({
     });
   }, [trainerBulk, trainerData, monthFilter]);
 
+  const showingTrainerSops = Boolean(trainerBulk || trainerData?.scheduleFilteredSops);
+
   const trainerTableRows = useMemo(() => {
-    const useTrainerList = Boolean(trainerBulk || trainerData?.scheduleFilteredSops);
-    let list = useTrainerList ? trainerSelectRows : filtered;
+    let list = showingTrainerSops ? trainerSelectRows : filtered;
     if (search.trim()) {
       const term = search.trim().toLowerCase();
       list = list.filter((a) =>
@@ -1649,7 +1650,7 @@ function Dashboard({
       );
     }
     return list;
-  }, [trainerBulk, trainerData, trainerSelectRows, filtered, search]);
+  }, [showingTrainerSops, trainerSelectRows, filtered, search]);
 
   const trainerExtras = useMemo(() => {
     if (!trainerData) return undefined;
@@ -1937,7 +1938,7 @@ function Dashboard({
                     );
                   })}
                   <span className="mx-1 hidden h-4 w-px bg-gray-200 sm:inline-block" aria-hidden />
-                  {(['all', 'in_progress', 'due', 'upcoming', 'completed', 'overdue', 'ignored'] as FilterTab[]).map((tab) => (
+                  {!showingTrainerSops && (['all', 'in_progress', 'due', 'upcoming', 'completed', 'overdue', 'ignored'] as FilterTab[]).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setFilter(tab)}
@@ -2002,8 +2003,16 @@ function Dashboard({
               )}
 
               <div className="mt-3 text-center text-xs text-gray-400">
-                {trainerBulk
-                  ? `${trainerTableRows.length} SOP${trainerTableRows.length !== 1 ? 's' : ''}${trainerBulk.mode === 'mark-attendance' ? ' · click to mark attendance' : ` · ${trainerBulk.selectedSopCodes.size} selected`}`
+                {trainerBulk || showingTrainerSops
+                  ? `${trainerTableRows.length} SOP${trainerTableRows.length !== 1 ? 's' : ''}${
+                      trainerBulk
+                        ? trainerBulk.mode === 'mark-attendance'
+                          ? ' · click to mark attendance'
+                          : ` · ${trainerBulk.selectedSopCodes.size} selected`
+                        : monthFilter === 'all'
+                          ? ''
+                          : ` · ${MONTH_NAMES[monthFilter - 1]}`
+                    }`
                   : `${filtered.length} of ${monthScopedAssignments.length} training${monthScopedAssignments.length !== 1 ? 's' : ''}${
                       monthFilter === 'all' ? '' : ` · ${MONTH_NAMES[monthFilter - 1]}`
                     }`}

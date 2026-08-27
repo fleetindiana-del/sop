@@ -393,11 +393,22 @@ export function TrainerLmsSchedulePanel({
         };
         map.set(key, e);
       }
-      e.employeeCount++;
-      if (r.status === 'completed') e.completed++;
-      else if (r.status === 'overdue') e.overdue++;
-      else e.pending++;
-      if (!e.employees.some((emp) => emp.employeeId === r.employeeId)) {
+      const existingEmp = e.employees.find((emp) => emp.employeeId === r.employeeId);
+      if (existingEmp) {
+        if (r.status === 'completed' && existingEmp.status !== 'completed') {
+          if (existingEmp.status === 'overdue') e.overdue--;
+          else e.pending--;
+          e.completed++;
+          existingEmp.status = 'completed';
+        }
+        if (r.scheduledDate && (!existingEmp.scheduledDate || r.scheduledDate < existingEmp.scheduledDate)) {
+          existingEmp.scheduledDate = r.scheduledDate;
+        }
+      } else {
+        e.employeeCount++;
+        if (r.status === 'completed') e.completed++;
+        else if (r.status === 'overdue') e.overdue++;
+        else e.pending++;
         e.employees.push({
           employeeId: r.employeeId,
           employeeName: r.employeeName,
@@ -650,18 +661,19 @@ export function TrainerLmsSchedulePanel({
 
   useEffect(() => {
     if (!onTrainerData) return;
+    if (loading) return;
     onTrainerData({
       uniqueSops,
       examCatalog: catalogRecord,
       onOpenEmployees: openEmployees,
       scheduledTodayByCode,
       onOpenAttendance: openAttendance,
-      scheduleFilteredSops: scheduleMain === 'all' ? null : displayUniqueSops,
-      scheduleFilterLabel,
+      scheduleFilteredSops: displayUniqueSops,
+      scheduleFilterLabel: scheduleMain === 'all' ? 'All SOPs' : scheduleFilterLabel,
     });
   }, [
     onTrainerData, uniqueSops, catalogRecord, openEmployees, scheduledTodayByCode,
-    openAttendance, scheduleMain, displayUniqueSops, scheduleFilterLabel,
+    openAttendance, scheduleMain, displayUniqueSops, scheduleFilterLabel, loading,
   ]);
 
   useEffect(() => {

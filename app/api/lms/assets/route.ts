@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { getEmployeeAssignmentsMap, employeeAssignmentDepartments } from '@/lib/employeeAssignments';
+import { getEmployeeAssignmentsMap, employeeAssignmentMapKey } from '@/lib/employeeAssignments';
 import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
 import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import {
@@ -69,12 +69,11 @@ export async function GET() {
         if (!employee || !employee.isActive) return { assets: {} };
 
         const assignmentsMap = await getEmployeeAssignmentsMap({
-          departments: employeeAssignmentDepartments(employee),
+          departments: [employee.department].filter(Boolean),
         });
-        const key = `${employee.department}||${employee.name}`.trim().toLowerCase();
         const ignoreRules = await listTrainingIgnores(employee.department);
         const assignments = filterIgnoredAssignments(
-          assignmentsMap.get(key) || [],
+          assignmentsMap.get(employeeAssignmentMapKey(employee.department, employee.name)) || [],
           ignoreRules,
           employee.department,
         );

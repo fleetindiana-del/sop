@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { getEmployeeAssignmentsMap, employeeAssignmentDepartments, employeeAssignmentMapKey } from '@/lib/employeeAssignments';
+import { getEmployeeAssignmentsMap, employeeAssignmentMapKey } from '@/lib/employeeAssignments';
 import { lmsIdentityProblemMessage, resolveLmsIdentityDetailed } from '@/lib/lmsIdentity';
 import {
   getOrBuildLmsCache,
@@ -51,7 +51,9 @@ export async function GET() {
         }
 
         const assignmentsMap = await getEmployeeAssignmentsMap({
-          departments: employeeAssignmentDepartments(employee),
+          // Learner list is this person's home department only. Including every
+          // trainer department rebuilt the plant-wide assignment map on login.
+          departments: [employee.department].filter(Boolean),
         });
         const raw =
           assignmentsMap.get(employeeAssignmentMapKey(employee.department, employee.name)) || [];
