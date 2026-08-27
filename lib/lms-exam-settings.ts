@@ -12,6 +12,23 @@ import SopExamSettings, {
 import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
 import { isSopMcqApprovedForLms } from '@/lib/lmsMcqApproval';
 
+/** Trainers answer this many questions per exam (or the full pool if smaller). */
+export const TRAINER_EXAM_QUESTION_COUNT = 100;
+
+/** Randomly pick `cap` items when the pool is larger; otherwise return the pool as-is. */
+export function sampleTrainerExamQuestions<T>(
+  rows: T[],
+  cap: number = TRAINER_EXAM_QUESTION_COUNT,
+): T[] {
+  if (rows.length <= cap) return rows;
+  const picked = rows.slice();
+  for (let i = picked.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [picked[i], picked[j]] = [picked[j], picked[i]];
+  }
+  return picked.slice(0, cap);
+}
+
 export interface ResolvedExamSettings {
   trialQuestionCount: number;
   examQuestionCount: number;
@@ -30,9 +47,12 @@ export interface ResolvedExamSettings {
   hasSopOverride: boolean;
   /** True when a SOP employee-specific rule was applied. */
   hasEmployeeRule: boolean;
-  /** Trainers sit the full bank with unlimited attempts until they score 100%. */
+  /** Trainers sit up to TRAINER_EXAM_QUESTION_COUNT questions with unlimited attempts until they score 100%. */
   isTrainer: boolean;
-  /** When true, exam pulls every non-similar MCQ for the SOP (not a sample). */
+  /**
+   * When true, exam samples from the full non-similar MCQ pool (not the SOP's
+   * learner examQuestionCount). Trainers are still capped at TRAINER_EXAM_QUESTION_COUNT.
+   */
   allExamQuestions: boolean;
   /** True when every MCQ for this SOP is checked in MCQ Bank (display only; does not lock exams). */
   lmsApproved: boolean;
@@ -110,7 +130,7 @@ export async function resolveExamSettingsForSop(
 
   const isTrainer = employee?.isTrainer === true || empRule?.isTrainer === true;
 
-  // Trainers: full question bank + unlimited attempts + must score 100%.
+  // Trainers: up to 100 questions from the full pool + unlimited attempts + 100% to pass.
   const applyTrainerRules = <T extends {
     passingScore: number;
     maxAttempts: number;
@@ -121,6 +141,7 @@ export async function resolveExamSettingsForSop(
     }
     return {
       ...settings,
+      examQuestionCount: TRAINER_EXAM_QUESTION_COUNT,
       passingScore: 100,
       defaultPassingScore: 100,
       maxAttempts: 0,

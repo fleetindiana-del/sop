@@ -1241,7 +1241,7 @@ function QuizStep({
               <li className="flex items-start gap-2">
                 <Award className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
                 {settings?.isTrainer
-                  ? 'As a trainer you must score 100% on the full question bank. Attempts are unlimited until you pass.'
+                  ? 'As a trainer you must score 100% on up to 100 questions (a random sample when the bank is larger). Attempts are unlimited until you pass.'
                   : `You must score at least ${introPassing}% to complete this training.`}
               </li>
             )}

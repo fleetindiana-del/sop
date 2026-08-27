@@ -154,7 +154,7 @@ export const lmsServerKeys = {
   adminEmployeeTraining: (department: string) => `lms:admin:employee-training:v4:${department || 'all'}`,
   adminTrainerOverview: (year: number | 'all', includeIgnored: boolean) =>
     `lms:admin:trainer-overview:v1:${year}:${includeIgnored ? 'inc' : 'exc'}`,
-  trainerDashboard: (employeeId: string) => `lms:trainer:dashboard:v5:${employeeId}`,
+  trainerDashboard: (employeeId: string) => `lms:trainer:dashboard:v6:${employeeId}`,
   adminMeta: () => 'lms:admin:meta:v2',
   adminMetaForSop: (sopCode: string) => `lms:admin:meta:sop:v2:${sopCode.toUpperCase()}`,
   adminExamSettings: () => 'lms:admin:exam-settings',

@@ -7,7 +7,9 @@ import Employee from '@/models/Employee';
 import SOP from '@/models/SOP';
 import {
   resolveExamSettingsForSop,
+  sampleTrainerExamQuestions,
   toLearnerQuizSettings,
+  TRAINER_EXAM_QUESTION_COUNT,
 } from '@/lib/lms-exam-settings';
 import { baseIdentifierFromIdentifier, sopFamilyIdentifierRegex } from '@/lib/sop-utils';
 import type { ShuffleMode } from '@/models/lms/SopExamSettings';
@@ -76,7 +78,8 @@ function toAbcdQuestions(raw: RawMcq[]) {
  * Pull MCQs for a SOP. Shuffle mode controls selection:
  * - questions / both → random sample (different set per employee)
  * - options / none   → stable ordered slice (same set for everyone)
- * - all=true         → every non-similar question (trainers); still shuffled when mode says so
+ * - all=true         → full non-similar pool (trainers); still shuffled when mode says so,
+ *                      then capped at TRAINER_EXAM_QUESTION_COUNT with a random sample
  *
  * `source` picks where the text comes from:
  * - 'master'      → the English master questions
@@ -330,7 +333,10 @@ export async function GET(req: NextRequest, { params }: Params) {
     } else {
       raw = await fetchQuestions(sopCode, language, wanted, resolved.shuffleMode, useAllExamQuestions, 'master');
     }
-    const questions = toAbcdQuestions(raw);
+    const served = useAllExamQuestions
+      ? sampleTrainerExamQuestions(raw, TRAINER_EXAM_QUESTION_COUNT)
+      : raw;
+    const questions = toAbcdQuestions(served);
 
     // Reflect the real set size so the learner UI / timer pacing stay accurate.
     if (useAllExamQuestions) {

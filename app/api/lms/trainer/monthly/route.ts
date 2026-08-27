@@ -123,7 +123,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const body = await getOrBuildLmsCache(
-          `lms:trainer:monthly:v11:${trainer.employeeId}:${trainer.allDepartments ? 'admin' : 'trainer'}:${deptParam || 'all'}:${yearParam || 'all'}:${includeIgnored ? 'inc' : 'exc'}`,
+          `lms:trainer:monthly:v12:${trainer.employeeId}:${trainer.allDepartments ? 'admin' : 'trainer'}:${deptParam || 'all'}:${yearParam || 'all'}:${includeIgnored ? 'inc' : 'exc'}`,
       lmsServerTtl.adminEmployeeTraining,
       async () => {
         await connectDB();
@@ -200,15 +200,13 @@ export async function GET(req: NextRequest) {
           // first, then apply reschedules. Any other order reports months the
           // employee never sees in their own LMS.
           const notIgnored = filterIgnoredAssignments(raw, ignoreRules, emp.department);
+          // Every SOP assigned to that employee — including company-wide QA
+          // documents Store/Production staff still sit. Scope is the person,
+          // not the SOP's owning department (that filter emptied this board).
           const assignments = applyReschedulesToList(notIgnored, rescheduleRules, {
             employeeId,
             employeeDepartment: emp.department,
-          }).filter((a) =>
-            // Employee must be in the trainer's departments, and the SOP must
-            // belong to one of those departments — not every assignee company-wide.
-            deptMatchesTrainerScope(emp.department, scopedDepts)
-            && deptMatchesTrainerScope(a.sopDepartment || emp.department, scopedDepts),
-          );
+          });
 
           for (const a of assignments) {
             if (isInvalidSopAssignmentCode(a.sopCode)) continue;

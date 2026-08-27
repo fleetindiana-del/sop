@@ -76,7 +76,7 @@ function parseEmployeeRules(raw: unknown, fallbackBase: Omit<SopExamSettingsPayl
       isTrainer: r.isTrainer === true,
       trialQuestionCount: clampInt(r.trialQuestionCount, 0, 50, fallbackBase.trialQuestionCount),
       examQuestionCount: clampInt(r.examQuestionCount, 1, 200, fallbackBase.examQuestionCount),
-      // Trainers always require 100% to pass, unlimited attempts, and the full bank at runtime.
+      // Trainers always require 100% to pass, unlimited attempts, and up to 100 questions at runtime.
       passingScore: r.isTrainer === true
         ? 100
         : clampInt(r.passingScore, 1, 100, fallbackBase.passingScore),

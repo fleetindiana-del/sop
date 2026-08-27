@@ -6,11 +6,12 @@ import {
   lmsServerKeys,
   lmsServerTtl,
 } from '@/lib/lmsCache';
-import { requireLmsTrainer, deptMatchesTrainerScope } from '@/lib/lmsTrainerAuth';
+import { requireLmsTrainer } from '@/lib/lmsTrainerAuth';
 import SOP from '@/models/SOP';
 import LearningProgress from '@/models/lms/LearningProgress';
 import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
 import {
+  employeeAssignmentKey,
   filterEmployeesWithAssignments,
   listTrainerScopedEmployees,
 } from '@/lib/lmsTrainerEmployees';
@@ -45,10 +46,6 @@ type SopStatus = 'completed' | 'not_completed';
 
 function stripVersion(code: string): string {
   return String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
-}
-
-function empKey(department: string, name: string): string {
-  return `${department}||${name}`.trim().toLowerCase();
 }
 
 export interface TrainerSopRow {
@@ -169,7 +166,7 @@ export async function GET(req: NextRequest) {
 
         const uniqueCodes = new Set<string>();
         for (const emp of employees) {
-          const raw = assignmentsMap.get(empKey(emp.department, emp.name)) || [];
+          const raw = assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || [];
           for (const a of raw) uniqueCodes.add(a.sopCode);
         }
         const contentByCode = await getJourneyContentBatch(uniqueCodes);
@@ -220,15 +217,12 @@ export async function GET(req: NextRequest) {
 
         const records: TrainerEmployeeRecord[] = employees.map((emp) => {
           const id = String(emp._id);
-          const raw = assignmentsMap.get(empKey(emp.department, emp.name)) || [];
+          const raw = assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || [];
           const notIgnored = filterIgnoredAssignments(raw, ignoreRules, emp.department);
           const assignments = applyReschedulesToList(notIgnored, rescheduleRules, {
             employeeId: id,
             employeeDepartment: emp.department,
-          }).filter((a) =>
-            deptMatchesTrainerScope(emp.department, scopedDepts)
-            && deptMatchesTrainerScope(a.sopDepartment || emp.department, scopedDepts),
-          );
+          });
 
           let completedSops = 0;
           let notCompletedSops = 0;
