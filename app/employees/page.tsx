@@ -14,7 +14,7 @@ import {
   ArrowLeft, Plus, Search, Pencil, Trash2, X, Check,
   UserRound, RefreshCw, AlertTriangle, GraduationCap, KeyRound, Copy,
   UserX, UserCheck, Loader2, CalendarDays, ShieldCheck, Award,
-  BadgeCheck,
+  BadgeCheck, Archive,
 } from 'lucide-react';
 import {
   isWithinInductionWindow,
@@ -43,6 +43,9 @@ interface Employee {
   isTrainer?: boolean;
   trainerDepartments?: string[];
   isActive: boolean;
+  isDeleted?: boolean;
+  deletedAt?: string;
+  deletedKind?: 'deleted' | 'obsolete';
   lmsUsername?: string;
   hasLmsPassword?: boolean;
 }
@@ -443,17 +446,36 @@ function EmployeeModal({
 
 // ─── Delete confirmation ───────────────────────────────────────────────────────
 
-function DeleteConfirm({ employee, onClose, onDeleted }: { employee: Employee; onClose: () => void; onDeleted: () => void }) {
+function DeleteConfirm({
+  employee,
+  onClose,
+  onDeleted,
+}: {
+  employee: Employee;
+  onClose: () => void;
+  onDeleted: (archived?: Employee) => void;
+}) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
   const handleDelete = async () => {
     setLoading(true);
-    const res  = await fetch(`/api/employees/${employee._id}`, { method: 'DELETE' });
-    const json = await res.json();
-    if (!res.ok) { setError(json.error || 'Delete failed'); setLoading(false); return; }
-    bustEmployeeClientCaches();
-    onDeleted();
+    const qs = new URLSearchParams({
+      name: employee.name,
+      department: employee.department,
+      designation: employee.designation || '',
+    });
+    const res  = await fetch(`/api/employees/${employee._id}?${qs}`, { method: 'DELETE' });
+    const json = await res.json().catch(() => ({}));
+    // Missing records are already gone — drop them from the live list instead
+    // of trapping the admin on "Employee not found".
+    if (res.ok || res.status === 404 || json.alreadyRemoved) {
+      bustEmployeeClientCaches();
+      onDeleted(json.employee);
+      return;
+    }
+    setError(json.error || 'Delete failed');
+    setLoading(false);
   };
 
   return (
@@ -466,7 +488,7 @@ function DeleteConfirm({ employee, onClose, onDeleted }: { employee: Employee; o
         <div className="p-5">
           <div className="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">
             <p>Remove <strong>{employee.name}</strong> ({employee.designation}) from <strong>{employee.department}</strong>?</p>
-            <p className="mt-1 text-xs text-red-600">They will no longer appear in the assign-SOP employee list.</p>
+            <p className="mt-1 text-xs text-red-600">They will move to Obsolete / Deleted and leave the assign-SOP list.</p>
           </div>
           {error && <p className="text-xs text-red-600">{error}</p>}
         </div>
@@ -479,6 +501,150 @@ function DeleteConfirm({ employee, onClose, onDeleted }: { employee: Employee; o
           >
             <Trash2 className="h-3.5 w-3.5" /> {loading ? 'Removing…' : 'Yes, Remove'}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeletedEmployeesPanel({
+  employees,
+  loading,
+  onClose,
+  onRestored,
+}: {
+  employees: Employee[];
+  loading: boolean;
+  onClose: () => void;
+  onRestored: (emp: Employee) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  const rows = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return employees.filter((e) => {
+      if (!term) return true;
+      return (
+        e.name.toLowerCase().includes(term) ||
+        e.designation.toLowerCase().includes(term) ||
+        e.department.toLowerCase().includes(term)
+      );
+    });
+  }, [employees, search]);
+
+  const restore = async (emp: Employee) => {
+    setBusyId(emp._id);
+    setError('');
+    try {
+      const res = await fetch(`/api/employees/${emp._id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isDeleted: false }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.employee) {
+        setError(json.error || 'Could not restore this employee');
+        return;
+      }
+      bustEmployeeClientCaches();
+      onRestored(json.employee);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
+      <div
+        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+              <Archive className="h-4.5 w-4.5" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-gray-800">Obsolete / Deleted Employees</h2>
+              <p className="text-xs text-gray-400">
+                {employees.length} removed from Current and Left · restore to put them back on the roster
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="border-b border-gray-100 px-5 py-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, designation, or department…"
+              className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-purple-300 focus:outline-none"
+            />
+          </div>
+          {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex justify-center py-16">
+              <Loader2 className="h-6 w-6 animate-spin text-purple-400" />
+            </div>
+          ) : rows.length === 0 ? (
+            <p className="py-16 text-center text-sm text-gray-400">No obsolete or deleted employees.</p>
+          ) : (
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                <tr>
+                  <th className="px-5 py-2.5">Employee</th>
+                  <th className="px-3 py-2.5">Dept</th>
+                  <th className="px-3 py-2.5">Status</th>
+                  <th className="px-3 py-2.5">Removed</th>
+                  <th className="w-28 px-3 py-2.5" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {rows.map((emp) => (
+                  <tr key={emp._id} className="hover:bg-gray-50">
+                    <td className="px-5 py-2.5">
+                      <p className="font-medium text-gray-800">{emp.name}</p>
+                      <p className="text-xs text-gray-400">{emp.designation || '—'}</p>
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-600">{emp.department}</td>
+                    <td className="px-3 py-2.5">
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                        emp.deletedKind === 'obsolete'
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-red-100 text-red-700'
+                      }`}>
+                        {emp.deletedKind === 'obsolete' ? 'Obsolete' : 'Deleted'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs text-gray-500">
+                      {emp.deletedAt ? new Date(emp.deletedAt).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => void restore(emp)}
+                        disabled={busyId === emp._id}
+                        className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-green-50 hover:text-green-700 disabled:opacity-50"
+                      >
+                        {busyId === emp._id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5" />}
+                        Restore
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </div>
@@ -606,6 +772,9 @@ function CredentialsModal({
 export default function EmployeesPage() {
   useAuthGuard();
   const [employees,  setEmployees]  = useState<Employee[]>([]);
+  const [deletedEmployees, setDeletedEmployees] = useState<Employee[]>([]);
+  const [deletedLoading, setDeletedLoading] = useState(false);
+  const [showDeleted, setShowDeleted] = useState(false);
   const [loading,    setLoading]    = useState(true);
   const [activeDept, setActiveDept] = useState<Dept | 'All'>('All');
   /** Which roster this page is showing — people still here, or people marked Left. */
@@ -639,6 +808,17 @@ export default function EmployeesPage() {
     }
   }, []);
 
+  const loadDeleted = useCallback(async () => {
+    setDeletedLoading(true);
+    try {
+      const res = await fetch('/api/employees?deletedOnly=1&skipSync=1');
+      const json = await res.json();
+      setDeletedEmployees(json.employees || []);
+    } finally {
+      setDeletedLoading(false);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -649,18 +829,26 @@ export default function EmployeesPage() {
       setLoading(false);
     }
     void loadTraining(activeDept !== 'All' ? activeDept : undefined);
-  }, [loadTraining, activeDept]);
+    void loadDeleted();
+  }, [loadTraining, loadDeleted, activeDept]);
 
   useEffect(() => { load(); }, [load]);
 
   // Everything below the tabs — pills, search, grid — works on the roster of the
   // selected tab only, so a count never mixes current and left employees.
   const tabEmployees = useMemo(
-    () => employees.filter((e) => (statusTab === 'left' ? !e.isActive : e.isActive)),
+    () => employees.filter((e) => !e.isDeleted && (statusTab === 'left' ? !e.isActive : e.isActive)),
     [employees, statusTab],
   );
 
-  const leftCount = useMemo(() => employees.filter((e) => !e.isActive).length, [employees]);
+  const leftCount = useMemo(
+    () => employees.filter((e) => !e.isDeleted && !e.isActive).length,
+    [employees],
+  );
+  const currentCount = useMemo(
+    () => employees.filter((e) => !e.isDeleted && e.isActive).length,
+    [employees],
+  );
 
   const countsByDept = useMemo(() => {
     const m: Record<string, number> = {};
@@ -846,6 +1034,21 @@ export default function EmployeesPage() {
             >
               <BadgeCheck className="h-3.5 w-3.5" /> Designation Master
             </Link>
+            <button
+              suppressHydrationWarning
+              type="button"
+              onClick={() => {
+                setShowDeleted(true);
+                void loadDeleted();
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+              title="Employees removed from the live roster"
+            >
+              <Archive className="h-3.5 w-3.5" /> Obsolete / Deleted
+              <span className="rounded-full bg-amber-200/80 px-1.5 py-0.5 text-[10px] font-bold">
+                {deletedEmployees.length}
+              </span>
+            </button>
             <button suppressHydrationWarning onClick={load} disabled={loading} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">
               <RefreshCw className={`h-3.5 w-3.5 ${loading || trainingLoading ? 'animate-spin' : ''}`} />
             </button>
@@ -880,7 +1083,7 @@ export default function EmployeesPage() {
         {/* Current vs Left roster */}
         <div className="mb-2 flex shrink-0 items-center gap-1 border-b border-gray-200">
           {([
-            { key: 'active' as StatusTab, label: 'Current Employees', count: employees.length - leftCount, Icon: UserCheck },
+            { key: 'active' as StatusTab, label: 'Current Employees', count: currentCount, Icon: UserCheck },
             { key: 'left' as StatusTab,   label: 'Left Employees',    count: leftCount,                    Icon: UserX },
           ]).map(({ key, label, count, Icon }) => {
             const on = statusTab === key;
@@ -1103,7 +1306,33 @@ export default function EmployeesPage() {
         <DeleteConfirm
           employee={deleting}
           onClose={() => setDeleting(null)}
-          onDeleted={() => { setEmployees((p) => p.filter((e) => e._id !== deleting._id)); setDeleting(null); }}
+          onDeleted={(archived) => {
+            setEmployees((p) => p.filter((e) => e._id !== deleting._id));
+            if (archived?._id) {
+              setDeletedEmployees((prev) => {
+                if (prev.some((e) => e._id === archived._id)) return prev;
+                return [{ ...deleting, ...archived, isDeleted: true }, ...prev];
+              });
+            }
+            setDeleting(null);
+            void loadDeleted();
+          }}
+        />
+      )}
+      {showDeleted && (
+        <DeletedEmployeesPanel
+          employees={deletedEmployees}
+          loading={deletedLoading}
+          onClose={() => setShowDeleted(false)}
+          onRestored={(emp) => {
+            setDeletedEmployees((prev) => prev.filter((e) => e._id !== emp._id));
+            setEmployees((prev) => {
+              if (prev.some((e) => e._id === emp._id)) {
+                return prev.map((e) => (e._id === emp._id ? { ...e, ...emp, isDeleted: false } : e));
+              }
+              return [{ ...emp, isDeleted: false }, ...prev];
+            });
+          }}
         />
       )}
       {generatedCreds && (

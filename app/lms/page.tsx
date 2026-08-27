@@ -8,7 +8,7 @@ import {
   CheckCircle2, AlertCircle, Loader2, RefreshCw,
   FileText, ClipboardList, Award, Calendar,
   ArrowDown, ArrowUp, ChevronsUpDown, Check, X, EyeOff, Users,
-  UserCheck,
+  UserCheck, UserCog,
 } from 'lucide-react';
 import Link from 'next/link';
 import { signOut, useSession } from 'next-auth/react';
@@ -1281,7 +1281,9 @@ function LoginCard({
           </div>
           <div className="text-center">
             <h1 className="text-xl font-bold text-gray-800">Learning Portal</h1>
-            <p className="mt-0.5 text-xs text-gray-400">Sign in to access your training</p>
+            <p className="mt-0.5 text-xs text-gray-400">
+              Sign in with your LMS or dashboard username — one password for both.
+            </p>
           </div>
         </div>
 
@@ -1302,7 +1304,7 @@ function LoginCard({
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="e.g. Abbas.Mehdi"
+              placeholder="Dashboard or LMS username"
               autoComplete="username"
               className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm font-mono focus:border-purple-300 focus:outline-none"
               autoFocus
@@ -1776,6 +1778,15 @@ function Dashboard({
                 }
               >
                 <Users className="h-3.5 w-3.5" /> Trainer View
+              </Link>
+            )}
+            {isAppAdmin && (
+              <Link
+                href="/lms/admin/trainer-overview"
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                title="All trainers, departments, employees and exam completion"
+              >
+                <UserCog className="h-3.5 w-3.5" /> Trainer Overview
               </Link>
             )}
             <Link

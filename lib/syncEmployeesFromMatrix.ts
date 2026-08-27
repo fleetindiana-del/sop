@@ -141,6 +141,7 @@ export async function syncEmployeesFromMatrix(): Promise<SyncEmployeesResult> {
       name,
       department,
       isActive: true,
+      isDeleted: false,
       designation,
     };
     const update: Record<string, unknown> = { $setOnInsert: setOnInsert };

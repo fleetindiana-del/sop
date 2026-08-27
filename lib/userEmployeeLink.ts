@@ -1,6 +1,8 @@
 import mongoose from "mongoose";
+import { isSharedLmsLogin } from "@/lib/lmsSharedLogin";
+import { findEmployeeForTrainerUser } from "@/lib/userTrainerSync";
 import Employee from "@/models/Employee";
-import User from "@/models/User";
+import User, { type IUser } from "@/models/User";
 
 /**
  * The administrator-set link between an application login (`User`) and the
@@ -59,4 +61,39 @@ export async function resolveLmsEmployeeLink(
   }
 
   return { ok: true, employeeId: new mongoose.Types.ObjectId(value) };
+}
+
+/**
+ * When Login & Passwords did not pick an employee, recover the unique active
+ * match (same rules as the LMS identity bridge) and store it. Historical LMS
+ * rows stay on that Employee `_id`; this only points the dashboard login at it.
+ */
+export async function autoLinkSharedUserToEmployee(
+  user: IUser,
+): Promise<{ linked: boolean; employeeName?: string }> {
+  if (user.lmsEmployeeId) {
+    const existing = await Employee.findOne({
+      _id: user.lmsEmployeeId,
+      isActive: true,
+    })
+      .select("name")
+      .lean<{ name: string } | null>();
+    if (existing) return { linked: false, employeeName: existing.name };
+  }
+
+  if (!isSharedLmsLogin(user)) return { linked: false };
+
+  const employee = await findEmployeeForTrainerUser(user);
+  if (!employee) return { linked: false };
+
+  const clash = await User.findOne({
+    lmsEmployeeId: employee._id,
+    _id: { $ne: user._id },
+  })
+    .select("username")
+    .lean<{ username: string } | null>();
+  if (clash) return { linked: false };
+
+  user.lmsEmployeeId = employee._id as mongoose.Types.ObjectId;
+  return { linked: true, employeeName: employee.name };
 }

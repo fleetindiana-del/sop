@@ -27,6 +27,11 @@ export interface IEmployee extends Document {
    */
   trainerDepartments: string[];
   isActive: boolean;
+  /** Soft-removed from Employee Master (trash). Hidden from the live/left rosters. */
+  isDeleted?: boolean;
+  deletedAt?: Date;
+  /** Why they left the live roster — user delete vs already-missing/obsolete. */
+  deletedKind?: 'deleted' | 'obsolete';
   /** Auto-generated login handle for the learning module. */
   lmsUsername?: string;
   /** bcrypt hash of the learning-module password (never returned to the client). */
@@ -52,6 +57,9 @@ const EmployeeSchema = new Schema<IEmployee>(
       index: true,
     },
     isActive:    { type: Boolean, default: true, index: true },
+    isDeleted:   { type: Boolean, default: false, index: true },
+    deletedAt:   { type: Date },
+    deletedKind: { type: String, enum: ['deleted', 'obsolete'] },
     // Casing is preserved (e.g. "Abbas.Mehdi"); login matches case-insensitively.
     lmsUsername: { type: String, trim: true, unique: true, sparse: true },
     // select:false keeps the hash out of every normal query result.
@@ -79,6 +87,13 @@ function getEmployeeModel() {
       existing.schema.add({
         previousDesignation: { type: String, trim: true },
         designationUpdatedAt: { type: Date },
+      });
+    }
+    if (!existing.schema.path('isDeleted')) {
+      existing.schema.add({
+        isDeleted: { type: Boolean, default: false, index: true },
+        deletedAt: { type: Date },
+        deletedKind: { type: String, enum: ['deleted', 'obsolete'] },
       });
     }
     return existing;

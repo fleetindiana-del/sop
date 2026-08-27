@@ -114,6 +114,7 @@ export async function GET(request: NextRequest) {
     const entityTypeRaw = params.get("entityType")?.trim() ?? "";
     const department = params.get("department")?.trim() ?? "";
     const userName = params.get("userName")?.trim() ?? "";
+    const entityId = params.get("entityId")?.trim() ?? "";
     const from = params.get("from")?.trim() ?? "";
     const to = params.get("to")?.trim() ?? "";
     const sortByRaw = params.get("sortBy")?.trim() || "timestamp";
@@ -128,6 +129,7 @@ export async function GET(request: NextRequest) {
 
     if (isAction(actionRaw)) filter.action = actionRaw;
     if (isEntityType(entityTypeRaw)) filter.entityType = entityTypeRaw;
+    if (entityId) filter.entityId = entityId;
     if (userName) filter.userName = new RegExp(`^${escapeRegex(userName)}$`, "i");
 
     if (from || to) {

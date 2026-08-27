@@ -6,7 +6,7 @@ import SOP from "@/models/SOP";
 import { sopFamilyGroupKey, resolveSopVersion, versionFromIdentifier } from "@/lib/sop-utils";
 import { normalizeMcqDifficulty } from "@/lib/mcq-bank-write";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
-import { mcqResolveDept } from "@/lib/mcq-bank-utils";
+import { isBetterCanonicalMcqBank, mcqResolveDept } from "@/lib/mcq-bank-utils";
 
 const langCodeOf = (language: unknown): "EN" | "GU" =>
   String(language ?? "").toLowerCase() === "gujarati" ? "GU" : "EN";
@@ -53,25 +53,7 @@ export async function GET(request: NextRequest) {
       }));
     }
 
-    // ── Sibling language banks (same SOP family) ──────────────────────────────
-    // Family grouping is padding-insensitive, so compute the family key per bank
-    // rather than matching identifiers literally. One entry per language.
     const famKey = sopFamilyGroupKey({ identifier: String(bank.sopIdentifier ?? "").trim() });
-    const candidates = await col
-      .find({ isObsolete: { $ne: true } }, { projection: { sopIdentifier: 1, language: 1 } })
-      .toArray();
-
-    const siblingByLang = new Map<"EN" | "GU", string>();
-    for (const c of candidates) {
-      const key = sopFamilyGroupKey({ identifier: String(c.sopIdentifier ?? "").trim() });
-      if (key !== famKey) continue;
-      const lc = langCodeOf(c.language);
-      if (!siblingByLang.has(lc)) siblingByLang.set(lc, String(c._id));
-    }
-    // The requested bank always represents its own language.
-    siblingByLang.set(langCodeOf(bank.language), String(bank._id));
-
-    const siblings = [...siblingByLang.entries()].map(([langCode, bankId]) => ({ langCode, bankId }));
 
     // ── Current active version (Dashboard = single source of truth) ───────────
     // The bank doc stores the identifier/name of whatever version the MCQs were
@@ -131,6 +113,37 @@ export async function GET(request: NextRequest) {
     } catch {
       // Non-fatal: viewer falls back to the stored bank identifier/name.
     }
+
+    // ── Sibling language banks (same SOP family) ──────────────────────────────
+    // One bank per language: current Dashboard revision, else newest revision.
+    const candidates = await col
+      .find({ isObsolete: { $ne: true } }, { projection: { sopIdentifier: 1, language: 1, updatedAt: 1, totalQuestions: 1 } })
+      .toArray();
+
+    const siblingByLang = new Map<"EN" | "GU", string>();
+    const siblingBankByLang = new Map<"EN" | "GU", {
+      sopIdentifier: string;
+      totalQuestions: number;
+      updatedAt?: Date;
+    }>();
+    for (const c of candidates) {
+      const key = sopFamilyGroupKey({ identifier: String(c.sopIdentifier ?? "").trim() });
+      if (key !== famKey) continue;
+      const lc = langCodeOf(c.language);
+      const pick = {
+        sopIdentifier: String(c.sopIdentifier ?? ""),
+        totalQuestions: Number(c.totalQuestions) || 0,
+        updatedAt: c.updatedAt ? new Date(c.updatedAt) : undefined,
+      };
+      const prev = siblingBankByLang.get(lc);
+      if (!prev || isBetterCanonicalMcqBank(pick, prev, current?.identifier)) {
+        siblingBankByLang.set(lc, pick);
+        siblingByLang.set(lc, String(c._id));
+      }
+    }
+    siblingByLang.set(langCodeOf(bank.language), String(bank._id));
+
+    const siblings = [...siblingByLang.entries()].map(([langCode, bankId]) => ({ langCode, bankId }));
 
     return NextResponse.json({ success: true, bank, siblings, current, versionStatus });
   } catch (error) {

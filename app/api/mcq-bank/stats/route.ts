@@ -5,6 +5,7 @@ import User from "@/models/User";
 import { requireAuth, filterByAssignedDepartments, isDeptScopedRole } from "@/lib/withAuth";
 import { parseAssignedDepartments, departmentsMatch } from "@/lib/roles";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
+import { sopFamilyGroupKey } from "@/lib/sop-utils";
 import {
   MCQ_DEPARTMENT_ORDER,
   aggregateMcqBanksByFamily,
@@ -37,6 +38,12 @@ export async function GET() {
     // whole registry. Using the caller's department-scoped view would mark every
     // other department's MCQ bank as an orphan (and hide Start Test in the LMS).
     const allSopFamilyMap = buildActiveSopFamilyMap(allGrouped);
+    const preferredIdentifierByFam = new Map<string, string>();
+    for (const row of allGrouped) {
+      if (row.isObsolete) continue;
+      const fam = sopFamilyGroupKey(row);
+      if (!preferredIdentifierByFam.has(fam)) preferredIdentifierByFam.set(fam, row.identifier);
+    }
 
     // ── 2. Aggregate MCQBank data (non-obsolete banks only) ───────────────────
     const bankAgg = await mcqBankCol.aggregate([
@@ -97,7 +104,7 @@ export async function GET() {
       },
     ]).toArray();
 
-    const bankByIdentifier = aggregateMcqBanksByFamily(bankAgg as never[]);
+    const bankByIdentifier = aggregateMcqBanksByFamily(bankAgg as never[], preferredIdentifierByFam);
     const markedObsoleteFamilies = aggregateMcqBanksByFamily(obsoleteBankAgg as never[]);
 
     const orphanMcqFamilies = findObsoleteMcqFamilies(sopFamilyMap, bankByIdentifier);

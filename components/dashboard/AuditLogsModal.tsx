@@ -20,7 +20,7 @@ import { Badge, Btn } from "./ui";
 export type AuditLogRow = {
   id: string;
   timestamp: string;
-  entityType: "sop" | "department";
+  entityType: string;
   entityId: string;
   entityLabel: string;
   sopName: string;
@@ -100,8 +100,23 @@ const FIELD_LABELS: Record<string, string> = {
   thumbnail: "Thumbnail",
 };
 
-function fieldLabel(key: string) {
-  return FIELD_LABELS[key] ?? key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
+const USER_FIELD_LABELS: Record<string, string> = {
+  username: "Username",
+  name: "Display name",
+  email: "Email",
+  role: "Role",
+  department: "Department",
+  designation: "Designation",
+  isTrainer: "Trainer",
+  lmsEmployeeId: "LMS employee",
+  sharedLmsLogin: "Shared LMS password",
+  pageAccess: "Page access",
+  password: "Password",
+};
+
+function fieldLabel(key: string, entityType?: string) {
+  const map = entityType === "user" ? USER_FIELD_LABELS : FIELD_LABELS;
+  return map[key] ?? key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
 }
 
 function formatTimestamp(iso: string) {
@@ -139,7 +154,22 @@ function formatValue(value: unknown): string {
   }
 }
 
-export function AuditLogsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AuditLogsModal({
+  open,
+  onClose,
+  lockedEntityType,
+  lockedEntityId,
+  title,
+  subtitle,
+}: {
+  open: boolean;
+  onClose: () => void;
+  lockedEntityType?: string;
+  lockedEntityId?: string;
+  title?: string;
+  subtitle?: string;
+}) {
+  const isUserAudit = lockedEntityType === "user";
   const [items, setItems] = useState<AuditLogRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -153,7 +183,7 @@ export function AuditLogsModal({ open, onClose }: { open: boolean; onClose: () =
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [action, setAction] = useState("");
-  const [entityType, setEntityType] = useState("");
+  const [entityType, setEntityType] = useState(lockedEntityType ?? "");
   const [department, setDepartment] = useState("");
   const [userName, setUserName] = useState("");
   const [from, setFrom] = useState("");
@@ -164,6 +194,10 @@ export function AuditLogsModal({ open, onClose }: { open: boolean; onClose: () =
   const [limit] = useState(50);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    if (lockedEntityType) setEntityType(lockedEntityType);
+  }, [lockedEntityType, open]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(q), 250);
@@ -183,12 +217,13 @@ export function AuditLogsModal({ open, onClose }: { open: boolean; onClose: () =
     if (userName) params.set("userName", userName);
     if (from) params.set("from", from);
     if (to) params.set("to", to);
+    if (lockedEntityId) params.set("entityId", lockedEntityId);
     params.set("sortBy", sortBy);
     params.set("sortDir", sortDir);
     params.set("page", String(page));
     params.set("limit", String(limit));
     return params.toString();
-  }, [debouncedQ, action, entityType, department, userName, from, to, sortBy, sortDir, page, limit]);
+  }, [debouncedQ, action, entityType, department, userName, from, to, sortBy, sortDir, page, limit, lockedEntityId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -272,7 +307,7 @@ export function AuditLogsModal({ open, onClose }: { open: boolean; onClose: () =
     setQ("");
     setDebouncedQ("");
     setAction("");
-    setEntityType("");
+    if (!lockedEntityType) setEntityType("");
     setDepartment("");
     setUserName("");
     setFrom("");
@@ -321,11 +356,11 @@ export function AuditLogsModal({ open, onClose }: { open: boolean; onClose: () =
             </div>
             <div>
               <h2 id="audit-logs-title" className="text-sm font-semibold text-slate-800">
-                Dashboard Audit Logs
+                {title ?? "Dashboard Audit Logs"}
               </h2>
               <p className="text-[10px] text-slate-500">
-                Who changed what, when, and the previous vs new values. Includes prior SOP
-                uploadedAt / createdAt / obsoleteAt. Times shown in IST. Records are append-only.
+                {subtitle ??
+                  "Who changed what, when, and the previous vs new values. Includes prior SOP uploadedAt / createdAt / obsoleteAt. Times shown in IST. Records are append-only."}
               </p>
             </div>
           </div>
@@ -357,18 +392,20 @@ export function AuditLogsModal({ open, onClose }: { open: boolean; onClose: () =
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="SOP no., name, user, summary…"
+                placeholder={isUserAudit ? "Username, name, actor, summary…" : "SOP no., name, user, summary…"}
                 className="w-full rounded border border-slate-300 py-1 pl-7 pr-2 text-xs focus:border-violet-500 focus:outline-none"
               />
             </div>
           </label>
           <FilterSelect label="Action" value={action} onChange={setAction} options={facets.actions} />
-          <FilterSelect
-            label="Entity"
-            value={entityType}
-            onChange={setEntityType}
-            options={facets.entityTypes}
-          />
+          {!lockedEntityType ? (
+            <FilterSelect
+              label="Entity"
+              value={entityType}
+              onChange={setEntityType}
+              options={facets.entityTypes}
+            />
+          ) : null}
           <FilterSelect
             label="Department"
             value={department}
@@ -439,12 +476,12 @@ export function AuditLogsModal({ open, onClose }: { open: boolean; onClose: () =
                 </th>
                 <th className="bg-gray-100 px-1 py-1">
                   <button type="button" className={thBtn} onClick={() => handleSort("entityLabel")}>
-                    SOP / Dept <SortIcon field="entityLabel" />
+                    {isUserAudit ? "Account" : "SOP / Dept"} <SortIcon field="entityLabel" />
                   </button>
                 </th>
                 <th className="bg-gray-100 px-1 py-1">
                   <button type="button" className={thBtn} onClick={() => handleSort("sopName")}>
-                    SOP Name <SortIcon field="sopName" />
+                    {isUserAudit ? "Display name" : "SOP Name"} <SortIcon field="sopName" />
                   </button>
                 </th>
                 <th className="bg-gray-100 px-1 py-1">
@@ -617,7 +654,7 @@ function AuditRow({
                   key={field}
                   className="rounded border border-slate-200 bg-slate-50 px-1 py-px text-[9px] font-medium text-slate-600"
                 >
-                  {fieldLabel(field)}
+                  {fieldLabel(field, row.entityType)}
                 </span>
               ))
             ) : (
@@ -654,7 +691,7 @@ function AuditRow({
                 <tbody>
                   {changeKeys.map((field) => (
                     <tr key={field} className="border-t border-slate-100">
-                      <td className="px-2 py-1 text-[11px] font-medium text-slate-700">{fieldLabel(field)}</td>
+                      <td className="px-2 py-1 text-[11px] font-medium text-slate-700">{fieldLabel(field, row.entityType)}</td>
                       <td className="px-2 py-1 text-[11px] text-rose-700">
                         {formatValue(row.previousValues[field])}
                       </td>

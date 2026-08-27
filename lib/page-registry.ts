@@ -64,6 +64,14 @@ export const APP_PAGES: AppPage[] = [
     description: "Employee training administration",
   },
   {
+    key: "lms-trainer-overview",
+    label: "Trainer Overview",
+    prefix: "/lms/admin/trainer-overview",
+    group: "Training",
+    description: "Admin hierarchy of trainers, departments, employees and exam completion",
+    adminOnly: true,
+  },
+  {
     key: "training-matrix",
     label: "Training Matrix",
     prefix: "/training-matrix",

@@ -1,5 +1,6 @@
 import type { RegistrySOP } from "@/lib/types";
-import { sopFamilyGroupKey } from "@/lib/sop-utils";
+import { normalizeSopIdentifierKey } from "@/lib/sopIdentifierNormalize";
+import { sopFamilyGroupKey, versionFromIdentifier } from "@/lib/sop-utils";
 
 // ── Subcategory prefix → canonical department (aligned with Dashboard / TM) ──
 export const MCQ_SUBCAT_TO_DEPT: Record<string, string> = {
@@ -115,51 +116,133 @@ export interface RawMcqBankAgg {
   updatedAt?: Date;
 }
 
+export type McqBankLangCode = "ENG" | "GUJ";
+
+export function mcqBankLangCode(language: string | undefined | null): McqBankLangCode {
+  return String(language ?? "").toLowerCase() === "gujarati" ? "GUJ" : "ENG";
+}
+
+export interface CanonicalMcqBankPick {
+  sopIdentifier: string;
+  language?: string | null;
+  totalQuestions?: number;
+  updatedAt?: Date | string | null;
+}
+
+function bankRevisionNum(identifier: string): number {
+  return parseInt(versionFromIdentifier(identifier) ?? "", 10) || 0;
+}
+
+function bankUpdatedMs(updatedAt?: Date | string | null): number {
+  if (!updatedAt) return 0;
+  const t = new Date(updatedAt).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function identifiersMatch(a: string, b: string): boolean {
+  const na = normalizeSopIdentifierKey(a);
+  const nb = normalizeSopIdentifierKey(b);
+  return Boolean(na) && na === nb;
+}
+
+/**
+ * Choose one active bank per language for a SOP family.
+ *
+ * Prior versions (QAGE20-5 vs QAGE20-6) used to be summed, so the registry
+ * showed 190 while opening the current bank showed 90. Prefer a bank that
+ * matches `preferredIdentifier` (the Dashboard current revision); otherwise
+ * take the newest revision.
+ */
+export function selectCanonicalBanksByLang<T extends CanonicalMcqBankPick>(
+  banks: T[],
+  preferredIdentifier?: string | null,
+): T[] {
+  const preferred = (preferredIdentifier ?? "").trim();
+  const best = new Map<McqBankLangCode, T>();
+  for (const b of banks) {
+    const lang = mcqBankLangCode(b.language);
+    const prev = best.get(lang);
+    if (!prev || isBetterCanonicalMcqBank(b, prev, preferred)) best.set(lang, b);
+  }
+  return [...best.values()];
+}
+
+export function isBetterCanonicalMcqBank(
+  candidate: CanonicalMcqBankPick,
+  current: CanonicalMcqBankPick,
+  preferredIdentifier?: string | null,
+): boolean {
+  const preferred = (preferredIdentifier ?? "").trim();
+  if (preferred) {
+    const candMatch = identifiersMatch(candidate.sopIdentifier, preferred);
+    const curMatch = identifiersMatch(current.sopIdentifier, preferred);
+    if (candMatch !== curMatch) return candMatch;
+  }
+  const candRev = bankRevisionNum(candidate.sopIdentifier);
+  const curRev = bankRevisionNum(current.sopIdentifier);
+  if (candRev !== curRev) return candRev > curRev;
+  const candTs = bankUpdatedMs(candidate.updatedAt);
+  const curTs = bankUpdatedMs(current.updatedAt);
+  if (candTs !== curTs) return candTs > curTs;
+  return (candidate.totalQuestions ?? 0) > (current.totalQuestions ?? 0);
+}
+
 /** Collapse raw MCQ bank rows into one entry per SOP family key. */
-export function aggregateMcqBanksByFamily(rawBanks: RawMcqBankAgg[]): Map<string, AggregatedMcqFamily> {
-  const map = new Map<string, AggregatedMcqFamily>();
+export function aggregateMcqBanksByFamily(
+  rawBanks: RawMcqBankAgg[],
+  preferredIdentifierByFam?: Map<string, string>,
+): Map<string, AggregatedMcqFamily> {
+  const grouped = new Map<string, RawMcqBankAgg[]>();
   for (const b of rawBanks) {
     const rawId = (b.sopIdentifier ?? "").trim();
     const famKey = sopFamilyGroupKey({ identifier: rawId });
     const dept = mcqResolveDept(rawId, b.department);
     if (dept === "Other") continue;
-    if (!map.has(famKey)) {
-      map.set(famKey, {
-        famKey,
-        identifier: rawId,
-        sopName: b.sopName ?? rawId,
-        dept,
-        totalQ: 0,
-        checkedQ: 0,
-        reviewedQ: 0,
-        similarQ: 0,
-        enQ: 0,
-        guQ: 0,
-        hasEn: false,
-        hasGu: false,
-        lastUpdated: null,
-        banks: [],
-      });
+    const list = grouped.get(famKey);
+    if (list) list.push(b);
+    else grouped.set(famKey, [b]);
+  }
+
+  const map = new Map<string, AggregatedMcqFamily>();
+  for (const [famKey, banks] of grouped) {
+    const preferred = preferredIdentifierByFam?.get(famKey);
+    const canonical = selectCanonicalBanksByLang(banks, preferred);
+    const first = canonical[0] ?? banks[0];
+    const rawId = (first.sopIdentifier ?? "").trim();
+    const e: AggregatedMcqFamily = {
+      famKey,
+      identifier: preferred || rawId,
+      sopName: first.sopName ?? rawId,
+      dept: mcqResolveDept(rawId, first.department),
+      totalQ: 0,
+      checkedQ: 0,
+      reviewedQ: 0,
+      similarQ: 0,
+      enQ: 0,
+      guQ: 0,
+      hasEn: false,
+      hasGu: false,
+      lastUpdated: null,
+      banks: [],
+    };
+    for (const b of canonical) {
+      e.totalQ += b.totalQuestions;
+      e.checkedQ += b.checkedCount;
+      e.reviewedQ += b.reviewedCount;
+      e.similarQ += b.similarCount;
+      if (mcqBankLangCode(b.language) === "GUJ") {
+        e.hasGu = true;
+        e.guQ += b.totalQuestions;
+      } else {
+        e.hasEn = true;
+        e.enQ += b.totalQuestions;
+      }
+      if (b._id) e.banks.push({ id: String(b._id), langCode: mcqBankLangCode(b.language) });
+      const ts = b.updatedAt ? new Date(b.updatedAt) : null;
+      if (ts && (!e.lastUpdated || ts > e.lastUpdated)) e.lastUpdated = ts;
+      if (b.sopName) e.sopName = b.sopName;
     }
-    const e = map.get(famKey)!;
-    e.totalQ += b.totalQuestions;
-    e.checkedQ += b.checkedCount;
-    e.reviewedQ += b.reviewedCount;
-    e.similarQ += b.similarCount;
-    if ((b.language ?? "").toLowerCase() === "gujarati") {
-      e.hasGu = true;
-      e.guQ += b.totalQuestions;
-    } else {
-      e.hasEn = true;
-      e.enQ += b.totalQuestions;
-    }
-    if (b._id) e.banks.push({
-      id: String(b._id),
-      langCode: (b.language ?? "").toLowerCase() === "gujarati" ? "GUJ" : "ENG",
-    });
-    const ts = b.updatedAt ? new Date(b.updatedAt) : null;
-    if (ts && (!e.lastUpdated || ts > e.lastUpdated)) e.lastUpdated = ts;
-    if (b.sopName) e.sopName = b.sopName;
+    map.set(famKey, e);
   }
   return map;
 }

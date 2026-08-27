@@ -3,10 +3,11 @@ import bcrypt from "bcryptjs";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth } from "@/lib/withAuth";
 import { syncEmployeeTrainerFlag } from "@/lib/userTrainerSync";
-import { resolveLmsEmployeeLink } from "@/lib/userEmployeeLink";
+import { autoLinkSharedUserToEmployee, resolveLmsEmployeeLink } from "@/lib/userEmployeeLink";
 import { isSharedLmsLogin, syncLmsPasswordFromUser } from "@/lib/lmsSharedLogin";
 import { isLearnerOnly } from "@/lib/page-access";
 import { serializeAssignedDepartments } from "@/lib/access-control";
+import { actorFromSession, logUserAudit } from "@/lib/audit-log";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
 
@@ -120,6 +121,19 @@ export async function POST(request: NextRequest) {
       isTrainer,
       lmsEmployeeId: link.employeeId,
       sharedLmsLogin,
+    });
+
+    if (!user.lmsEmployeeId && sharedLmsLogin) {
+      const auto = await autoLinkSharedUserToEmployee(user);
+      if (auto.linked) await user.save();
+    }
+
+    await logUserAudit({
+      actor: actorFromSession(auth.session, request),
+      action: "created",
+      user,
+      previous: {},
+      passwordChanged: true,
     });
 
     // Trainer access is read from the Employee record, so mirror it there. Only

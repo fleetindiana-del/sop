@@ -6,10 +6,7 @@ import {
   lmsServerTtl,
 } from '@/lib/lmsCache';
 import { requireLmsTrainer, deptMatchesTrainerScope } from '@/lib/lmsTrainerAuth';
-import { resolveTrainerDepartments } from '@/lib/employeeTrainer';
-import { findEmployeeForTrainerUser } from '@/lib/userTrainerSync';
-import Employee from '@/models/Employee';
-import User from '@/models/User';
+import { listActiveTrainers, type TrainerDirectoryEntry } from '@/lib/lmsTrainerDirectory';
 import TrainerEmployee from '@/models/lms/TrainerEmployee';
 import {
   employeeAssignmentKey,
@@ -100,67 +97,8 @@ const EMPTY_MONTH_COUNTS = () =>
     ignored: 0,
   }));
 
-export interface MonthlyTrainerSummary {
-  id: string;
-  name: string;
-  department: string;
-  trainerDepartments: string[];
-}
-
 /** Active department trainers — used by Super Admin / SOP Admin to filter the employee board. */
-async function listAdminTrainers(): Promise<MonthlyTrainerSummary[]> {
-  const [empDocs, trainerUsers] = await Promise.all([
-    Employee.find({ isActive: true, isTrainer: true })
-      .select('_id name department trainerDepartments isTrainer')
-      .sort({ name: 1 })
-      .lean<Array<{
-        _id: unknown;
-        name?: string;
-        department?: string;
-        trainerDepartments?: string[];
-        isTrainer?: boolean;
-      }>>(),
-    User.find({ $or: [{ isTrainer: true }, { role: 'trainer' }] })
-      .select('username name department lmsEmployeeId')
-      .lean<Array<{
-        username?: string;
-        name?: string;
-        department?: string;
-        lmsEmployeeId?: unknown;
-      }>>(),
-  ]);
-
-  const byId = new Map<string, MonthlyTrainerSummary>();
-  const add = (emp: {
-    _id: unknown;
-    name?: string;
-    department?: string;
-    trainerDepartments?: string[];
-  }) => {
-    const id = String(emp._id || '');
-    const name = String(emp.name || '').trim();
-    if (!id || !name || byId.has(id)) return;
-    byId.set(id, {
-      id,
-      name,
-      department: String(emp.department || '').trim(),
-      trainerDepartments: resolveTrainerDepartments({
-        department: emp.department,
-        trainerDepartments: emp.trainerDepartments,
-        isTrainer: true,
-      }),
-    });
-  };
-
-  for (const t of empDocs) add(t);
-
-  const linked = await Promise.all(trainerUsers.map((u) => findEmployeeForTrainerUser(u)));
-  for (const emp of linked) {
-    if (emp) add(emp);
-  }
-
-  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
+export type MonthlyTrainerSummary = TrainerDirectoryEntry;
 
 /**
  * GET /api/lms/trainer/monthly?year=&department=
@@ -196,7 +134,7 @@ export async function GET(req: NextRequest) {
         const scopedDepts = trainer.trainerDepartments.filter(
           (d) => !deptParam || d.toLowerCase() === deptParam.toLowerCase(),
         );
-        const adminTrainers = trainer.allDepartments ? await listAdminTrainers() : [];
+        const adminTrainers = trainer.allDepartments ? await listActiveTrainers() : [];
 
         const base = {
           trainer: {

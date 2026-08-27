@@ -1,8 +1,11 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import bcrypt from "bcryptjs";
 import { ensureDefaultAdmin } from "@/lib/ensure-admin";
 import { connectDB } from "@/lib/mongodb";
+import {
+  findDashboardUserForLogin,
+  passwordMatchesDashboardUser,
+} from "@/lib/sharedLoginLookup";
 import User from "@/models/User";
 
 /** On Vercel, ignore localhost NEXTAUTH_URL so CSRF/cookies use the real host. */
@@ -84,22 +87,17 @@ export const authOptions: NextAuthOptions = {
           await connectDB();
           await ensureDefaultAdmin();
 
-          const username = credentials.username.toLowerCase().trim();
-          const user = await User.findOne({ username });
+          const username = credentials.username.trim();
+          const user = await findDashboardUserForLogin(username);
 
           if (!user) {
-            console.error("[auth] No user found for username:", username);
+            console.error("[auth] No user found for username:", username.toLowerCase());
             return null;
           }
 
-          if (!user.passwordHash) {
-            console.error("[auth] User has no passwordHash:", username);
-            return null;
-          }
-
-          const valid = await bcrypt.compare(credentials.password, user.passwordHash);
+          const valid = await passwordMatchesDashboardUser(user, credentials.password);
           if (!valid) {
-            console.error("[auth] Password mismatch for username:", username);
+            console.error("[auth] Password mismatch for username:", user.username);
             return null;
           }
 

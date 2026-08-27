@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
     const search          = searchParams.get('search') || '';
     const includeInactive = searchParams.get('includeInactive') === '1';
     const includeAssignments = searchParams.get('includeAssignments') === '1';
+    const deletedOnly = searchParams.get('deletedOnly') === '1';
     // The first (fast) page load passes skipSync=1 so the roster renders
     // immediately; the follow-up assignments request keeps the roster mirrored
     // to the training matrix. The sync is also throttled so it never re-runs the
@@ -37,7 +38,12 @@ export async function GET(req: NextRequest) {
 
     const filter: Record<string, unknown> = {};
     if (department)       filter.department = { $regex: new RegExp(`^${department}$`, 'i') };
-    if (!includeInactive) filter.isActive   = true;
+    if (deletedOnly) {
+      filter.isDeleted = true;
+    } else {
+      filter.isDeleted = { $ne: true };
+      if (!includeInactive) filter.isActive = true;
+    }
     if (search)           filter.$or = [
       { name:        { $regex: search, $options: 'i' } },
       { designation: { $regex: search, $options: 'i' } },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
 import { connectDB } from '@/lib/mongodb';
 import { generateUniqueLmsUsername } from '@/lib/lms-credentials';
 import {
@@ -43,6 +44,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const existing = await Employee.findById(id).select('+lmsPasswordHash');
     if (!existing) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+
+    if (body.isDeleted === false) {
+      update.isDeleted = false;
+      update.deletedAt = null;
+      update.deletedKind = undefined;
+      if (body.isActive === undefined) update.isActive = true;
+    } else if (body.isDeleted === true) {
+      update.isDeleted = true;
+      update.isActive = false;
+      update.deletedAt = new Date();
+      update.deletedKind = 'deleted';
+    }
 
     // Designation change: stamp the previous value and the time, so LMS and
     // admin screens can confirm the update landed without reading the audit log.
@@ -121,6 +134,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     if (Object.prototype.hasOwnProperty.call(update, 'isActive')) {
       existing.markModified('isActive');
+    }
+    if (Object.prototype.hasOwnProperty.call(update, 'isDeleted')) {
+      existing.markModified('isDeleted');
     }
     await existing.save();
 
@@ -219,16 +235,91 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 }
 
-// DELETE /api/employees/[id] — hard delete (employees can also be deactivated via PATCH isActive=false)
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+// DELETE /api/employees/[id] — archive to Obsolete / Deleted (not a hard wipe).
+// Left employees stay on the Left tab via PATCH isActive=false; this path takes
+// them off both live rosters. A missing id is treated as already gone so the
+// UI can drop the row instead of getting stuck on "Employee not found".
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     await connectDB();
     const { id } = await params;
-    const employee = await Employee.findByIdAndDelete(id);
-    if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
-    await TrainerEmployee.deleteMany({ employeeId: id });
+    const { searchParams } = req.nextUrl;
+    const name = String(searchParams.get('name') || '').trim();
+    const department = String(searchParams.get('department') || '').trim();
+    const designation = String(searchParams.get('designation') || '').trim();
+
+    let employee = mongoose.isValidObjectId(id) ? await Employee.findById(id) : null;
+    if (!employee && name && department) {
+      employee = await Employee.findOne({ name, department });
+    }
+
+    if (!employee && name && department) {
+      employee = await Employee.create({
+        name,
+        department,
+        designation: designation || '—',
+        isActive: false,
+        isDeleted: true,
+        deletedAt: new Date(),
+        deletedKind: 'obsolete',
+      });
+    }
+
+    if (!employee) {
+      return NextResponse.json({
+        alreadyRemoved: true,
+        message: 'Employee was not in Employee Master and has been dropped from the list',
+      });
+    }
+
+    if (!employee.isDeleted) {
+      employee.set({
+        isDeleted: true,
+        isActive: false,
+        deletedAt: new Date(),
+        deletedKind: 'deleted',
+      });
+      employee.markModified('isDeleted');
+      await employee.save();
+    }
+
+    const identity = {
+      name: String(employee.name || '').trim(),
+      department: String(employee.department || '').trim(),
+    };
+    if (identity.name && identity.department) {
+      await Employee.updateMany(
+        {
+          _id: { $ne: employee._id },
+          name: identity.name,
+          department: identity.department,
+          isDeleted: { $ne: true },
+        },
+        {
+          $set: {
+            isDeleted: true,
+            isActive: false,
+            deletedAt: new Date(),
+            deletedKind: 'obsolete',
+          },
+        },
+      );
+    }
+
+    await TrainerEmployee.deleteMany({ employeeId: String(employee._id) });
     invalidateEmployeeDerivedCaches();
-    return NextResponse.json({ message: `Employee ${employee.name} deleted` });
+
+    const out = employee.toObject();
+    delete out.lmsPasswordHash;
+    return NextResponse.json({
+      message: `Employee ${employee.name} moved to Obsolete / Deleted`,
+      employee: {
+        ...out,
+        dateOfJoining: out.dateOfJoining
+          ? formatDateOfJoiningInput(out.dateOfJoining as Date)
+          : undefined,
+      },
+    });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }

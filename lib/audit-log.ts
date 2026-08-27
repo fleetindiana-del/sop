@@ -241,6 +241,7 @@ function defaultSummary(params: {
     department: "department",
     designation: "designation",
     employee: "employee",
+    user: "login",
   };
   const noun = ENTITY_NOUN[params.entityType];
   const label = params.entityLabel || noun || "SOP";
@@ -366,6 +367,80 @@ export async function logAuditEvent(params: LogAuditParams): Promise<void> {
     if (code === 11000) return;
     console.error("[audit-log] failed to write event:", error);
   }
+}
+
+const USER_SNAPSHOT_FIELDS = [
+  "username",
+  "name",
+  "email",
+  "role",
+  "department",
+  "designation",
+  "isTrainer",
+  "lmsEmployeeId",
+  "sharedLmsLogin",
+  "pageAccess",
+] as const;
+
+export function snapshotUser(source: unknown): Record<string, unknown> {
+  const user = asPlain(source);
+  const out: Record<string, unknown> = {};
+  for (const field of USER_SNAPSHOT_FIELDS) {
+    if (field === "lmsEmployeeId") {
+      out[field] = user.lmsEmployeeId != null && String(user.lmsEmployeeId).trim()
+        ? String(user.lmsEmployeeId)
+        : null;
+      continue;
+    }
+    if (field === "pageAccess") {
+      out[field] = Array.isArray(user.pageAccess) ? [...user.pageAccess].sort() : null;
+      continue;
+    }
+    if (field === "isTrainer" || field === "sharedLmsLogin") {
+      out[field] = Boolean(user[field]);
+      continue;
+    }
+    out[field] = serializeAuditValue(user[field]);
+  }
+  return out;
+}
+
+export async function logUserAudit(params: {
+  actor?: AuditActor;
+  action: AuditAction;
+  user: unknown;
+  previous?: Record<string, unknown> | null;
+  updated?: Record<string, unknown> | null;
+  comments?: string;
+  summary?: string;
+  /** Never store the password itself — only that it was set or reset. */
+  passwordChanged?: boolean;
+}): Promise<void> {
+  const user = asPlain(params.user);
+  const previous = params.previous ? { ...params.previous } : undefined;
+  const updated = { ...(params.updated ?? snapshotUser(user)) };
+  if (params.passwordChanged) {
+    if (previous) previous.password = params.action === "created" ? null : "unchanged";
+    updated.password = params.action === "created" ? "set" : "reset";
+  }
+  const diff = diffAuditValues(previous, updated);
+  if (params.action === "updated" && diff.fieldsChanged.length === 0) return;
+  const id = user._id != null ? String(user._id) : String(user.username ?? "");
+  const username = String(user.username ?? "");
+  await logAuditEvent({
+    actor: params.actor,
+    entityType: "user",
+    entityId: id,
+    entityLabel: username,
+    sopName: String(user.name ?? ""),
+    department: user.department ? String(user.department) : undefined,
+    action: params.action,
+    fieldsChanged: diff.fieldsChanged,
+    previousValues: diff.previousValues,
+    updatedValues: diff.updatedValues,
+    comments: params.comments,
+    summary: params.summary,
+  });
 }
 
 export async function logSopAudit(params: {

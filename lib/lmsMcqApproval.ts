@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { connectDB } from '@/lib/mongodb';
 import { sopFamilyGroupKey, sopFamilyIdentifierRegex } from '@/lib/sop-utils';
+import { selectCanonicalBanksByLang } from '@/lib/mcq-bank-utils';
 
 /**
  * MCQ Bank "Approved" for a SOP family = every question is checked (ticked).
@@ -43,17 +44,38 @@ export async function getMcqApprovedMapForCodes(
       ).maxTimeMS(15_000).toArray()
     : [];
 
-  const byFam = new Map<string, { totalQ: number; checkedQ: number }>();
+  const grouped = new Map<string, Array<{
+    sopIdentifier: string;
+    language: string;
+    totalQuestions: number;
+    checkedQ: number;
+  }>>();
   for (const b of banks) {
     const fam = sopFamilyGroupKey({ identifier: String(b.sopIdentifier || '').trim() });
     if (!famKeys.includes(fam)) continue;
     const mcqs = Array.isArray(b.mcqs) ? b.mcqs as Array<{ isChecked?: boolean }> : [];
     const totalQ = Number(b.totalQuestions) || mcqs.length;
     const checkedQ = mcqs.filter((q) => q.isChecked === true).length;
-    const cur = byFam.get(fam) || { totalQ: 0, checkedQ: 0 };
-    cur.totalQ += totalQ;
-    cur.checkedQ += checkedQ;
-    byFam.set(fam, cur);
+    const row = {
+      sopIdentifier: String(b.sopIdentifier || ''),
+      language: String(b.language || ''),
+      totalQuestions: totalQ,
+      checkedQ,
+    };
+    const list = grouped.get(fam);
+    if (list) list.push(row);
+    else grouped.set(fam, [row]);
+  }
+
+  const byFam = new Map<string, { totalQ: number; checkedQ: number }>();
+  for (const [fam, famBanks] of grouped) {
+    const canonical = selectCanonicalBanksByLang(famBanks);
+    const agg = { totalQ: 0, checkedQ: 0 };
+    for (const b of canonical) {
+      agg.totalQ += b.totalQuestions;
+      agg.checkedQ += b.checkedQ;
+    }
+    byFam.set(fam, agg);
   }
 
   for (const fam of famKeys) {

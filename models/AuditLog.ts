@@ -1,6 +1,6 @@
 import mongoose, { Document, Model, Schema } from "mongoose";
 
-export const AUDIT_ENTITY_TYPES = ["sop", "department", "designation", "employee"] as const;
+export const AUDIT_ENTITY_TYPES = ["sop", "department", "designation", "employee", "user"] as const;
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 
 export const AUDIT_ACTIONS = [

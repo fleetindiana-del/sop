@@ -121,7 +121,9 @@ function LoginForm() {
       <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 shadow-lg">
         <div className="mb-6 text-center">
           <h1 className="text-xl font-bold text-violet-900">SOP Control</h1>
-          <p className="mt-1 text-sm text-slate-500">Sign in to your account</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Use your dashboard or LMS username — trainers share one password for both.
+            </p>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-4">

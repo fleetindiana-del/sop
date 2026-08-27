@@ -12,8 +12,10 @@ import {
   aggregateMcqBanksByFamily,
   buildActiveSopFamilyMap,
   findObsoleteMcqFamilies,
+  mcqBankLangCode,
   mcqFamilyComplete,
   mcqResolveDept,
+  selectCanonicalBanksByLang,
 } from "@/lib/mcq-bank-utils";
 
 export const dynamic = "force-dynamic";
@@ -92,6 +94,12 @@ interface FamilyBank {
   /** Per-language question totals — drive the dual-language completeness check. */
   enQ: number;
   guQ: number;
+  enChecked: number;
+  guChecked: number;
+  enReviewed: number;
+  guReviewed: number;
+  enSimilar: number;
+  guSimilar: number;
   lastUpdated: Date | null;
   banks: { id: string; langCode: "ENG" | "GUJ" }[];
   /** Highest annexure-included count any of the family's banks recorded at
@@ -129,39 +137,61 @@ const bankProject = {
   annexureUsage: 1,
 };
 
-function foldBanks(rawBanks: RawBank[], includeFam: (fam: string, bank: RawBank) => boolean): Map<string, FamilyBank> {
-  const banksByFamily = new Map<string, FamilyBank>();
+function foldBanks(
+  rawBanks: RawBank[],
+  includeFam: (fam: string, bank: RawBank) => boolean,
+  preferredIdentifierByFam?: Map<string, string>,
+): Map<string, FamilyBank> {
+  const grouped = new Map<string, RawBank[]>();
   for (const b of rawBanks) {
     const fam = sopFamilyGroupKey({ identifier: (b.sopIdentifier ?? "").trim() });
     if (!includeFam(fam, b)) continue;
-    if (!banksByFamily.has(fam)) {
-      banksByFamily.set(fam, {
-        totalQ: 0, checkedQ: 0, reviewedQ: 0, similarQ: 0,
-        easyQ: 0, mediumQ: 0, hardQ: 0,
-        enQ: 0, guQ: 0,
-        lastUpdated: null, banks: [],
-        annexuresIncluded: 0, annexureLabels: [],
-      });
+    const list = grouped.get(fam);
+    if (list) list.push(b);
+    else grouped.set(fam, [b]);
+  }
+
+  const banksByFamily = new Map<string, FamilyBank>();
+  for (const [fam, banks] of grouped) {
+    const canonical = selectCanonicalBanksByLang(banks, preferredIdentifierByFam?.get(fam));
+    const e: FamilyBank = {
+      totalQ: 0, checkedQ: 0, reviewedQ: 0, similarQ: 0,
+      easyQ: 0, mediumQ: 0, hardQ: 0,
+      enQ: 0, guQ: 0,
+      enChecked: 0, guChecked: 0, enReviewed: 0, guReviewed: 0, enSimilar: 0, guSimilar: 0,
+      lastUpdated: null, banks: [],
+      annexuresIncluded: 0, annexureLabels: [],
+    };
+    for (const b of canonical) {
+      e.totalQ += b.totalQuestions;
+      e.checkedQ += b.checkedCount;
+      e.reviewedQ += b.reviewedCount;
+      e.similarQ += b.similarCount;
+      e.easyQ += b.easyCount;
+      e.mediumQ += b.mediumCount;
+      e.hardQ += b.hardCount;
+      const langCode = mcqBankLangCode(b.language);
+      if (langCode === "GUJ") {
+        e.guQ += b.totalQuestions;
+        e.guChecked += b.checkedCount;
+        e.guReviewed += b.reviewedCount;
+        e.guSimilar += b.similarCount;
+      } else {
+        e.enQ += b.totalQuestions;
+        e.enChecked += b.checkedCount;
+        e.enReviewed += b.reviewedCount;
+        e.enSimilar += b.similarCount;
+      }
+      if (b._id) e.banks.push({ id: String(b._id), langCode });
+      const included = b.annexureUsage?.includedCount ?? 0;
+      if (included > e.annexuresIncluded) e.annexuresIncluded = included;
+      for (const label of b.annexureUsage?.includedLabels ?? []) {
+        if (!e.annexureLabels.includes(label)) e.annexureLabels.push(label);
+      }
+      const ts = b.updatedAt ? new Date(b.updatedAt) : null;
+      if (ts && (!e.lastUpdated || ts > e.lastUpdated)) e.lastUpdated = ts;
     }
-    const e = banksByFamily.get(fam)!;
-    e.totalQ += b.totalQuestions;
-    e.checkedQ += b.checkedCount;
-    e.reviewedQ += b.reviewedCount;
-    e.similarQ += b.similarCount;
-    e.easyQ += b.easyCount;
-    e.mediumQ += b.mediumCount;
-    e.hardQ += b.hardCount;
-    const langCode: "ENG" | "GUJ" = (b.language ?? "").toLowerCase() === "gujarati" ? "GUJ" : "ENG";
-    if (langCode === "GUJ") e.guQ += b.totalQuestions;
-    else e.enQ += b.totalQuestions;
-    if (b._id) e.banks.push({ id: String(b._id), langCode });
-    const included = b.annexureUsage?.includedCount ?? 0;
-    if (included > e.annexuresIncluded) e.annexuresIncluded = included;
-    for (const label of b.annexureUsage?.includedLabels ?? []) {
-      if (!e.annexureLabels.includes(label)) e.annexureLabels.push(label);
-    }
-    const ts = b.updatedAt ? new Date(b.updatedAt) : null;
-    if (ts && (!e.lastUpdated || ts > e.lastUpdated)) e.lastUpdated = ts;
+    banksByFamily.set(fam, e);
   }
   return banksByFamily;
 }
@@ -178,14 +208,20 @@ function toEntry(
   annexureCount = 0,
 ): RegistryEntry {
   const langCode = language === "GUJ" ? "GUJ" : "ENG";
-  // "MCQ Found" means real questions exist in every language the SOP requires —
-  // identical to the dashboard capsule, so the list and capsule stay in sync.
+  const needsEn = language === "ENG" || language === "ENG-GUJ";
+  const needsGu = language === "GUJ" || language === "ENG-GUJ";
   const hasMcq = mcqFamilyComplete(
-    {
-      needsEn: language === "ENG" || language === "ENG-GUJ",
-      needsGu: language === "GUJ" || language === "ENG-GUJ",
-    },
+    { needsEn, needsGu },
     bank,
+  );
+  const enQ = needsEn ? (bank?.enQ ?? 0) : 0;
+  const guQ = needsGu ? (bank?.guQ ?? 0) : 0;
+  const totalMcqs = enQ + guQ;
+  const approved = (needsEn ? (bank?.enChecked ?? 0) : 0) + (needsGu ? (bank?.guChecked ?? 0) : 0);
+  const partial = (needsEn ? (bank?.enReviewed ?? 0) : 0) + (needsGu ? (bank?.guReviewed ?? 0) : 0);
+  const similar = (needsEn ? (bank?.enSimilar ?? 0) : 0) + (needsGu ? (bank?.guSimilar ?? 0) : 0);
+  const banks = (bank?.banks ?? []).filter((b) =>
+    (b.langCode === "ENG" && needsEn) || (b.langCode === "GUJ" && needsGu),
   );
   return {
     id,
@@ -195,21 +231,21 @@ function toEntry(
     department,
     language,
     langCode,
-    totalMcqs: bank?.totalQ ?? 0,
-    remaining: bank ? Math.max(0, bank.totalQ - bank.checkedQ) : 0,
-    approved: bank?.checkedQ ?? 0,
-    partial: bank?.reviewedQ ?? 0,
-    similar: bank?.similarQ ?? 0,
+    totalMcqs,
+    remaining: Math.max(0, totalMcqs - approved),
+    approved,
+    partial,
+    similar,
     easyCount: bank?.easyQ ?? 0,
     mediumCount: bank?.mediumQ ?? 0,
     hardCount: bank?.hardQ ?? 0,
     lastUpdated: bank?.lastUpdated?.toISOString() ?? null,
-    banks: bank?.banks ?? [],
+    banks,
     hasMcq,
-    hasEnMcq: (bank?.enQ ?? 0) > 0,
-    hasGuMcq: (bank?.guQ ?? 0) > 0,
-    enMcqCount: bank?.enQ ?? 0,
-    guMcqCount: bank?.guQ ?? 0,
+    hasEnMcq: enQ > 0,
+    hasGuMcq: guQ > 0,
+    enMcqCount: enQ,
+    guMcqCount: guQ,
     isObsoleteMcq,
     annexureCount,
     // Live linked count vs. what generation recorded: annexures linked after the
@@ -230,6 +266,11 @@ async function buildFullRegistry() {
   const grouped = await getGroupedRegistryRows();
   const activeGrouped = grouped.filter((r) => !r.isObsolete);
   const activeFamilyMap = buildActiveSopFamilyMap(grouped);
+  const preferredIdentifierByFam = new Map<string, string>();
+  for (const row of activeGrouped) {
+    const fam = sopFamilyGroupKey(row);
+    if (!preferredIdentifierByFam.has(fam)) preferredIdentifierByFam.set(fam, row.identifier);
+  }
   const mcqBankCol = db.collection("mcqbanks");
 
   const [activeBankRows, obsoleteMarkedRows, allBankRows] = await Promise.all([
@@ -238,7 +279,7 @@ async function buildFullRegistry() {
     mcqBankCol.aggregate([{ $project: bankProject }]).toArray() as Promise<RawBank[]>,
   ]);
 
-  const activeMcqFamilies = aggregateMcqBanksByFamily(activeBankRows);
+  const activeMcqFamilies = aggregateMcqBanksByFamily(activeBankRows, preferredIdentifierByFam);
   const orphanFamilies = findObsoleteMcqFamilies(activeFamilyMap, activeMcqFamilies);
   const orphanFamKeys = new Set(orphanFamilies.map((f) => f.famKey));
   const markedObsoleteFamilies = aggregateMcqBanksByFamily(obsoleteMarkedRows);
@@ -252,6 +293,7 @@ async function buildFullRegistry() {
   const activeBanksByFamily = foldBanks(
     activeBankRows,
     (fam, b) => !b.isObsolete && !orphanFamKeys.has(fam),
+    preferredIdentifierByFam,
   );
   const obsoleteBanksByFamily = foldBanks(
     allBankRows,
@@ -297,6 +339,12 @@ async function buildFullRegistry() {
         hardQ: 0,
         enQ: fam.enQ,
         guQ: fam.guQ,
+        enChecked: fam.checkedQ,
+        guChecked: 0,
+        enReviewed: fam.reviewedQ,
+        guReviewed: 0,
+        enSimilar: fam.similarQ,
+        guSimilar: 0,
         lastUpdated: fam.lastUpdated,
         banks: fam.banks,
         annexuresIncluded: 0,

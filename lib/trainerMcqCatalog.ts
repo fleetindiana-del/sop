@@ -3,7 +3,9 @@ import { connectDB } from '@/lib/mongodb';
 import { getGroupedRegistryRows } from '@/lib/dashboardRegistrySource';
 import {
   buildActiveSopFamilyMap,
+  mcqBankLangCode,
   mcqResolveDept,
+  selectCanonicalBanksByLang,
 } from '@/lib/mcq-bank-utils';
 import { isMcqFamilyFullyApproved } from '@/lib/lmsMcqApproval';
 import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
@@ -59,10 +61,6 @@ type FamilyLangStats = {
   checkedQ: number;
 };
 
-function langFromBank(language: string | undefined): 'ENG' | 'GUJ' {
-  return (language ?? '').toLowerCase() === 'gujarati' ? 'GUJ' : 'ENG';
-}
-
 function slotFromStats(totalQ: number, checkedQ: number): McqLangSlot {
   return {
     questionCount: totalQ,
@@ -97,6 +95,7 @@ export async function buildTrainerMcqCatalogMap(): Promise<Map<string, TrainerMc
   const activeFamilyMap = buildActiveSopFamilyMap(grouped);
   const gujaratiByFam = new Map<string, string>();
   const versionByFam = new Map<string, string>();
+  const preferredIdentifierByFam = new Map<string, string>();
   for (const row of grouped) {
     if (row.isObsolete) continue;
     const famKey = sopFamilyGroupKey(row);
@@ -104,6 +103,7 @@ export async function buildTrainerMcqCatalogMap(): Promise<Map<string, TrainerMc
     if (guj && !gujaratiByFam.has(famKey)) gujaratiByFam.set(famKey, guj);
     const version = String(row.version ?? '').trim();
     if (version && !versionByFam.has(famKey)) versionByFam.set(famKey, version);
+    if (!preferredIdentifierByFam.has(famKey)) preferredIdentifierByFam.set(famKey, row.identifier);
   }
 
   const bankRows = await db.collection('mcqbanks').aggregate([
@@ -122,6 +122,7 @@ export async function buildTrainerMcqCatalogMap(): Promise<Map<string, TrainerMc
             },
           },
         },
+        updatedAt: 1,
         qCount: {
           $size: {
             $filter: {
@@ -135,11 +136,28 @@ export async function buildTrainerMcqCatalogMap(): Promise<Map<string, TrainerMc
     },
   ]).toArray();
 
-  const statsByFam = new Map<string, FamilyLangStats>();
+  const banksByFam = new Map<string, typeof bankRows>();
   for (const b of bankRows) {
     const famKey = sopFamilyGroupKey({ identifier: String(b.sopIdentifier || '').trim() });
     if (!activeFamilyMap.has(famKey)) continue;
-    const cur = statsByFam.get(famKey) ?? {
+    const list = banksByFam.get(famKey);
+    if (list) list.push(b);
+    else banksByFam.set(famKey, [b]);
+  }
+
+  const statsByFam = new Map<string, FamilyLangStats>();
+  for (const [famKey, banks] of banksByFam) {
+    const canonical = selectCanonicalBanksByLang(
+      banks.map((b) => ({
+        ...b,
+        sopIdentifier: String(b.sopIdentifier || ''),
+        language: String(b.language || ''),
+        totalQuestions: Number(b.totalQuestions) || 0,
+        updatedAt: b.updatedAt as Date | undefined,
+      })),
+      preferredIdentifierByFam.get(famKey),
+    );
+    const cur: FamilyLangStats = {
       enQ: 0,
       enChecked: 0,
       guQ: 0,
@@ -148,18 +166,20 @@ export async function buildTrainerMcqCatalogMap(): Promise<Map<string, TrainerMc
       totalQ: 0,
       checkedQ: 0,
     };
-    const totalQ = Number(b.totalQuestions) || 0;
-    const checkedQ = Number(b.checkedCount) || 0;
-    const qCount = Number(b.qCount) || 0;
-    cur.totalQ += totalQ;
-    cur.checkedQ += checkedQ;
-    cur.questionCount += qCount;
-    if (langFromBank(String(b.language || '')) === 'GUJ') {
-      cur.guQ += totalQ;
-      cur.guChecked += checkedQ;
-    } else {
-      cur.enQ += totalQ;
-      cur.enChecked += checkedQ;
+    for (const b of canonical) {
+      const totalQ = Number(b.totalQuestions) || 0;
+      const checkedQ = Number(b.checkedCount) || 0;
+      const qCount = Number(b.qCount) || 0;
+      cur.totalQ += totalQ;
+      cur.checkedQ += checkedQ;
+      cur.questionCount += qCount;
+      if (mcqBankLangCode(String(b.language || '')) === 'GUJ') {
+        cur.guQ += totalQ;
+        cur.guChecked += checkedQ;
+      } else {
+        cur.enQ += totalQ;
+        cur.enChecked += checkedQ;
+      }
     }
     statsByFam.set(famKey, cur);
   }

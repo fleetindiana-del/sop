@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { isLearnerOnly } from '@/lib/page-access';
+import { AuditLogsModal } from '@/components/dashboard/AuditLogsModal';
 import {
   ArrowDown,
   ArrowLeft,
@@ -12,6 +13,7 @@ import {
   ChevronsUpDown,
   ExternalLink,
   GraduationCap,
+  History,
   KeyRound,
   Link2,
   Loader2,
@@ -251,6 +253,8 @@ export default function AdminUsersPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [departments, setDepartments] = useState<string[]>(FALLBACK_DEPARTMENTS);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditUser, setAuditUser] = useState<AppUser | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -570,6 +574,16 @@ export default function AdminUsersPage() {
             </Link>
             <button
               type="button"
+              onClick={() => {
+                setAuditUser(null);
+                setAuditOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              <History className="h-3.5 w-3.5" /> Audit Logs
+            </button>
+            <button
+              type="button"
               onClick={() => void load()}
               disabled={loading}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
@@ -772,6 +786,17 @@ export default function AdminUsersPage() {
                     <td className="px-4 py-3 text-slate-600">{user.designation || '—'}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuditUser(user);
+                            setAuditOpen(true);
+                          }}
+                          className="inline-flex items-center rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-white"
+                          title="View audit log"
+                        >
+                          <History className="h-3 w-3" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => openEdit(user)}
@@ -1140,6 +1165,21 @@ export default function AdminUsersPage() {
           </div>
         </div>
       )}
+      <AuditLogsModal
+        open={auditOpen}
+        onClose={() => {
+          setAuditOpen(false);
+          setAuditUser(null);
+        }}
+        lockedEntityType="user"
+        lockedEntityId={auditUser?.id}
+        title={auditUser ? `Login audit — ${auditUser.username}` : "Login & Password Audit Logs"}
+        subtitle={
+          auditUser
+            ? `Create, update, password reset, and access changes for ${auditUser.name}. Times in IST. Expand a row for previous vs new values.`
+            : "Who created, updated, or deleted dashboard logins — including password resets and access changes. Times in IST. Expand a row for previous vs new values."
+        }
+      />
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import {
   ArrowLeft, Calendar, CalendarRange, CheckCircle2, ChevronDown, ClipboardList, Loader2,
   RefreshCw, Search, Settings2, UserCheck, UserCog, Users, X, AlertCircle, Clock, EyeOff,
@@ -14,6 +15,7 @@ import {
 import { TrainerMonthlyExams, DeptFilterBtn } from '@/components/lms/TrainerMonthlyExams';
 import { TrainerRosterPanel } from '@/components/lms/TrainerRosterPanel';
 import { TrainerAttendancePanel } from '@/components/lms/TrainerAttendancePanel';
+import { isAdmin } from '@/lib/roles';
 
 type ScheduleStatus = 'ignored' | 'upcoming' | 'due' | 'overdue' | 'missed';
 type SopStatus = 'completed' | 'not_completed';
@@ -104,6 +106,8 @@ function statusLabel(s: string): string {
 
 export default function LmsTrainerPage() {
   const router = useRouter();
+  const { data: appSession } = useSession();
+  const isAppAdmin = Boolean(appSession?.user?.role && isAdmin(appSession.user.role));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState<DashboardPayload | null>(null);
@@ -333,6 +337,14 @@ export default function LmsTrainerPage() {
               <div className="min-w-0 flex-1">
                 <DeptFilterBtn value={dept} onChange={setDept} departments={depts} />
               </div>
+            )}
+            {isAppAdmin && (
+              <Link
+                href="/lms/admin/trainer-overview"
+                className="hidden shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 sm:inline-flex"
+              >
+                Trainer Overview
+              </Link>
             )}
             <button
               type="button"

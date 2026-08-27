@@ -70,6 +70,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: 'Training Matrix', href: '/training-matrix', icon: LibraryBig },
       { label: 'Induction Matrix', href: '/induction-training-matrix', icon: Users },
       { label: 'LMS Administration', href: '/lms/admin', icon: SlidersHorizontal },
+      { label: 'Trainer Overview', href: '/lms/admin/trainer-overview', icon: Users },
     ],
   },
   {
@@ -88,7 +89,7 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 function pathIsActive(pathname: string, href: string) {
-  if (href === '/lms' || href === '/test' || href === '/compliance') {
+  if (href === '/lms' || href === '/test' || href === '/compliance' || href === '/lms/admin') {
     return pathname === href;
   }
   return pathname === href || pathname.startsWith(`${href}/`);

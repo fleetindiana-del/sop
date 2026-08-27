@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
       filter.designation = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
     }
     if (!includeInactive) filter.isActive = true;
+    filter.isDeleted = { $ne: true };
 
     const rows = await Employee.find(filter)
       .select(

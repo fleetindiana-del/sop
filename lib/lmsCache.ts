@@ -17,6 +17,7 @@ const SERVER_TTL_MS = {
   userDashboard: 60_000,
   adminTrainingStatus: 2 * 60_000,
   adminEmployeeTraining: 2 * 60_000,
+  adminTrainerOverview: 2 * 60_000,
   adminMeta: 5 * 60_000,
   adminExamSettings: 2 * 60_000,
   adminSopExamSettings: 2 * 60_000,
@@ -151,6 +152,8 @@ export const lmsServerKeys = {
   journeyContent: (sopCode: string) => `lms:journey-content:v2:${sopCode.toUpperCase()}`,
   adminTrainingStatus: (department: string) => `lms:admin:training-status:v2:${department || 'all'}`,
   adminEmployeeTraining: (department: string) => `lms:admin:employee-training:v4:${department || 'all'}`,
+  adminTrainerOverview: (year: number | 'all', includeIgnored: boolean) =>
+    `lms:admin:trainer-overview:v1:${year}:${includeIgnored ? 'inc' : 'exc'}`,
   trainerDashboard: (employeeId: string) => `lms:trainer:dashboard:v5:${employeeId}`,
   adminMeta: () => 'lms:admin:meta:v2',
   adminMetaForSop: (sopCode: string) => `lms:admin:meta:sop:v2:${sopCode.toUpperCase()}`,
@@ -225,6 +228,8 @@ export const lmsClientFields = {
     `certificate:${String(employeeId || '').trim()}:${String(sopCode || '').toUpperCase()}`,
   adminTrainingStatus: (dept: string) => `admin:training-status:${dept || 'all'}`,
   adminEmployeeTraining: (dept: string) => `admin:employee-training:v2:${dept || 'all'}`,
+  adminTrainerOverview: (year: number | 'all', includeIgnored: boolean) =>
+    `admin:trainer-overview:v1:${year}:${includeIgnored ? 'inc' : 'exc'}`,
   adminMeta: 'admin:meta:v2',
   adminMetaForSop: (sopCode: string) => `admin:meta:sop:v2:${sopCode.toUpperCase()}`,
   adminExamSettings: 'admin:exam-settings',

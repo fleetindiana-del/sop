@@ -10,6 +10,7 @@ import { isDashboardDepartmentName } from "@/lib/dashboardDepartments";
 import { parseAssignedDepartments } from "@/lib/access-control";
 import { effectivePageKeys } from "@/lib/page-access";
 import { APP_PAGES, sanitizePageAccess } from "@/lib/page-registry";
+import { actorFromSession, logUserAudit, snapshotUser } from "@/lib/audit-log";
 import type { AppRole } from "@/lib/auth";
 
 type UserAccessRow = {
@@ -97,6 +98,7 @@ export async function PATCH(request: NextRequest) {
 
     const user = await User.findById(userId);
     if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
+    const previous = snapshotUser(user);
 
     // A SOP Admin may configure everyone below it, but not a Super Admin —
     // otherwise the lower tier could strip the higher one's pages.
@@ -148,6 +150,14 @@ export async function PATCH(request: NextRequest) {
 
     const saved = user.toObject() as UserAccessRow;
     if (unsetPageAccess) delete saved.pageAccess;
+
+    await logUserAudit({
+      actor: actorFromSession(auth.session, request),
+      action: "updated",
+      user: saved,
+      previous,
+      comments: "Access Management",
+    });
 
     return NextResponse.json({ success: true, user: toAccessRow(saved) });
   } catch (error) {

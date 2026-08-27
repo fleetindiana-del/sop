@@ -4,9 +4,10 @@ import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth } from "@/lib/withAuth";
 import { syncEmployeeTrainerFlag } from "@/lib/userTrainerSync";
-import { resolveLmsEmployeeLink } from "@/lib/userEmployeeLink";
+import { autoLinkSharedUserToEmployee, resolveLmsEmployeeLink } from "@/lib/userEmployeeLink";
 import { isSharedLmsLogin, syncLmsPasswordFromUser } from "@/lib/lmsSharedLogin";
 import { serializeAssignedDepartments } from "@/lib/access-control";
+import { actorFromSession, logUserAudit, snapshotUser } from "@/lib/audit-log";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
 
@@ -46,6 +47,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const body = await request.json();
     const user = await User.findById(id);
     if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
+    const previous = snapshotUser(user);
 
     /** Kept in plain text only for the duration of this request, to hash again for the LMS. */
     let plainPassword = "";
@@ -118,7 +120,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       plainPassword = password;
     }
 
+    // Only recover a missing link. An explicit clear of lmsEmployeeId must stick.
+    if (body.lmsEmployeeId === undefined && !user.lmsEmployeeId) {
+      await autoLinkSharedUserToEmployee(user);
+    }
+
     await user.save();
+
+    await logUserAudit({
+      actor: actorFromSession(auth.session, request),
+      action: "updated",
+      user,
+      previous,
+      passwordChanged: Boolean(plainPassword),
+    });
 
     // One password for both modules, so a reset here has to reach the LMS half
     // on the Employee record too — the dashboard hash cannot be reused.
@@ -142,7 +157,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 }
 
-export async function DELETE(_request: NextRequest, context: RouteContext) {
+export async function DELETE(request: NextRequest, context: RouteContext) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -167,7 +182,15 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
       }
     }
 
+    const previous = snapshotUser(user);
     await User.findByIdAndDelete(id);
+    await logUserAudit({
+      actor: actorFromSession(auth.session, request),
+      action: "deleted",
+      user,
+      previous,
+      updated: {},
+    });
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json(

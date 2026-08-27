@@ -10,8 +10,10 @@ import {
   aggregateMcqBanksByFamily,
   buildActiveSopFamilyMap,
   findObsoleteMcqFamilies,
+  mcqBankLangCode,
   mcqFamilyComplete,
   mcqResolveDept,
+  selectCanonicalBanksByLang,
 } from "@/lib/mcq-bank-utils";
 
 // GET /api/mcq-bank/dept-sops?dept=QA
@@ -89,7 +91,12 @@ export async function GET(request: NextRequest) {
     const grouped = await getGroupedRegistryRows();
     const activeGrouped = grouped.filter((r) => !r.isObsolete);
     const activeFamilyMap = buildActiveSopFamilyMap(grouped);
-    const mcqFamilies = aggregateMcqBanksByFamily(allBanks as never[]);
+    const preferredIdentifierByFam = new Map<string, string>();
+    for (const row of activeGrouped) {
+      const fam = sopFamilyGroupKey(row);
+      if (!preferredIdentifierByFam.has(fam)) preferredIdentifierByFam.set(fam, row.identifier);
+    }
+    const mcqFamilies = aggregateMcqBanksByFamily(allBanks as never[], preferredIdentifierByFam);
     // MCQ families whose SOP no longer exists in the Dashboard (wrong/old version).
     const orphanFamKeys = new Set(
       findObsoleteMcqFamilies(activeFamilyMap, mcqFamilies).map((f) => f.famKey),
@@ -97,25 +104,32 @@ export async function GET(request: NextRequest) {
 
     // Fold banks per family key (English + Gujarati merged), dropping orphans so a
     // bank only counts when it matches the current active version of its SOP.
-    const banksByFamily = new Map<string, FamilyBank>();
+    const groupedBanks = new Map<string, typeof allBanks>();
     for (const b of allBanks) {
       const fam = sopFamilyGroupKey({ identifier: (b.sopIdentifier ?? "").trim() });
       if (orphanFamKeys.has(fam)) continue;
-      if (!banksByFamily.has(fam)) {
-        banksByFamily.set(fam, {
-          totalQ: 0, checkedQ: 0, reviewedQ: 0, similarQ: 0, enQ: 0, guQ: 0, lastUpdated: null, banks: [],
-        });
+      const list = groupedBanks.get(fam);
+      if (list) list.push(b);
+      else groupedBanks.set(fam, [b]);
+    }
+    const banksByFamily = new Map<string, FamilyBank>();
+    for (const [fam, banks] of groupedBanks) {
+      const canonical = selectCanonicalBanksByLang(banks, preferredIdentifierByFam.get(fam));
+      const e: FamilyBank = {
+        totalQ: 0, checkedQ: 0, reviewedQ: 0, similarQ: 0, enQ: 0, guQ: 0, lastUpdated: null, banks: [],
+      };
+      for (const b of canonical) {
+        e.totalQ += b.totalQuestions;
+        e.checkedQ += b.checkedCount;
+        e.reviewedQ += b.reviewedCount;
+        e.similarQ += b.similarCount;
+        if (mcqBankLangCode(b.language) === "GUJ") e.guQ += b.totalQuestions;
+        else e.enQ += b.totalQuestions;
+        if (b._id) e.banks.push({ id: String(b._id), language: b.language ?? "English" });
+        const ts = b.updatedAt ? new Date(b.updatedAt) : null;
+        if (ts && (!e.lastUpdated || ts > e.lastUpdated)) e.lastUpdated = ts;
       }
-      const e = banksByFamily.get(fam)!;
-      e.totalQ += b.totalQuestions;
-      e.checkedQ += b.checkedCount;
-      e.reviewedQ += b.reviewedCount;
-      e.similarQ += b.similarCount;
-      if ((b.language ?? "").toLowerCase() === "gujarati") e.guQ += b.totalQuestions;
-      else e.enQ += b.totalQuestions;
-      if (b._id) e.banks.push({ id: String(b._id), language: b.language ?? "English" });
-      const ts = b.updatedAt ? new Date(b.updatedAt) : null;
-      if (ts && (!e.lastUpdated || ts > e.lastUpdated)) e.lastUpdated = ts;
+      banksByFamily.set(fam, e);
     }
 
     // Department families straight from the Dashboard registry.

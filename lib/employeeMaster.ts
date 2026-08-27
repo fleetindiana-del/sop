@@ -72,7 +72,7 @@ export async function getEmployeeMasterIndex(): Promise<EmployeeMasterIndex> {
   const promise = (async (): Promise<EmployeeMasterIndex> => {
     try {
       await connectDB();
-      const rows = await Employee.find({})
+      const rows = await Employee.find({ isDeleted: { $ne: true } })
         .select('_id name department designation isActive')
         .lean<Array<{
           _id: unknown;

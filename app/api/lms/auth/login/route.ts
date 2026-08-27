@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import bcrypt from 'bcryptjs';
 import { cookies } from 'next/headers';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
 import { createLmsToken, LMS_COOKIE } from '@/lib/lms-session';
-import { escapeRegex } from '@/lib/lms-credentials';
 import { toLmsClientEmployee } from '@/lib/employeeTrainer';
-import Employee from '@/models/Employee';
+import {
+  findEmployeeForLmsLogin,
+  passwordMatchesLmsLogin,
+} from '@/lib/sharedLoginLookup';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,18 +22,17 @@ export async function POST(req: NextRequest) {
     }
 
     await connectDB();
-    const employee = await Employee.findOne({
-      lmsUsername: new RegExp(`^${escapeRegex(String(username).trim())}$`, 'i'),
-    }).select('+lmsPasswordHash');
+    const identity = await findEmployeeForLmsLogin(String(username));
 
     // Uniform error so we don't reveal whether the username exists.
     const invalid = NextResponse.json({ error: 'Invalid username or password' }, { status: 401 });
-    if (!employee || !employee.lmsPasswordHash) return invalid;
+    if (!identity) return invalid;
+    const { employee } = identity;
     if (!employee.isActive) {
       return NextResponse.json({ error: 'This account is inactive. Contact your administrator.' }, { status: 403 });
     }
 
-    const ok = await bcrypt.compare(String(password), employee.lmsPasswordHash);
+    const ok = await passwordMatchesLmsLogin(identity, String(password));
     if (!ok) return invalid;
 
     // Bind the cookie to the application login (if any) that created it, so it
