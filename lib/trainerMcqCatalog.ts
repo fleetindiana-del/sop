@@ -51,6 +51,15 @@ export type TrainerMcqCatalogEntry = {
   passingScore?: number;
 };
 
+type TrainerMcqBankAgg = {
+  sopIdentifier?: string;
+  language?: string;
+  totalQuestions?: number;
+  checkedCount?: number;
+  qCount?: number;
+  updatedAt?: Date;
+};
+
 type FamilyLangStats = {
   enQ: number;
   enChecked: number;
@@ -134,9 +143,9 @@ export async function buildTrainerMcqCatalogMap(): Promise<Map<string, TrainerMc
         },
       },
     },
-  ]).toArray();
+  ]).toArray() as TrainerMcqBankAgg[];
 
-  const banksByFam = new Map<string, typeof bankRows>();
+  const banksByFam = new Map<string, TrainerMcqBankAgg[]>();
   for (const b of bankRows) {
     const famKey = sopFamilyGroupKey({ identifier: String(b.sopIdentifier || '').trim() });
     if (!activeFamilyMap.has(famKey)) continue;
@@ -149,10 +158,11 @@ export async function buildTrainerMcqCatalogMap(): Promise<Map<string, TrainerMc
   for (const [famKey, banks] of banksByFam) {
     const canonical = selectCanonicalBanksByLang(
       banks.map((b) => ({
-        ...b,
         sopIdentifier: String(b.sopIdentifier || ''),
         language: String(b.language || ''),
         totalQuestions: Number(b.totalQuestions) || 0,
+        checkedCount: Number(b.checkedCount) || 0,
+        qCount: Number(b.qCount) || 0,
         updatedAt: b.updatedAt as Date | undefined,
       })),
       preferredIdentifierByFam.get(famKey),

@@ -86,14 +86,15 @@ export async function autoLinkSharedUserToEmployee(
   const employee = await findEmployeeForTrainerUser(user);
   if (!employee) return { linked: false };
 
+  const employeeId = new mongoose.Types.ObjectId(String(employee._id));
   const clash = await User.findOne({
-    lmsEmployeeId: employee._id,
+    lmsEmployeeId: employeeId,
     _id: { $ne: user._id },
   })
     .select("username")
     .lean<{ username: string } | null>();
   if (clash) return { linked: false };
 
-  user.lmsEmployeeId = employee._id as mongoose.Types.ObjectId;
+  user.lmsEmployeeId = employeeId;
   return { linked: true, employeeName: employee.name };
 }
