@@ -1,22 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/withAuth';
-import { requireLmsTrainer, deptMatchesTrainerScope } from '@/lib/lmsTrainerAuth';
+import {
+  requireLmsTrainer,
+  deptMatchesTrainerScope,
+  type LmsTrainerContext,
+} from '@/lib/lmsTrainerAuth';
 import {
   listSopsApplicableToDesignation,
   listSopsAssignedToEmployee,
   persistEmployeeSopAssignments,
 } from '@/lib/assignEmployeeSops';
+import type { Session } from 'next-auth';
 
 export const dynamic = 'force-dynamic';
 
-async function canAssignSops() {
+type AssignGate =
+  | { ok: true; session: Session; trainer?: undefined }
+  | { ok: true; session?: undefined; trainer: LmsTrainerContext }
+  | { ok: false; response: NextResponse };
+
+async function canAssignSops(): Promise<AssignGate> {
   const auth = await requireAuth(['admin', 'sop_admin', 'trainer']);
-  if (!auth.error) return { ok: true as const, session: auth.session };
+  if (!auth.error) return { ok: true, session: auth.session };
 
   const trainer = await requireLmsTrainer();
-  if (trainer.ok) return { ok: true as const, trainer: trainer.trainer };
+  if (trainer.ok) return { ok: true, trainer: trainer.trainer };
 
-  return { ok: false as const, response: auth.error };
+  return { ok: false, response: auth.error };
+}
+
+function trainerDepartmentsFromGate(gate: Extract<AssignGate, { ok: true }>): string[] | undefined {
+  return gate.trainer?.trainerDepartments;
 }
 
 function scopedDepartment(
@@ -38,7 +52,7 @@ export async function GET(req: NextRequest) {
   const department = req.nextUrl.searchParams.get('department') || '';
   const designation = req.nextUrl.searchParams.get('designation') || '';
   const employeeName = req.nextUrl.searchParams.get('employeeName') || '';
-  const trainerDepts = 'trainer' in gate ? gate.trainer.trainerDepartments : undefined;
+  const trainerDepts = trainerDepartmentsFromGate(gate);
   const dept = scopedDepartment(department, trainerDepts);
   if (!dept) {
     return NextResponse.json({ error: 'Department is required' }, { status: 400 });
@@ -67,7 +81,7 @@ export async function POST(req: NextRequest) {
     const employeeName = String(body?.employeeName || '').trim();
     const department = String(body?.department || '').trim();
     const designation = String(body?.designation || '').trim();
-    const trainerDepts = 'trainer' in gate ? gate.trainer.trainerDepartments : undefined;
+    const trainerDepts = trainerDepartmentsFromGate(gate);
     const dept = scopedDepartment(department, trainerDepts);
     if (!employeeName || !dept) {
       return NextResponse.json(
