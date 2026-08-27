@@ -70,6 +70,20 @@ export function getExpiryTier(expiryDate?: Date | string | null): ExpiryTier {
   return "low";
 }
 
+/** True when the SOP document's expiry calendar day is already in the past. */
+export function isSopDocumentExpired(expiryDate?: Date | string | null): boolean {
+  if (!expiryDate) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const exp =
+    typeof expiryDate === "string"
+      ? new Date(expiryDate.includes("T") ? expiryDate : `${expiryDate.slice(0, 10)}T00:00:00`)
+      : new Date(expiryDate);
+  if (Number.isNaN(exp.getTime())) return false;
+  exp.setHours(0, 0, 0, 0);
+  return exp.getTime() < today.getTime();
+}
+
 export function formatExpiryLabel(expiryDate?: Date | string | null): string {
   if (!expiryDate) return "No Date";
   const date = typeof expiryDate === "string" ? parseISO(expiryDate) : expiryDate;

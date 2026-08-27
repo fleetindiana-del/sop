@@ -14,11 +14,14 @@ import {
   resolveTrainingMatrixDepartment,
 } from '@/lib/trainingMatrixDepartments';
 import { POST as postManageSopView } from '@/app/api/training-matrix/manage-sop-view/route';
+import SOP from '@/models/SOP';
+import { isSopDocumentExpired } from '@/lib/sop-utils';
 
 export type ApplicableSop = {
   sopCode: string;
   sopName: string;
   months: number[];
+  expired?: boolean;
 };
 
 function stripVersion(code: string): string {
@@ -29,6 +32,40 @@ function resolveDept(raw: string, known: string[]): string {
   return (
     resolveTrainingMatrixDepartment(raw, known) || String(raw || '').trim()
   );
+}
+
+export async function expiredSopCodeSet(codes: string[]): Promise<Set<string>> {
+  const unique = [...new Set(codes.map(stripVersion).filter(Boolean))];
+  if (unique.length === 0) return new Set();
+  await connectDB();
+  const rows = await SOP.find({
+    isObsolete: { $ne: true },
+    $or: [
+      { sopBaseId: { $in: unique } },
+      { identifier: { $in: codes } },
+    ],
+  })
+    .select('identifier sopBaseId expiryDate')
+    .lean<Array<{ identifier?: string; sopBaseId?: string; expiryDate?: Date }>>();
+
+  const expired = new Set<string>();
+  for (const row of rows) {
+    if (!isSopDocumentExpired(row.expiryDate ?? null)) continue;
+    const id = stripVersion(String(row.identifier || ''));
+    const base = String(row.sopBaseId || id).toUpperCase();
+    if (id) expired.add(id);
+    if (base) expired.add(base);
+  }
+  return expired;
+}
+
+async function annotateExpiry(sops: ApplicableSop[]): Promise<ApplicableSop[]> {
+  if (sops.length === 0) return sops;
+  const expired = await expiredSopCodeSet(sops.map((s) => s.sopCode));
+  return sops.map((s) => ({
+    ...s,
+    expired: expired.has(stripVersion(s.sopCode)),
+  }));
 }
 
 function mergeSop(
@@ -133,7 +170,9 @@ export async function listSopsApplicableToDesignation(
     );
   }
 
-  return [...byCode.values()].sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+  return annotateExpiry(
+    [...byCode.values()].sort((a, b) => a.sopCode.localeCompare(b.sopCode)),
+  );
 }
 
 export async function listSopsAssignedToEmployee(
@@ -155,7 +194,9 @@ export async function listSopsAssignedToEmployee(
     if (a.trainingType !== 'training' || a.derivedFrom) continue;
     mergeSop(byCode, a.sopCode, a.sopName || a.sopCode, a.month ? [a.month] : []);
   }
-  return [...byCode.values()].sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+  return annotateExpiry(
+    [...byCode.values()].sort((a, b) => a.sopCode.localeCompare(b.sopCode)),
+  );
 }
 
 export async function persistEmployeeSopAssignments(opts: {
@@ -164,9 +205,18 @@ export async function persistEmployeeSopAssignments(opts: {
   designation?: string;
   sops: ApplicableSop[];
 }): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
-  const sops = (opts.sops || []).filter((s) => String(s.sopCode || '').trim());
-  if (!opts.employeeName?.trim() || !opts.department?.trim() || sops.length === 0) {
+  const incoming = (opts.sops || []).filter((s) => String(s.sopCode || '').trim());
+  const expired = await expiredSopCodeSet(incoming.map((s) => s.sopCode));
+  const sops = incoming.filter((s) => !expired.has(stripVersion(s.sopCode)));
+  if (!opts.employeeName?.trim() || !opts.department?.trim() || incoming.length === 0) {
     return { ok: false, status: 400, body: { error: 'Employee, department and SOPs are required' } };
+  }
+  if (sops.length === 0) {
+    return {
+      ok: false,
+      status: 400,
+      body: { error: 'Expired SOPs cannot be assigned until the document is renewed.' },
+    };
   }
 
   const req = new NextRequest('http://localhost/api/training-matrix/manage-sop-view', {
@@ -188,5 +238,9 @@ export async function persistEmployeeSopAssignments(opts: {
 
   const res = await postManageSopView(req);
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  return { ok: res.ok, status: res.status, body };
+  return {
+    ok: res.ok,
+    status: res.status,
+    body: { ...body, assigned: sops.length, skippedExpired: incoming.length - sops.length },
+  };
 }

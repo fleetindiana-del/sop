@@ -9,6 +9,7 @@ import {
   listSopsApplicableToDesignation,
   listSopsAssignedToEmployee,
   persistEmployeeSopAssignments,
+  expiredSopCodeSet,
 } from '@/lib/assignEmployeeSops';
 import type { Session } from 'next-auth';
 
@@ -98,21 +99,28 @@ export async function POST(req: NextRequest) {
         })).filter((s: { sopCode: string }) => s.sopCode)
       : [];
 
-    if (body?.assignApplicable === true || sops.length === 0) {
+    if (body?.assignApplicable === true) {
       const applicable = await listSopsApplicableToDesignation(dept, designation);
-      if (sops.length === 0) sops = applicable;
+      const live = applicable.filter((s) => !s.expired);
+      if (sops.length === 0) sops = live;
       else {
         const seen = new Set(sops.map((s: { sopCode: string }) => s.sopCode.toUpperCase()));
-        for (const extra of applicable) {
+        for (const extra of live) {
           if (!seen.has(extra.sopCode.toUpperCase())) sops.push(extra);
         }
       }
     }
 
+    sops = sops.filter((s: { sopCode: string; expired?: boolean }) => !s.expired);
+    if (sops.length > 0) {
+      const expired = await expiredSopCodeSet(sops.map((s: { sopCode: string }) => s.sopCode));
+      sops = sops.filter((s: { sopCode: string }) => !expired.has(String(s.sopCode).toUpperCase().replace(/-\d+$/, '')));
+    }
+
     if (sops.length === 0) {
       return NextResponse.json({
         assigned: 0,
-        message: 'No SOPs are applicable to this designation in the selected department.',
+        message: 'No assignable SOPs — expired documents cannot be assigned, and none were selected.',
       });
     }
 

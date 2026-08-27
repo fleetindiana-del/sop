@@ -21,6 +21,8 @@ import {
   toDateOnlyIso,
 } from '@/lib/trainingExamSchedule';
 import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
+import { expiredSopCodeSet } from '@/lib/assignEmployeeSops';
+import { isSopDocumentExpired } from '@/lib/sop-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -133,6 +135,7 @@ export async function POST(req: NextRequest) {
         catalog.sops.map((s) => [stripVersion(s.sopCode), s]),
       );
       const content = await getJourneyContentBatch(sopCodes);
+      const expiredCodes = await expiredSopCodeSet(sopCodes);
       const hasExam = (code: string) => {
         const c = content.get(code);
         return Boolean(c?.availableStepIds.includes('quiz') || c?.availableStepIds.includes('quizGu'));
@@ -153,6 +156,10 @@ export async function POST(req: NextRequest) {
           skipped.push(`${sopCode} (not in your departments)`);
           continue;
         }
+        if (expiredCodes.has(sopCode) || expiredCodes.has(sopCode.toUpperCase())) {
+          skipped.push(`${sopCode} (expired — locked)`);
+          continue;
+        }
         // Assign Exam requires an MCQ bank; Schedule Training still assigns the
         // date so it shows in Sched / filters even before MCQs are ready.
         if (action === 'assign-exam' && !hasExam(sopCode) && !(exam?.bankQuestionCount)) {
@@ -168,6 +175,8 @@ export async function POST(req: NextRequest) {
           const assigns = assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || [];
           const hit = assigns.find((a) => stripVersion(a.sopCode) === sopCode);
           if (!hit) continue;
+          if (hit.derivedFrom) continue;
+          if (isSopDocumentExpired(hit.expiryDate)) continue;
           if (hit.sopName) sopName = hit.sopName;
           if (!deptMatchesTrainerScope(emp.department, trainerDepts)) continue;
           eligibleIds.push(emp.employeeId);
@@ -259,6 +268,9 @@ export async function POST(req: NextRequest) {
       }> = [];
 
       for (const sopCode of sopCodes) {
+        if (expiredCodes.has(sopCode) || expiredCodes.has(sopCode.toUpperCase())) {
+          continue;
+        }
         const byDept = new Map<string, string[]>();
         let sopName = sopCode;
         for (const emp of employees) {
@@ -266,6 +278,8 @@ export async function POST(req: NextRequest) {
           const assigns = assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || [];
           const hit = assigns.find((a) => stripVersion(a.sopCode) === sopCode);
           if (!hit) continue;
+          if (hit.derivedFrom) continue;
+          if (isSopDocumentExpired(hit.expiryDate)) continue;
           if (hit.sopName) sopName = hit.sopName;
           const dept = emp.department;
           if (!deptMatchesTrainerScope(dept, trainerDepts)) continue;

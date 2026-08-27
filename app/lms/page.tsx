@@ -73,6 +73,7 @@ interface SopAssignment {
   assignedAt?: string;
   /** YYYY-MM-DD — document expiry from SOP registry/family. */
   expiryDate?: string;
+  expired?: boolean;
   /** True when a department trainer scheduled this exam for you directly. */
   scheduledByTrainer?: boolean;
   scheduledBy?: string;
@@ -634,14 +635,23 @@ function TrainingTable({
     () => sortedRows.map((r) => r.sopCode.trim().toUpperCase()),
     [sortedRows],
   );
+  const schedulableVisibleCodes = useMemo(
+    () => sortedRows
+      .filter((r) => {
+        const asset = assetsMap[r.sopCode];
+        return !(isSopDocumentExpired(r) || r.expired === true || asset?.sopExpired === true);
+      })
+      .map((r) => r.sopCode.trim().toUpperCase()),
+    [sortedRows, assetsMap],
+  );
   const allVisibleSelected = Boolean(
     selection
-    && visibleSopCodes.length > 0
-    && visibleSopCodes.every((c) => selection.selected.has(c)),
+    && schedulableVisibleCodes.length > 0
+    && schedulableVisibleCodes.every((c) => selection.selected.has(c)),
   );
   const someVisibleSelected = Boolean(
     selection
-    && visibleSopCodes.some((c) => selection.selected.has(c)),
+    && schedulableVisibleCodes.some((c) => selection.selected.has(c)),
   );
 
   return (
@@ -681,9 +691,12 @@ function TrainingTable({
                     ref={(el) => {
                       if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected;
                     }}
-                    onChange={() => selection.onToggleAll(visibleSopCodes, !allVisibleSelected)}
+                    onChange={() => selection.onToggleAll(
+                      allVisibleSelected ? visibleSopCodes : schedulableVisibleCodes,
+                      !allVisibleSelected,
+                    )}
                     className="h-3.5 w-3.5 rounded border-gray-300"
-                    title={allVisibleSelected ? 'Clear selection' : 'Select all'}
+                    title={allVisibleSelected ? 'Clear selection' : 'Select all (expired SOPs skipped)'}
                     aria-label={allVisibleSelected ? 'Clear selection' : 'Select all'}
                   />
                 ) : null}
@@ -732,7 +745,9 @@ function TrainingTable({
               const cert = certMap.get(assignment.sopCode) || certMap.get(stripVersion(assignment.sopCode));
               const showCertificate = isFullyComplete(progress) && Boolean(cert);
               const asset = assetsMap[assignment.sopCode];
-              const docExpired = isSopDocumentExpired(assignment) || asset?.sopExpired === true;
+              const docExpired = isSopDocumentExpired(assignment)
+                || assignment.expired === true
+                || asset?.sopExpired === true;
               const codeKey = assignment.sopCode.trim().toUpperCase();
               const mcqMeta = trainerExtras?.mcqByCode?.[codeKey];
               const mcqCreated = mcqMeta ? mcqMeta.questionCount > 0 : Boolean(asset?.mcqEn || asset?.mcqGu);
@@ -818,15 +833,15 @@ function TrainingTable({
                       : 'Test unlocks after your trainer assigns an exam date'
                   : undefined;
               const highlightExpiredDue =
-                docExpired && !isFullyComplete(progress) && (schedule === 'due' || schedule === 'overdue');
+                docExpired && !isFullyComplete(progress);
 
               return (
                 <tr
                   key={`${assignment.sopCode}-${assignment.month}-${assignment.year}`}
                   onMouseEnter={() => onPrefetch?.(assignment.sopCode)}
                   onFocus={() => onPrefetch?.(assignment.sopCode)}
-                  onClick={selection ? () => selection.onToggle(codeKey) : undefined}
-                  className={`transition hover:bg-gray-50/80 ${selection ? 'cursor-pointer' : ''} ${
+                  onClick={selection && !docExpired ? () => selection.onToggle(codeKey) : undefined}
+                  className={`transition hover:bg-gray-50/80 ${selection && !docExpired ? 'cursor-pointer' : ''} ${
                     selected && !selection?.attendanceMode ? 'bg-indigo-50/80' : ''
                   } ${
                     highlightExpiredDue
@@ -854,8 +869,13 @@ function TrainingTable({
                         <input
                           type="checkbox"
                           checked={selected}
-                          onChange={() => selection.onToggle(codeKey)}
-                          className="mx-auto block h-3.5 w-3.5 rounded border-gray-300"
+                          disabled={docExpired}
+                          onChange={() => {
+                            if (docExpired) return;
+                            selection.onToggle(codeKey);
+                          }}
+                          className="mx-auto block h-3.5 w-3.5 rounded border-gray-300 disabled:cursor-not-allowed disabled:opacity-40"
+                          title={docExpired ? 'Expired SOP — cannot schedule until renewed' : undefined}
                         />
                       )
                     ) : (
@@ -1611,6 +1631,8 @@ function Dashboard({
         trainingType: 'training' as const,
         assignedAt: sop.assignedAt,
         examDate: examDates[0],
+        expiryDate: sop.expiryDate,
+        expired: sop.expired,
       };
     });
   }, [trainerBulk, trainerData, monthFilter]);

@@ -12,6 +12,7 @@ import {
 import { MarkAttendanceModal } from '@/components/lms/MarkAttendanceModal';
 import { toDateOnlyIso } from '@/lib/trainingExamScheduleShared';
 import { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
+import { isSopDocumentExpired } from '@/lib/sop-utils';
 
 type ExamStatus = 'completed' | 'pending' | 'overdue';
 
@@ -34,6 +35,10 @@ export interface TrainerUniqueSop {
   /** Earliest assigned date among sittings, when any. */
   assignedAt?: string;
   employees: TrainerSopEmployee[];
+  /** Document expiry (YYYY-MM-DD), if known. */
+  expiryDate?: string;
+  /** True when the SOP document has expired — do not schedule or assign. */
+  expired?: boolean;
 }
 
 export interface TrainerBulkBridge {
@@ -151,6 +156,7 @@ interface MonthlyRow {
   year: number;
   scheduledDate?: string;
   assignedAt?: string;
+  expiryDate?: string;
   status: ExamStatus;
   isIgnored: boolean;
   daysOverdue: number;
@@ -277,6 +283,15 @@ export function TrainerLmsSchedulePanel({
   }>>([]);
   const [assignBusy, setAssignBusy] = useState(false);
   const [assignMsg, setAssignMsg] = useState('');
+  const [assignApplicable, setAssignApplicable] = useState(false);
+  const [assignSopsLoading, setAssignSopsLoading] = useState(false);
+  const [assignSops, setAssignSops] = useState<Array<{
+    sopCode: string;
+    sopName: string;
+    months: number[];
+    expired?: boolean;
+  }>>([]);
+  const [assignSelected, setAssignSelected] = useState<Set<string>>(new Set());
   const [examCatalog, setExamCatalog] = useState<Map<string, ExamCatalogEntry>>(new Map());
   const [cycleStart, setCycleStart] = useState<CycleStart | null>(() => ({
     year: now.getFullYear(),
@@ -373,6 +388,8 @@ export function TrainerLmsSchedulePanel({
           pending: 0,
           overdue: 0,
           employees: [],
+          expiryDate: r.expiryDate,
+          expired: isSopDocumentExpired(r.expiryDate),
         };
         map.set(key, e);
       }
@@ -393,6 +410,10 @@ export function TrainerLmsSchedulePanel({
       if (r.assignedAt && (!e.assignedAt || r.assignedAt < e.assignedAt)) {
         e.assignedAt = r.assignedAt;
       }
+      if (r.expiryDate && (!e.expiryDate || r.expiryDate < e.expiryDate)) {
+        e.expiryDate = r.expiryDate;
+      }
+      if (isSopDocumentExpired(e.expiryDate)) e.expired = true;
     }
     for (const e of map.values()) {
       e.employees.sort((a, b) => a.employeeName.localeCompare(b.employeeName));
@@ -401,13 +422,15 @@ export function TrainerLmsSchedulePanel({
   }, [monthScopedRows]);
 
   const toggleSop = useCallback((code: string) => {
+    const sop = uniqueSops.find((s) => s.sopCode === code.trim().toUpperCase());
+    if (sop?.expired) return;
     setSelectedSopCodes((prev) => {
       const next = new Set(prev);
       if (next.has(code)) next.delete(code);
       else next.add(code);
       return next;
     });
-  }, []);
+  }, [uniqueSops]);
 
   const toggleAllSops = useCallback((sopCodes: string[], select: boolean) => {
     setSelectedSopCodes((prev) => {
@@ -810,6 +833,9 @@ export function TrainerLmsSchedulePanel({
               setAssignMsg('');
               setAssignName('');
               setAssignDesignation('');
+              setAssignApplicable(false);
+              setAssignSops([]);
+              setAssignSelected(new Set());
               const first = trainerDepartments[0] || '';
               setAssignDept(first);
               try {
@@ -1044,7 +1070,9 @@ export function TrainerLmsSchedulePanel({
                   </label>
                   <button
                     type="button"
-                    onClick={() => setSelectedSopCodes(new Set(displayUniqueSops.map((s) => s.sopCode)))}
+                    onClick={() => setSelectedSopCodes(new Set(
+                      displayUniqueSops.filter((s) => !s.expired).map((s) => s.sopCode),
+                    ))}
                     className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600"
                   >
                     Select all
@@ -1332,14 +1360,14 @@ export function TrainerLmsSchedulePanel({
           onClick={() => !assignBusy && setAssignOpen(false)}
         >
           <div
-            className="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl"
+            className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-start justify-between">
               <div>
                 <h3 className="text-sm font-bold text-gray-900">Assign Employee SOP for Training</h3>
                 <p className="mt-0.5 text-[11px] text-gray-500">
-                  Select a department, then the employee. Applicable designation SOPs are assigned automatically.
+                  Pick the employee, then the specific SOPs they should train — same as QA. Expired SOPs stay locked.
                 </p>
               </div>
               <button type="button" onClick={() => setAssignOpen(false)} className="text-gray-400 hover:text-gray-700">
@@ -1355,6 +1383,9 @@ export function TrainerLmsSchedulePanel({
                     setAssignDept(e.target.value);
                     setAssignName('');
                     setAssignDesignation('');
+                    setAssignSops([]);
+                    setAssignSelected(new Set());
+                    setAssignMsg('');
                   }}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
                 >
@@ -1369,13 +1400,66 @@ export function TrainerLmsSchedulePanel({
                 <select
                   value={assignName}
                   disabled={!assignDept}
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const name = e.target.value;
                     const live = assignRoster.find(
                       (emp) => emp.name === name && emp.department.toLowerCase() === assignDept.toLowerCase(),
                     );
                     setAssignName(name);
                     setAssignDesignation(live?.designation || '');
+                    setAssignMsg('');
+                    setAssignSops([]);
+                    setAssignSelected(new Set());
+                    if (!name || !assignDept) return;
+                    setAssignSopsLoading(true);
+                    try {
+                      const qs = new URLSearchParams({
+                        department: assignDept,
+                        designation: live?.designation || '',
+                        employeeName: name,
+                      });
+                      const [applicableRes, assignedRes] = await Promise.all([
+                        fetch(`/api/training-matrix/assign-employee-sops?department=${encodeURIComponent(assignDept)}&designation=${encodeURIComponent(live?.designation || '')}`, { cache: 'no-store' }),
+                        fetch(`/api/training-matrix/assign-employee-sops?${qs.toString()}`, { cache: 'no-store' }),
+                      ]);
+                      const applicableJson = await applicableRes.json().catch(() => ({}));
+                      const assignedJson = await assignedRes.json().catch(() => ({}));
+                      let list = Array.isArray(applicableJson.sops) ? applicableJson.sops : [];
+                      if (list.length === 0) {
+                        const dept = assignDept.toLowerCase();
+                        list = uniqueSops
+                          .filter((s) => s.employees.some((emp) => emp.department.toLowerCase() === dept))
+                          .map((s) => ({
+                            sopCode: s.sopCode,
+                            sopName: s.sopName,
+                            months: [],
+                            expired: s.expired === true,
+                          }));
+                      }
+                      const mapped = list.map((s: { sopCode?: string; sopName?: string; months?: number[]; expired?: boolean }) => ({
+                        sopCode: String(s.sopCode || '').trim(),
+                        sopName: String(s.sopName || s.sopCode || '').trim(),
+                        months: Array.isArray(s.months) ? s.months.map(Number) : [],
+                        expired: s.expired === true,
+                      })).filter((s: { sopCode: string }) => s.sopCode);
+                      setAssignSops(mapped);
+                      const already = new Set(
+                        (Array.isArray(assignedJson.sops) ? assignedJson.sops : [])
+                          .map((s: { sopCode?: string }) => String(s.sopCode || '').trim().toUpperCase())
+                          .filter(Boolean),
+                      );
+                      setAssignSelected(new Set(
+                        mapped
+                          .filter((s: { sopCode: string; expired?: boolean }) =>
+                            !s.expired && already.has(s.sopCode.toUpperCase()),
+                          )
+                          .map((s: { sopCode: string }) => s.sopCode.toUpperCase()),
+                      ));
+                    } catch {
+                      setAssignSops([]);
+                    } finally {
+                      setAssignSopsLoading(false);
+                    }
                   }}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-50"
                 >
@@ -1389,6 +1473,97 @@ export function TrainerLmsSchedulePanel({
                     ))}
                 </select>
               </div>
+              {assignName && (
+                <>
+                  <label className="flex items-start gap-2 text-xs text-gray-800">
+                    <input
+                      type="checkbox"
+                      checked={assignApplicable}
+                      onChange={(e) => setAssignApplicable(e.target.checked)}
+                      className="mt-0.5 h-3.5 w-3.5"
+                    />
+                    <span>
+                      Also assign every live SOP for this designation
+                      {assignDesignation ? ` (${assignDesignation})` : ''}
+                      {' '}— expired documents are skipped
+                    </span>
+                  </label>
+                  <div className="max-h-56 overflow-y-auto rounded-lg border border-gray-200">
+                    {assignSopsLoading ? (
+                      <p className="px-3 py-6 text-center text-xs text-gray-400">Loading SOPs…</p>
+                    ) : assignSops.length === 0 ? (
+                      <p className="px-3 py-6 text-center text-xs text-gray-400">
+                        No SOPs found for this employee’s designation.
+                      </p>
+                    ) : (
+                      <table className="w-full text-left text-xs">
+                        <thead className="sticky top-0 bg-gray-50 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                          <tr>
+                            <th className="px-2 py-1.5 w-8">
+                              <input
+                                type="checkbox"
+                                checked={
+                                  assignSops.some((s) => !s.expired)
+                                  && assignSops.filter((s) => !s.expired).every((s) => assignSelected.has(s.sopCode.toUpperCase()))
+                                }
+                                onChange={(e) => {
+                                  if (!e.target.checked) {
+                                    setAssignSelected(new Set());
+                                    return;
+                                  }
+                                  setAssignSelected(new Set(
+                                    assignSops.filter((s) => !s.expired).map((s) => s.sopCode.toUpperCase()),
+                                  ));
+                                }}
+                                className="h-3.5 w-3.5"
+                                aria-label="Select all live SOPs"
+                              />
+                            </th>
+                            <th className="px-2 py-1.5">SOP</th>
+                            <th className="px-2 py-1.5">Name</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {assignSops.map((sop) => {
+                            const key = sop.sopCode.toUpperCase();
+                            const locked = sop.expired === true;
+                            return (
+                              <tr key={key} className={locked ? 'bg-red-50/80' : 'hover:bg-orange-50/40'}>
+                                <td className="px-2 py-1.5">
+                                  <input
+                                    type="checkbox"
+                                    disabled={locked}
+                                    checked={!locked && assignSelected.has(key)}
+                                    onChange={(e) => {
+                                      setAssignSelected((prev) => {
+                                        const next = new Set(prev);
+                                        if (e.target.checked) next.add(key);
+                                        else next.delete(key);
+                                        return next;
+                                      });
+                                    }}
+                                    className="h-3.5 w-3.5 disabled:opacity-40"
+                                    title={locked ? 'Expired — locked' : undefined}
+                                  />
+                                </td>
+                                <td className="px-2 py-1.5 font-mono font-bold text-purple-700 whitespace-nowrap">
+                                  {sop.sopCode}
+                                  {locked && (
+                                    <span className="ml-1 font-sans text-[10px] font-semibold text-red-700">
+                                      Expired
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-2 py-1.5 text-gray-700">{sop.sopName}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </>
+              )}
               {assignMsg && (
                 <p className={`text-xs ${assignMsg.startsWith('Assigned') ? 'text-green-700' : 'text-red-600'}`}>
                   {assignMsg}
@@ -1405,11 +1580,22 @@ export function TrainerLmsSchedulePanel({
               </button>
               <button
                 type="button"
-                disabled={assignBusy || !assignDept || !assignName}
+                disabled={
+                  assignBusy
+                  || !assignDept
+                  || !assignName
+                  || (!assignApplicable && assignSelected.size === 0)
+                }
                 onClick={async () => {
                   setAssignBusy(true);
                   setAssignMsg('');
                   try {
+                    const selectedSops = assignSops.filter((s) =>
+                      !s.expired && assignSelected.has(s.sopCode.toUpperCase()),
+                    );
+                    if (!assignApplicable && selectedSops.length === 0) {
+                      throw new Error('Select at least one SOP for this employee.');
+                    }
                     const res = await fetch('/api/training-matrix/assign-employee-sops', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
@@ -1417,7 +1603,12 @@ export function TrainerLmsSchedulePanel({
                         employeeName: assignName,
                         department: assignDept,
                         designation: assignDesignation,
-                        assignApplicable: true,
+                        assignApplicable,
+                        sops: selectedSops.map((s) => ({
+                          sopCode: s.sopCode,
+                          sopName: s.sopName,
+                          months: s.months,
+                        })),
                       }),
                     });
                     const json = await res.json();
@@ -1425,7 +1616,7 @@ export function TrainerLmsSchedulePanel({
                     setAssignMsg(
                       json.assigned
                         ? `Assigned ${json.assigned} SOP${json.assigned === 1 ? '' : 's'} to ${assignName}.`
-                        : (json.message || 'No applicable SOPs found for this designation.'),
+                        : (json.message || 'No assignable SOPs found for this employee.'),
                     );
                     await load();
                   } catch (err) {
@@ -1436,7 +1627,7 @@ export function TrainerLmsSchedulePanel({
                 }}
                 className="rounded-lg bg-orange-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
               >
-                {assignBusy ? 'Assigning…' : 'Assign applicable SOPs'}
+                {assignBusy ? 'Assigning…' : 'Assign selected SOPs'}
               </button>
             </div>
           </div>
