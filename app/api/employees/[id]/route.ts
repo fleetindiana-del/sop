@@ -14,6 +14,10 @@ import {
   touchesEmployeeIdentity,
 } from '@/lib/employeeCacheInvalidation';
 import { refreshTrainerRosterIdentity } from '@/lib/lmsTrainerEmployees';
+import {
+  listSopsApplicableToDesignation,
+  persistEmployeeSopAssignments,
+} from '@/lib/assignEmployeeSops';
 import { logAuditEvent, resolveAuditActor } from '@/lib/audit-log';
 import Employee from '@/models/Employee';
 import TrainerEmployee from '@/models/lms/TrainerEmployee';
@@ -218,6 +222,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const out = existing.toObject();
     delete out.lmsPasswordHash;
     const hasLmsPassword = !!update.lmsPasswordHash || !!existing.lmsPasswordHash;
+
+    let sopsAssigned = 0;
+    if (body.assignApplicableSops === true) {
+      const applicable = await listSopsApplicableToDesignation(
+        String(existing.department || ''),
+        String(existing.designation || ''),
+      );
+      if (applicable.length > 0) {
+        const assigned = await persistEmployeeSopAssignments({
+          employeeName: String(existing.name || ''),
+          department: String(existing.department || ''),
+          designation: String(existing.designation || ''),
+          sops: applicable,
+        });
+        if (assigned.ok) sopsAssigned = applicable.length;
+      }
+    }
+
     return NextResponse.json({
       employee: {
         ...out,
@@ -229,6 +251,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           : undefined,
         hasLmsPassword,
       },
+      sopsAssigned,
     });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });

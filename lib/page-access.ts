@@ -65,6 +65,9 @@ export function canAccessPageKey(
     return pageAccess.includes(page.key);
   }
   if (page.adminOnly) return false;
+  // Department trainers need Manage SOP to assign employees; do not hide it
+  // behind Access Management the way other restricted pages are.
+  if (role === "trainer" && page.key === "training-matrix") return true;
   // An administrator can still hand a learner a specific page.
   if (Array.isArray(pageAccess) && pageAccess.includes(page.key)) return true;
   if (isLearnerOnly(role)) return false;

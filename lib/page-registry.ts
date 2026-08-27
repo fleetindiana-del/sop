@@ -77,7 +77,6 @@ export const APP_PAGES: AppPage[] = [
     prefix: "/training-matrix",
     group: "Training",
     description: "Role-wise SOP training matrix",
-    restrictedByDefault: true,
   },
   {
     key: "induction-training-matrix",

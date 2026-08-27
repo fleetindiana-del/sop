@@ -22,11 +22,10 @@ import {
   formatDateOfJoiningInput,
   INDUCTION_WINDOW_MONTHS,
 } from '@/lib/employeeInduction';
-import { parseTrainerDepartments } from '@/lib/employeeTrainer';
+import { EMPLOYEE_DEPARTMENTS, parseTrainerDepartments } from '@/lib/employeeTrainer';
 import { bustEmployeeClientCaches } from '@/lib/employeeClientCache';
 
-const DEPARTMENTS = ['QA', 'QC', 'Microbiology', 'Production', 'Store', 'Engineering', 'Personnel'] as const;
-type Dept = (typeof DEPARTMENTS)[number];
+const FALLBACK_DEPARTMENTS = [...EMPLOYEE_DEPARTMENTS];
 
 interface Employee {
   _id: string;
@@ -81,13 +80,17 @@ type StatusTab = 'active' | 'left';
 function EmployeeModal({
   initial,
   defaultDept,
+  departments,
+  roster,
   onClose,
   onSaved,
 }: {
   initial?: Employee;
   defaultDept?: string;
+  departments: string[];
+  roster: Employee[];
   onClose: () => void;
-  onSaved: (emp: Employee) => void;
+  onSaved: (emp: Employee, extra?: { sopsAssigned?: number }) => void;
 }) {
   const [name,        setName]        = useState(initial?.name        || '');
   const [designation, setDesignation] = useState(initial?.designation || '');
@@ -112,6 +115,8 @@ function EmployeeModal({
     return [initial?.department || defaultDept || 'QA'];
   });
   const [password,    setPassword]    = useState('');
+  const [assignApplicableSops, setAssignApplicableSops] = useState(!initial);
+  const [copyFromName, setCopyFromName] = useState('');
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState('');
 
@@ -165,6 +170,28 @@ function EmployeeModal({
     designation.trim() !== '' &&
     !masterDesignations.some((d) => d.toLowerCase() === designation.trim().toLowerCase());
 
+  const departmentOptions = useMemo(() => {
+    const all = [...departments];
+    const current = (department || initial?.department || defaultDept || '').trim();
+    if (current && !all.some((d) => d.toLowerCase() === current.toLowerCase())) {
+      all.push(current);
+    }
+    return [...new Set(all)];
+  }, [departments, department, initial?.department, defaultDept]);
+
+  const departmentEmployees = useMemo(() => {
+    const dept = department.trim().toLowerCase();
+    const self = (initial?.name || '').trim().toLowerCase();
+    return roster
+      .filter((e) =>
+        e.isActive
+        && !e.isDeleted
+        && String(e.department || '').trim().toLowerCase() === dept
+        && String(e.name || '').trim().toLowerCase() !== self,
+      )
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [roster, department, initial?.name]);
+
   // Keep trainer multi-select in sync when home department changes while trainer is on.
   useEffect(() => {
     if (!isTrainer) return;
@@ -214,6 +241,8 @@ function EmployeeModal({
         inductionTrainingRequired: effectiveInductionRequired,
         isTrainer,
         trainerDepartments: isTrainer ? trainerDepartments : [],
+        assignApplicableSops,
+        ...(copyFromName.trim() ? { copyAssignmentsFromName: copyFromName.trim() } : {}),
         ...(password ? { password } : {}),
       };
       const res = await fetch(isEdit ? `/api/employees/${initial._id}` : '/api/employees', {
@@ -223,7 +252,7 @@ function EmployeeModal({
       });
       const json = await res.json();
       if (!res.ok) { setError(json.error || 'Save failed'); return; }
-      onSaved(json.employee);
+      onSaved(json.employee, { sopsAssigned: json.sopsAssigned });
     } finally {
       setLoading(false);
     }
@@ -234,15 +263,15 @@ function EmployeeModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5">
+      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-5 py-3.5">
           <h2 className="text-base font-bold text-gray-900">{initial ? 'Edit Employee' : 'Add Employee'}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600">
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="space-y-4 px-5 py-4">
+        <div className="space-y-4 overflow-y-auto px-5 py-4">
           {error && (
             <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
               <AlertTriangle className="h-4 w-4 shrink-0" /> {error}
@@ -287,10 +316,47 @@ function EmployeeModal({
             </div>
             <div>
               <label className={labelCls}>Department *</label>
-              <select value={department} onChange={(e) => setDepartment(e.target.value)} className={inputCls}>
-                {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+              <select value={department} onChange={(e) => { setDepartment(e.target.value); setCopyFromName(''); }} className={inputCls}>
+                {departmentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
+          </div>
+
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={assignApplicableSops}
+              onChange={(e) => setAssignApplicableSops(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-gray-900">
+                Automatically assign all SOPs applicable to this designation
+              </span>
+              <span className="mt-0.5 block text-[11px] leading-snug text-gray-500">
+                Adds every training-matrix SOP already scheduled for this designation in the
+                selected department.
+              </span>
+            </span>
+          </label>
+
+          <div>
+            <label className={labelCls}>Employees in {department || 'department'}</label>
+            <select
+              value={copyFromName}
+              onChange={(e) => setCopyFromName(e.target.value)}
+              className={inputCls}
+            >
+              <option value="">Select an employee to copy SOP assignments…</option>
+              {departmentEmployees.map((e) => (
+                <option key={e._id} value={e.name}>
+                  {e.name}{e.designation ? ` · ${e.designation}` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] leading-snug text-gray-500">
+              Optional. Copies that employee’s current SOP assignments onto this record.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -369,7 +435,7 @@ function EmployeeModal({
                 Select every department this trainer is eligible to manage. Home department is listed above.
               </p>
               <div className="flex flex-wrap gap-2">
-                {DEPARTMENTS.map((d) => {
+                {departmentOptions.map((d) => {
                   const checked = trainerDepartments.includes(d);
                   return (
                     <label
@@ -427,7 +493,7 @@ function EmployeeModal({
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-gray-100 px-5 py-3">
           <button onClick={onClose} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
             Cancel
           </button>
@@ -776,7 +842,8 @@ export default function EmployeesPage() {
   const [deletedLoading, setDeletedLoading] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
   const [loading,    setLoading]    = useState(true);
-  const [activeDept, setActiveDept] = useState<Dept | 'All'>('All');
+  const [activeDept, setActiveDept] = useState<string | 'All'>('All');
+  const [deptCatalog, setDeptCatalog] = useState<string[]>(FALLBACK_DEPARTMENTS);
   /** Which roster this page is showing — people still here, or people marked Left. */
   const [statusTab,  setStatusTab]  = useState<StatusTab>('active');
   const [selectedDesignations, setSelectedDesignations] = useState<string[]>([]);
@@ -833,6 +900,36 @@ export default function EmployeesPage() {
   }, [loadTraining, loadDeleted, activeDept]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/departments');
+        const json = await res.json();
+        if (cancelled) return;
+        if (res.ok && Array.isArray(json.departments) && json.departments.length > 0) {
+          setDeptCatalog(json.departments.map((d: string) => String(d || '').trim()).filter(Boolean));
+        }
+      } catch {
+        /* keep fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const departments = useMemo(() => {
+    const extra = employees.map((e) => String(e.department || '').trim()).filter(Boolean);
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const d of [...FALLBACK_DEPARTMENTS, ...deptCatalog, ...extra]) {
+      const key = d.toLowerCase();
+      if (!d || seen.has(key)) continue;
+      seen.add(key);
+      out.push(d);
+    }
+    return out;
+  }, [deptCatalog, employees]);
 
   // Everything below the tabs — pills, search, grid — works on the roster of the
   // selected tab only, so a count never mixes current and left employees.
@@ -990,7 +1087,7 @@ export default function EmployeesPage() {
     }
   };
 
-  const handleSaved = (emp: Employee) => {
+  const handleSaved = (emp: Employee, extra?: { sopsAssigned?: number }) => {
     // Name / designation / department are denormalised into the matrix and LMS
     // views the browser has cached; drop those so they re-fetch the new value.
     bustEmployeeClientCaches();
@@ -1007,6 +1104,9 @@ export default function EmployeesPage() {
     });
     setShowAdd(false);
     setEditing(null);
+    if (extra?.sopsAssigned) {
+      setSyncResult(`Saved. Assigned ${extra.sopsAssigned} SOP${extra.sopsAssigned === 1 ? '' : 's'} for training.`);
+    }
     void loadTraining(activeDept !== 'All' ? activeDept : undefined);
   };
 
@@ -1128,7 +1228,7 @@ export default function EmployeesPage() {
               {tabEmployees.length}
             </span>
           </button>
-          {DEPARTMENTS.map((d) => (
+          {departments.map((d) => (
             <button
               suppressHydrationWarning
               key={d}
@@ -1290,7 +1390,9 @@ export default function EmployeesPage() {
 
       {showAdd && (
         <EmployeeModal
-          defaultDept={activeDept !== 'All' ? activeDept : 'QA'}
+          defaultDept={activeDept !== 'All' ? activeDept : (departments[0] || 'QA')}
+          departments={departments}
+          roster={employees}
           onClose={() => setShowAdd(false)}
           onSaved={handleSaved}
         />
@@ -1298,6 +1400,8 @@ export default function EmployeesPage() {
       {editing && (
         <EmployeeModal
           initial={editing}
+          departments={departments}
+          roster={employees}
           onClose={() => setEditing(null)}
           onSaved={handleSaved}
         />

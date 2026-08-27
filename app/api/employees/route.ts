@@ -12,6 +12,11 @@ import {
 import { parseTrainerDepartments } from '@/lib/employeeTrainer';
 import { invalidateEmployeeDerivedCaches } from '@/lib/employeeCacheInvalidation';
 import Employee from '@/models/Employee';
+import {
+  listSopsApplicableToDesignation,
+  listSopsAssignedToEmployee,
+  persistEmployeeSopAssignments,
+} from '@/lib/assignEmployeeSops';
 
 export const dynamic = 'force-dynamic';
 
@@ -93,7 +98,11 @@ export async function POST(req: NextRequest) {
   try {
     await connectDB();
     const body = await req.json();
-    const { name, designation, department, employeeId, password, dateOfJoining, inductionTrainingRequired, isTrainer, trainerDepartments } = body;
+    const {
+      name, designation, department, employeeId, password, dateOfJoining,
+      inductionTrainingRequired, isTrainer, trainerDepartments,
+      assignApplicableSops, copyAssignmentsFromName,
+    } = body;
 
     if (!name?.trim() || !designation?.trim() || !department?.trim()) {
       return NextResponse.json({ error: 'name, designation, and department are required' }, { status: 400 });
@@ -137,6 +146,37 @@ export async function POST(req: NextRequest) {
     const employee = created.toObject();
     delete employee.lmsPasswordHash;
     invalidateEmployeeDerivedCaches();
+
+    let sopsAssigned = 0;
+    const wantApplicable = assignApplicableSops === true;
+    const copyFrom = String(copyAssignmentsFromName || '').trim();
+    if (wantApplicable || copyFrom) {
+      const sops = [
+        ...(wantApplicable
+          ? await listSopsApplicableToDesignation(department.trim(), designation.trim())
+          : []),
+        ...(copyFrom
+          ? await listSopsAssignedToEmployee(department.trim(), copyFrom)
+          : []),
+      ];
+      const seen = new Set<string>();
+      const unique = sops.filter((s) => {
+        const key = s.sopCode.toUpperCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (unique.length > 0) {
+        const assigned = await persistEmployeeSopAssignments({
+          employeeName: name.trim(),
+          department: department.trim(),
+          designation: designation.trim(),
+          sops: unique,
+        });
+        if (assigned.ok) sopsAssigned = unique.length;
+      }
+    }
+
     return NextResponse.json({
       employee: {
         ...employee,
@@ -146,6 +186,7 @@ export async function POST(req: NextRequest) {
         dateOfJoining: doj ? formatDateOfJoiningInput(doj) : undefined,
         hasLmsPassword: !!lmsPasswordHash,
       },
+      sopsAssigned,
     }, { status: 201 });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

@@ -1351,7 +1351,8 @@ function Dashboard({
   const { data: appSession } = useSession();
   const isPrivileged = isPrivilegedRole(appSession?.user?.role);
   const isAppAdmin = Boolean(appSession?.user?.role && isAdmin(appSession.user.role));
-  const canOpenTrainerView = employee.isTrainer === true || isAppAdmin;
+  const isAppTrainer = appSession?.user?.role === 'trainer';
+  const canOpenTrainerView = employee.isTrainer === true || isAppAdmin || isAppTrainer;
   const [assignments, setAssignments] = useState<SopAssignment[]>([]);
   const [progressMap, setProgressMap] = useState<Map<string, ProgressRecord>>(new Map());
   const [certificates, setCertificates] = useState<CertRecord[]>([]);
@@ -1831,7 +1832,7 @@ function Dashboard({
           </div>
         ) : (
           <>
-            {employee.isTrainer && (
+            {(employee.isTrainer || isAppAdmin || isAppTrainer) && (
               <TrainerLmsSchedulePanel
                 onBulkBridge={handleTrainerBulkBridge}
                 onTrainerData={handleTrainerData}

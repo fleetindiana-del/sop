@@ -7,6 +7,7 @@ import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import { resolveTrainerDepartments } from '@/lib/employeeTrainer';
 import { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
 import { isAdmin } from '@/lib/roles';
+import { parseAssignedDepartments } from '@/lib/access-control';
 import Employee from '@/models/Employee';
 
 export { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
@@ -26,14 +27,12 @@ export type LmsTrainerContext = {
 };
 
 /**
- * Require an LMS session — the employee login or the main application login —
- * for an active Employee.isTrainer.
+ * Require trainer access for LMS trainer APIs.
  *
- * Super Admin and SOP Admin are admitted whether or not their employee record
- * carries the trainer flag, and are scoped to every department rather than to
- * an assignment: an administrator is not a department trainer, so restricting
- * them to their own employee record's department would hide most of the estate
- * from the only roles meant to see all of it.
+ * Admitted:
+ *  - an Employee marked `isTrainer`
+ *  - Super Admin / SOP Admin (all departments)
+ *  - a dashboard login with role `trainer` (scoped to employee + login departments)
  *
  * Returns either the trainer context or a NextResponse error.
  */
@@ -55,6 +54,7 @@ export async function requireLmsTrainer(): Promise<
   // session (no dashboard login) still requires the trainer flag.
   const session = await getServerSession(authOptions);
   const isAppAdmin = Boolean(session?.user?.role && isAdmin(session.user.role));
+  const isAppTrainer = session?.user?.role === 'trainer';
 
   await connectDB();
   const employee = await Employee.findById(payload.sub).lean<{
@@ -72,18 +72,22 @@ export async function requireLmsTrainer(): Promise<
       response: NextResponse.json({ error: 'Account not found or inactive' }, { status: 401 }),
     };
   }
-  if (!employee.isTrainer && !isAppAdmin) {
+  if (!employee.isTrainer && !isAppAdmin && !isAppTrainer) {
     return {
       ok: false,
       response: NextResponse.json({ error: 'Trainer access required' }, { status: 403 }),
     };
   }
 
+  const loginDepartments = parseAssignedDepartments(session?.user?.department);
   const trainerDepartments = isAppAdmin
     ? await getDashboardDepartments()
     : resolveTrainerDepartments({
         department: employee.department,
-        trainerDepartments: employee.trainerDepartments,
+        trainerDepartments: [
+          ...(employee.trainerDepartments || []),
+          ...loginDepartments,
+        ],
         isTrainer: true,
       });
 

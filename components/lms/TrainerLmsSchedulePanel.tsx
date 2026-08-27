@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, CalendarCheck, Check, ClipboardList, RefreshCw, Trash2, UserCheck, X,
+  AlertCircle, CalendarCheck, Check, ClipboardList, RefreshCw, Trash2, UserCheck, Users, X,
 } from 'lucide-react';
 import {
   countEmployeeUniqueSops,
@@ -266,6 +266,17 @@ export function TrainerLmsSchedulePanel({
     employees: TrainerSopEmployee[];
   } | null>(null);
   const [trainerDepartments, setTrainerDepartments] = useState<string[]>([]);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignDept, setAssignDept] = useState('');
+  const [assignName, setAssignName] = useState('');
+  const [assignDesignation, setAssignDesignation] = useState('');
+  const [assignRoster, setAssignRoster] = useState<Array<{
+    name: string;
+    designation: string;
+    department: string;
+  }>>([]);
+  const [assignBusy, setAssignBusy] = useState(false);
+  const [assignMsg, setAssignMsg] = useState('');
   const [examCatalog, setExamCatalog] = useState<Map<string, ExamCatalogEntry>>(new Map());
   const [cycleStart, setCycleStart] = useState<CycleStart | null>(() => ({
     year: now.getFullYear(),
@@ -794,6 +805,33 @@ export function TrainerLmsSchedulePanel({
           </button>
           <button
             type="button"
+            onClick={async () => {
+              setAssignOpen(true);
+              setAssignMsg('');
+              setAssignName('');
+              setAssignDesignation('');
+              const first = trainerDepartments[0] || '';
+              setAssignDept(first);
+              try {
+                const res = await fetch('/api/lms/trainer/schedulable-employees', { cache: 'no-store' });
+                const json = await res.json();
+                const list = Array.isArray(json.employees) ? json.employees : [];
+                setAssignRoster(list.map((e: { name?: string; employeeName?: string; designation?: string; department?: string }) => ({
+                  name: String(e.name || e.employeeName || '').trim(),
+                  designation: String(e.designation || '').trim(),
+                  department: String(e.department || '').trim(),
+                })).filter((e: { name: string; department: string }) => e.name && e.department));
+              } catch {
+                setAssignRoster([]);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-orange-300 bg-orange-50 px-2.5 py-1.5 text-xs font-bold text-orange-800 hover:bg-orange-100"
+            title="Assign department SOPs to an employee for training"
+          >
+            <Users className="h-3.5 w-3.5" /> Assign Employee SOP for Training
+          </button>
+          <button
+            type="button"
             onClick={() => startBulk('mark-attendance')}
             className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold ${
               bulkMode === 'mark-attendance'
@@ -1283,6 +1321,123 @@ export function TrainerLmsSchedulePanel({
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {assignOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !assignBusy && setAssignOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-start justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-gray-900">Assign Employee SOP for Training</h3>
+                <p className="mt-0.5 text-[11px] text-gray-500">
+                  Select a department, then the employee. Applicable designation SOPs are assigned automatically.
+                </p>
+              </div>
+              <button type="button" onClick={() => setAssignOpen(false)} className="text-gray-400 hover:text-gray-700">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase text-gray-500">Department</label>
+                <select
+                  value={assignDept}
+                  onChange={(e) => {
+                    setAssignDept(e.target.value);
+                    setAssignName('');
+                    setAssignDesignation('');
+                  }}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                >
+                  <option value="">Select department…</option>
+                  {(trainerDepartments.length > 0 ? trainerDepartments : [...new Set(assignRoster.map((e) => e.department))]).map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase text-gray-500">Employee</label>
+                <select
+                  value={assignName}
+                  disabled={!assignDept}
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    const live = assignRoster.find(
+                      (emp) => emp.name === name && emp.department.toLowerCase() === assignDept.toLowerCase(),
+                    );
+                    setAssignName(name);
+                    setAssignDesignation(live?.designation || '');
+                  }}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-50"
+                >
+                  <option value="">{assignDept ? 'Select employee…' : 'Select a department first'}</option>
+                  {assignRoster
+                    .filter((e) => e.department.toLowerCase() === assignDept.toLowerCase())
+                    .map((e) => (
+                      <option key={`${e.department}|${e.name}`} value={e.name}>
+                        {e.name}{e.designation ? ` · ${e.designation}` : ''}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              {assignMsg && (
+                <p className={`text-xs ${assignMsg.startsWith('Assigned') ? 'text-green-700' : 'text-red-600'}`}>
+                  {assignMsg}
+                </p>
+              )}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAssignOpen(false)}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                disabled={assignBusy || !assignDept || !assignName}
+                onClick={async () => {
+                  setAssignBusy(true);
+                  setAssignMsg('');
+                  try {
+                    const res = await fetch('/api/training-matrix/assign-employee-sops', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        employeeName: assignName,
+                        department: assignDept,
+                        designation: assignDesignation,
+                        assignApplicable: true,
+                      }),
+                    });
+                    const json = await res.json();
+                    if (!res.ok) throw new Error(json.error || 'Assign failed');
+                    setAssignMsg(
+                      json.assigned
+                        ? `Assigned ${json.assigned} SOP${json.assigned === 1 ? '' : 's'} to ${assignName}.`
+                        : (json.message || 'No applicable SOPs found for this designation.'),
+                    );
+                    await load();
+                  } catch (err) {
+                    setAssignMsg(err instanceof Error ? err.message : 'Failed to assign SOPs');
+                  } finally {
+                    setAssignBusy(false);
+                  }
+                }}
+                className="rounded-lg bg-orange-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
+              >
+                {assignBusy ? 'Assigning…' : 'Assign applicable SOPs'}
+              </button>
             </div>
           </div>
         </div>

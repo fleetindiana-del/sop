@@ -10,6 +10,10 @@ import {
   requireAuth,
 } from "@/lib/withAuth";
 import { actorFromSession, logAuditEvent } from "@/lib/audit-log";
+import { resolveTrainerDepartments } from "@/lib/employeeTrainer";
+import { deptMatchesTrainerScope } from "@/lib/lmsTrainerScope";
+import Employee from "@/models/Employee";
+import User from "@/models/User";
 
 // Password required to delete a department (also enforced in the UI).
 const DELETE_PASSWORD = "indiana132";
@@ -29,10 +33,58 @@ export async function GET() {
     );
 
     if (isDeptScopedRole(auth.session.user.role)) {
-      const assigned = parseAssignedDepartments(auth.session.user.department);
-      merged = merged.filter((name) =>
-        assigned.some((d) => d.toLowerCase() === name.toLowerCase()),
-      );
+      let assigned = parseAssignedDepartments(auth.session.user.department);
+      // Trainers often have departments on the Employee record (trainerDepartments)
+      // that were never copied onto User.department — union both so assignment
+      // UIs stay consistent with LMS trainer scope.
+      try {
+        const user = await User.findById(auth.session.user.id)
+          .select("lmsEmployeeId username name")
+          .lean<{ lmsEmployeeId?: unknown; username?: string; name?: string } | null>();
+        let emp = user?.lmsEmployeeId
+          ? await Employee.findById(user.lmsEmployeeId)
+              .select("department trainerDepartments isTrainer")
+              .lean<{
+                department?: string;
+                trainerDepartments?: string[];
+                isTrainer?: boolean;
+              } | null>()
+          : null;
+        if (!emp) {
+          const username = String(user?.username || auth.session.user.username || "").trim();
+          const displayName = String(user?.name || auth.session.user.name || "").trim();
+          const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const ci = (s: string) => new RegExp(`^${escape(s)}$`, "i");
+          if (username) {
+            emp = await Employee.findOne({
+              isActive: true,
+              $or: [{ lmsUsername: ci(username) }, { employeeId: ci(username) }],
+            })
+              .select("department trainerDepartments isTrainer")
+              .lean();
+          }
+          if (!emp && displayName) {
+            emp = await Employee.findOne({ isActive: true, name: ci(displayName) })
+              .select("department trainerDepartments isTrainer")
+              .lean();
+          }
+        }
+        if (emp) {
+          assigned = [
+            ...new Set([
+              ...assigned,
+              ...resolveTrainerDepartments({
+                department: emp.department,
+                trainerDepartments: emp.trainerDepartments,
+                isTrainer: emp.isTrainer === true,
+              }),
+            ]),
+          ];
+        }
+      } catch {
+        /* keep login departments only */
+      }
+      merged = merged.filter((name) => deptMatchesTrainerScope(name, assigned));
     }
 
     return NextResponse.json({ departments: merged });
