@@ -175,7 +175,6 @@ export async function POST(req: NextRequest) {
           const assigns = assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || [];
           const hit = assigns.find((a) => stripVersion(a.sopCode) === sopCode);
           if (!hit) continue;
-          if (hit.derivedFrom) continue;
           if (isSopDocumentExpired(hit.expiryDate)) continue;
           if (hit.sopName) sopName = hit.sopName;
           if (!deptMatchesTrainerScope(emp.department, trainerDepts)) continue;
@@ -278,7 +277,6 @@ export async function POST(req: NextRequest) {
           const assigns = assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || [];
           const hit = assigns.find((a) => stripVersion(a.sopCode) === sopCode);
           if (!hit) continue;
-          if (hit.derivedFrom) continue;
           if (isSopDocumentExpired(hit.expiryDate)) continue;
           if (hit.sopName) sopName = hit.sopName;
           const dept = emp.department;

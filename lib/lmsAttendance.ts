@@ -18,6 +18,7 @@ import TrainingAttendance, {
 } from '@/models/lms/TrainingAttendance';
 import { toDateOnlyIso } from '@/lib/trainingExamSchedule';
 import type { TrainerScopedEmployee } from '@/lib/lmsTrainerEmployees';
+import { departmentAliasStrings } from '@/lib/trainingMatrixDepartments';
 
 export type AttendanceRecordLean = IAttendanceRecord;
 
@@ -148,7 +149,7 @@ export async function listAttendanceSheets(opts: {
 
   if (opts.departments?.length) {
     query.department = {
-      $in: opts.departments.map(
+      $in: departmentAliasStrings(opts.departments).map(
         (d) => new RegExp(`^${d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
       ),
     };

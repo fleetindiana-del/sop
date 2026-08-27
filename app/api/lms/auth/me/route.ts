@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { getEmployeeAssignmentsMap, employeeAssignmentDepartments } from '@/lib/employeeAssignments';
+import { getEmployeeAssignmentsMap, employeeAssignmentDepartments, employeeAssignmentMapKey } from '@/lib/employeeAssignments';
 import { lmsIdentityProblemMessage, resolveLmsIdentityDetailed } from '@/lib/lmsIdentity';
 import {
   getOrBuildLmsCache,
@@ -53,8 +53,8 @@ export async function GET() {
         const assignmentsMap = await getEmployeeAssignmentsMap({
           departments: employeeAssignmentDepartments(employee),
         });
-        const key = `${employee.department}||${employee.name}`.trim().toLowerCase();
-        const raw = assignmentsMap.get(key) || [];
+        const raw =
+          assignmentsMap.get(employeeAssignmentMapKey(employee.department, employee.name)) || [];
         const [ignoreRules, rescheduleRules] = await Promise.all([
           listTrainingIgnores(employee.department),
           listTrainingReschedules(employee.department),

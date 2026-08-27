@@ -56,3 +56,58 @@ export function resolveTrainingMatrixDepartment(
   // Custom department not yet in the list — keep exact casing from input/canon.
   return canon;
 }
+
+/** Common spellings that collapse to the same training-matrix department. */
+const DEPARTMENT_ALIAS_SPELLINGS = [
+  "QA",
+  "Quality Assurance",
+  "QC",
+  "Quality Control",
+  "Microbiology",
+  "Micro",
+  "Micro Biology",
+  "Production",
+  "Prod",
+  "Manufacturing",
+  "Store",
+  "Stores",
+  "Warehouse",
+  "BS",
+  "Engineering",
+  "Engg",
+  "Maintenance",
+  "Personnel",
+  "HR",
+  "Human Resources",
+];
+
+/**
+ * Every stored spelling that should match the given department filter.
+ * QA is usually stored as "QA" everywhere; Production/Store/QC often are not.
+ */
+export function departmentAliasStrings(departments: string[]): string[] {
+  const wanted = new Set<string>();
+  const wantedCanons = new Set<string>();
+  for (const raw of departments) {
+    const trimmed = String(raw || "").trim();
+    if (!trimmed) continue;
+    wanted.add(trimmed);
+    const canon = canonTrainingMatrixDepartment(trimmed);
+    if (canon) {
+      wanted.add(canon);
+      wantedCanons.add(canon.toLowerCase());
+    }
+  }
+  for (const spelling of DEPARTMENT_ALIAS_SPELLINGS) {
+    const canon = canonTrainingMatrixDepartment(spelling);
+    if (canon && wantedCanons.has(canon.toLowerCase())) wanted.add(spelling);
+  }
+  return [...wanted];
+}
+
+export function departmentsEquivalent(a: string, b: string): boolean {
+  const ca = canonTrainingMatrixDepartment(a);
+  const cb = canonTrainingMatrixDepartment(b);
+  if (ca && cb) return ca.toLowerCase() === cb.toLowerCase();
+  return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+}

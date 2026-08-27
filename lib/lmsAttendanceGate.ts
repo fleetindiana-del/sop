@@ -17,6 +17,7 @@ import TrainingExamSchedule from '@/models/TrainingExamSchedule';
 import { normalizeEmployeeDepartment } from '@/lib/employeeTrainer';
 import { baseIdentifierFromIdentifier, sopFamilyIdentifierRegex } from '@/lib/sop-utils';
 import { toDateOnlyIso } from '@/lib/trainingExamSchedule';
+import { canonTrainingMatrixDepartment, departmentAliasStrings } from '@/lib/trainingMatrixDepartments';
 
 export type AttendanceGateCode =
   | 'exam_date_required'
@@ -66,11 +67,24 @@ function collectSittingIsos(
   return out.sort();
 }
 
-function deptRegex(department: string): RegExp {
-  return new RegExp(
-    `^${normalizeEmployeeDepartment(department).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
-    'i',
-  );
+function deptMatchQuery(department: string): Record<string, unknown> {
+  const names = departmentAliasStrings([department]);
+  if (names.length === 0) {
+    const fallback = canonTrainingMatrixDepartment(department) || normalizeEmployeeDepartment(department);
+    return {
+      department: new RegExp(
+        `^${fallback.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+        'i',
+      ),
+    };
+  }
+  return {
+    department: {
+      $in: names.map(
+        (d) => new RegExp(`^${d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      ),
+    },
+  };
 }
 
 function decideEligibility(dates: string[], marks: AttendanceMark[]): AttendanceGateResult {
@@ -127,7 +141,7 @@ async function loadCalendarExamDate(
   const familyRe = sopFamilyIdentifierRegex(sopCode);
   const rows = await TrainingExamSchedule.find({
     status: { $ne: 'cancelled' },
-    department: deptRegex(department),
+    ...deptMatchQuery(department),
     $or: [{ sopCode: family }, { sopCode: { $regex: familyRe } }],
   })
     .select('examDate scope employeeId')
@@ -158,7 +172,7 @@ async function loadAttendanceMarks(opts: {
   const employeeId = String(opts.employeeId);
 
   const sheets = await TrainingAttendance.find({
-    department: deptRegex(opts.department),
+    ...deptMatchQuery(opts.department),
     'records.employeeId': employeeId,
     $or: [{ sopCode: family }, { sopCode: { $regex: familyRe } }],
   })
@@ -283,7 +297,7 @@ export async function batchExamAttendanceUnlocked(
     }
 
     const sheets = await TrainingAttendance.find({
-      department: deptRegex(dept),
+      ...deptMatchQuery(dept),
       'records.employeeId': employeeId,
     })
       .select('sopCode trainingDate records')

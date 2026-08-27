@@ -31,8 +31,13 @@ import {
   deptScheduleKey,
   employeeOverrideKey,
 } from '@/lib/trainingExamSchedule';
-import { canonTrainingMatrixDepartment } from '@/lib/trainingMatrixDepartments';
+import {
+  canonTrainingMatrixDepartment,
+  departmentAliasStrings,
+  departmentsEquivalent,
+} from '@/lib/trainingMatrixDepartments';
 import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
+import { designationSetsOverlap } from '@/lib/designationMatch';
 
 const MONTH_NAMES = [
   '',
@@ -361,16 +366,18 @@ function assignmentCacheStore(): Map<string, AssignmentsCache> {
 
 function assignmentScopeKey(departments?: string[]): string {
   if (!departments?.length) return 'all';
-  const parts = [...new Set(departments.map((d) => d.trim().toLowerCase()).filter(Boolean))];
+  const parts = [...new Set(
+    departments
+      .map((d) => canonTrainingMatrixDepartment(d).trim().toLowerCase())
+      .filter(Boolean),
+  )];
   return parts.length ? parts.sort().join('|') : 'all';
 }
 
-/** Case-insensitive department filter. Empty / omitted → no filter. */
+/** Case-insensitive department filter, including Production/Prod and other aliases. */
 export function departmentMatchFilter(departments?: string[]): Record<string, unknown> {
   if (!departments?.length) return {};
-  const regexes = departments
-    .map((d) => String(d || '').trim())
-    .filter(Boolean)
+  const regexes = departmentAliasStrings(departments)
     .map((d) => new RegExp(`^${d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'));
   if (!regexes.length) return {};
   return { department: { $in: regexes } };
@@ -615,6 +622,8 @@ async function computeEmployeeAssignmentsMap(
     });
   }
 
+  await mergeDesignationMatrixAssignments(map, lookup, isMatrixAssignableCode, departments);
+
   // Trainers manage ALL SOPs in every department they are eligible for.
   // All of those SOPs are merged under the trainer's HOME department key so
   // consumers that look up empKey(homeDept, name) see the combined total.
@@ -691,6 +700,106 @@ async function computeEmployeeAssignmentsMap(
   await mergeTrainerScheduledExams(map, lookup);
 
   return map;
+}
+
+/**
+ * Non-QA departments often tick designations on Manage SOP without a per-person
+ * Excel row. Fold those designation assignments onto matching employees so
+ * schedule and attendance see the same people QA already sees via snapshot ticks.
+ */
+async function mergeDesignationMatrixAssignments(
+  map: Map<string, EmployeeSopAssignment[]>,
+  lookup: SopLookup,
+  isMatrixAssignableCode: (raw: string) => boolean,
+  departments?: string[],
+): Promise<void> {
+  const deptFilter = departmentMatchFilter(departments);
+  const [rows, employees] = await Promise.all([
+    MatrixSOPAssignment.find({
+      isActive: { $ne: false },
+      deletedAt: { $in: [null, undefined] },
+      ...deptFilter,
+    })
+      .select('department sopCode sopName effectiveMonth effectiveYear designationApplicability')
+      .lean<Array<{
+        department?: string;
+        sopCode?: string;
+        sopName?: string;
+        effectiveMonth?: number;
+        effectiveYear?: number;
+        designationApplicability?: string[];
+      }>>(),
+    Employee.find({ isActive: true, isTrainer: { $ne: true }, ...deptFilter })
+      .select('name department designation')
+      .lean<Array<{ name?: string; department?: string; designation?: string }>>(),
+  ]);
+
+  if (rows.length === 0 || employees.length === 0) return;
+
+  const byDept = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const applicability = Array.isArray(row.designationApplicability)
+      ? row.designationApplicability.filter(Boolean)
+      : [];
+    if (applicability.length === 0) continue;
+    const code = String(row.sopCode || '').trim();
+    if (!code || !isMatrixAssignableCode(code)) continue;
+    const dept = String(row.department || '').trim();
+    if (!dept) continue;
+    const key = canonTrainingMatrixDepartment(dept) || dept;
+    const list = byDept.get(key) || [];
+    list.push({ ...row, designationApplicability: applicability });
+    byDept.set(key, list);
+    if (key !== dept && !byDept.has(dept)) byDept.set(dept, list);
+  }
+
+  for (const emp of employees) {
+    const name = String(emp.name || '').trim();
+    const empDept = String(emp.department || '').trim();
+    const desig = String(emp.designation || '').trim();
+    if (!name || !empDept || !desig) continue;
+
+    const canonDept = canonTrainingMatrixDepartment(empDept) || empDept;
+    const deptRows = byDept.get(canonDept) || byDept.get(empDept) || [];
+    if (deptRows.length === 0) continue;
+
+    const existing = getAliasedAssignments(map, empDept, name) || [];
+    const existingBases = new Set(existing.map((a) => stripVersion(a.sopCode)));
+    let changed = false;
+
+    for (const row of deptRows) {
+      if (!departmentsEquivalent(String(row.department || ''), empDept)) continue;
+      if (!designationSetsOverlap(row.designationApplicability || [], desig)) continue;
+      const code = String(row.sopCode || '').trim();
+      const base = stripVersion(code);
+      if (!base || existingBases.has(base)) continue;
+      const monthRaw = Number(row.effectiveMonth);
+      const month = Number.isInteger(monthRaw) && monthRaw >= 1 && monthRaw <= 12 ? monthRaw : 1;
+      const year = Number(row.effectiveYear) || new Date().getFullYear();
+      const assignment: EmployeeSopAssignment = {
+        sopCode: code,
+        sopName: String(row.sopName || '').trim() || undefined,
+        month,
+        monthName: MONTH_NAMES[month] || `Month ${month}`,
+        year,
+        trainingType: 'training',
+        sopDepartment: row.department,
+      };
+      enrichAssignment(assignment, empDept, lookup);
+      existing.push(assignment);
+      existingBases.add(base);
+      changed = true;
+    }
+
+    if (changed && existing.length > 0) {
+      existing.sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        if (a.month !== b.month) return a.month - b.month;
+        return a.sopCode.localeCompare(b.sopCode);
+      });
+      setAliasedAssignments(map, empDept, name, existing);
+    }
+  }
 }
 
 /**
