@@ -8,6 +8,8 @@ import { autoLinkSharedUserToEmployee, resolveLmsEmployeeLink } from "@/lib/user
 import { isSharedLmsLogin, syncLmsPasswordFromUser } from "@/lib/lmsSharedLogin";
 import { serializeAssignedDepartments } from "@/lib/access-control";
 import { actorFromSession, logUserAudit, snapshotUser } from "@/lib/audit-log";
+import { resolveTrainerFlag } from "@/lib/roles";
+import { invalidateUserAccessCaches } from "@/lib/userAccessCacheInvalidation";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
 
@@ -48,6 +50,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const user = await User.findById(id);
     if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
     const previous = snapshotUser(user);
+    const previousRole = user.role;
+    const previousDepartment = user.department;
+    const previousIsTrainer = user.isTrainer === true;
 
     /** Kept in plain text only for the duration of this request, to hash again for the LMS. */
     let plainPassword = "";
@@ -68,9 +73,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
     if (body.designation !== undefined) {
       user.designation = String(body.designation || "").trim() || undefined;
-    }
-    if (body.isTrainer !== undefined) {
-      user.isTrainer = body.isTrainer === true;
     }
     if (body.sharedLmsLogin !== undefined) {
       user.sharedLmsLogin = body.sharedLmsLogin === true;
@@ -108,6 +110,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       }
       user.role = role;
     }
+    // Applied after the role so the two can never disagree (see
+    // `resolveTrainerFlag`): a demotion to Viewer clears the trainer flag even
+    // when the form still had the Trainer box ticked.
+    user.isTrainer = resolveTrainerFlag(
+      user.role,
+      body.isTrainer !== undefined ? body.isTrainer === true : user.isTrainer,
+    );
     if (body.password !== undefined && body.password !== "") {
       const password = String(body.password);
       if (password.length < 6) {
@@ -142,11 +151,24 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         ? await syncLmsPasswordFromUser(user, plainPassword)
         : undefined;
 
-    // Trainer access is read from the Employee record, so mirror it there.
+    // Trainer access is read from the Employee record, so mirror it there —
+    // whether the checkbox moved it or the role did (Trainer -> Viewer).
+    const trainerFlagMoved = (user.isTrainer === true) !== previousIsTrainer;
     const trainerSync =
-      body.isTrainer !== undefined
+      body.isTrainer !== undefined || trainerFlagMoved
         ? await syncEmployeeTrainerFlag(user, user.isTrainer === true)
         : undefined;
+
+    // Role, departments and the trainer flag are denormalised into cached
+    // trainer rosters and LMS views, so drop those here instead of serving the
+    // old designation until each TTL runs out.
+    if (
+      user.role !== previousRole ||
+      trainerFlagMoved ||
+      user.department !== previousDepartment
+    ) {
+      invalidateUserAccessCaches();
+    }
 
     return NextResponse.json({ success: true, user: toPublicUser(user), trainerSync, lmsSync });
   } catch (error) {
@@ -184,6 +206,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     const previous = snapshotUser(user);
     await User.findByIdAndDelete(id);
+    invalidateUserAccessCaches();
     await logUserAudit({
       actor: actorFromSession(auth.session, request),
       action: "deleted",

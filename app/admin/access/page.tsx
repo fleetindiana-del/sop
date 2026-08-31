@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
+import { clearLmsClientCache } from '@/lib/lmsCache';
 import {
   ArrowLeft,
   Building2,
@@ -78,7 +79,7 @@ function sameSet(a: string[], b: string[]) {
 
 export default function AccessManagementPage() {
   useAuthGuard({ allowedRoles: ['admin', 'sop_admin'] });
-  const { data: session } = useSession();
+  const { data: session, update: refreshSession } = useSession();
   const currentUserId = session?.user?.id;
   /** Only a Super Admin may edit another Super Admin — mirrors the API rail. */
   const viewerIsSuperAdmin = session?.user?.role === 'admin';
@@ -239,6 +240,11 @@ export default function AccessManagementPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Save failed');
       setUsers((prev) => prev.map((u) => (u.id === selected.id ? data.user : u)));
+      // Assigned departments scope the cached LMS views in this browser too.
+      clearLmsClientCache();
+      // Your own page access changed — refresh this tab's session so the
+      // sidebar and route gating follow immediately.
+      if (selected.id === currentUserId) await refreshSession();
       setMessage(`Access updated for ${selected.username}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');

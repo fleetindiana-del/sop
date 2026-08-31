@@ -32,9 +32,19 @@ interface DeptSopEntry {
   reviewedCount: number;
   similarCount: number;
   hasMcq: boolean;
-  mcqBanks: { id: string; language: string }[];
+  /** One entry per language bank, each with its own counts. */
+  mcqBanks: {
+    id: string;
+    language: string;
+    totalQuestions: number;
+    checkedCount: number;
+    reviewedCount: number;
+    similarCount: number;
+  }[];
   lastUpdated: string | null;
 }
+
+type DeptSopBank = DeptSopEntry["mcqBanks"][number];
 
 interface DeptStats {
   totalQuestions: number;
@@ -66,6 +76,58 @@ const DEPT_GRADIENT: Record<string, string> = {
 };
 
 function fmt(n: number) { return n.toLocaleString(); }
+
+function langTag(language: string) {
+  return language.toLowerCase() === "gujarati" ? "GU" : "EN";
+}
+
+/**
+ * One figure per language bank.
+ *
+ * A dual-language SOP holds a separate bank per language, and the row opens one
+ * of them at a time — so a single summed number (100 English + 100 Gujarati =
+ * 200) never matched the 100 questions the reader landed on. Split the figure
+ * whenever the family has more than one bank; a single-language SOP keeps the
+ * plain number it always showed.
+ */
+function CountCell({
+  banks,
+  total,
+  pick,
+  tone,
+  weight = "font-semibold",
+  dash = false,
+}: {
+  banks: DeptSopBank[];
+  total: number;
+  pick: (bank: DeptSopBank) => number;
+  tone: string;
+  weight?: string;
+  /** Units shows an em dash for a family with no questions; counts show 0. */
+  dash?: boolean;
+}) {
+  const cls = (n: number) => `text-xs ${weight} ${n > 0 ? tone : "text-gray-300"}`;
+
+  if (banks.length < 2) {
+    return <span className={cls(total)}>{dash && total === 0 ? "—" : fmt(total)}</span>;
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-0.5 leading-tight">
+      {banks.map((bank) => {
+        const count = pick(bank);
+        return (
+          <span key={bank.id} className="flex items-baseline gap-1 whitespace-nowrap">
+            <span className={cls(count)}>{fmt(count)}</span>
+            <span className="text-[8px] font-black uppercase tracking-widest text-gray-400">
+              {langTag(bank.language)}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 function StatusDot({ total, checked }: { total: number; checked: number }) {
   if (total === 0) return <span className="inline-block h-2.5 w-2.5 rounded-full bg-gray-200" />;
@@ -413,24 +475,38 @@ export function DeptDetailModal({ dept, deptColor, onClose, onViewMcqs }: DeptDe
                             </div>
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-center">
-                            <span className={`text-xs font-bold ${entry.totalQuestions > 0 ? "text-gray-800" : "text-gray-300"}`}>
-                              {entry.totalQuestions > 0 ? fmt(entry.totalQuestions) : "—"}
-                            </span>
+                            <CountCell
+                              banks={entry.mcqBanks}
+                              total={entry.totalQuestions}
+                              pick={(b) => b.totalQuestions}
+                              tone="text-gray-800"
+                              weight="font-bold"
+                              dash
+                            />
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-center">
-                            <span className={`text-xs font-semibold ${entry.checkedCount > 0 ? "text-emerald-600" : "text-gray-300"}`}>
-                              {fmt(entry.checkedCount)}
-                            </span>
+                            <CountCell
+                              banks={entry.mcqBanks}
+                              total={entry.checkedCount}
+                              pick={(b) => b.checkedCount}
+                              tone="text-emerald-600"
+                            />
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-center">
-                            <span className={`text-xs font-semibold ${entry.reviewedCount > 0 ? "text-indigo-600" : "text-gray-300"}`}>
-                              {fmt(entry.reviewedCount)}
-                            </span>
+                            <CountCell
+                              banks={entry.mcqBanks}
+                              total={entry.reviewedCount}
+                              pick={(b) => b.reviewedCount}
+                              tone="text-indigo-600"
+                            />
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-center">
-                            <span className={`text-xs font-semibold ${entry.similarCount > 0 ? "text-orange-500" : "text-gray-300"}`}>
-                              {fmt(entry.similarCount)}
-                            </span>
+                            <CountCell
+                              banks={entry.mcqBanks}
+                              total={entry.similarCount}
+                              pick={(b) => b.similarCount}
+                              tone="text-orange-500"
+                            />
                           </td>
                           <td className="whitespace-nowrap px-4 py-3" onClick={(e) => e.stopPropagation()}>
                             {hasBanks ? (

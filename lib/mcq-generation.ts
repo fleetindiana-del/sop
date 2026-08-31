@@ -64,6 +64,13 @@ import {
   shouldUseFactPipeline,
   shouldUseFastFill,
 } from "@/lib/mcq-generation-config";
+import {
+  TRANSLATION_BATCH_SIZE,
+  ensureBankMcqIds,
+  saveBankTranslations,
+  toMasterMcqs,
+  translateMcqBatch,
+} from "@/lib/mcqTranslation";
 import { generateForLanguageFactBased } from "@/lib/mcq-fact-generation";
 import { normalizeKnowledgeFactId } from "@/lib/mcq-facts";
 import { enrichMcqRationale } from "@/lib/mcq-rationale";
@@ -1137,20 +1144,109 @@ function representativesByLanguage(sops: ISOP[]): Map<"English" | "Gujarati", IS
 }
 
 /**
- * Gujarati MCQs are language-converted versions of the English question set.
- * When a Gujarati SOP file is missing or unreadable, fall back to the readable
- * English SOP text instead of failing the Gujarati run outright.
+ * Gujarati questions for an SOP with no readable Gujarati source document.
+ *
+ * Generating a second, independent bank from the English text — what this code
+ * used to do — is what produced banks labelled Gujarati that hold English
+ * questions: the target language reached the model only as a prompt prefix, the
+ * clauses it saw were English, and nothing checked the script that came back.
+ *
+ * Translate the English bank instead. One question keeps one answer key and
+ * gains a verified Gujarati rendering on the master (`lib/mcqTranslation.ts`,
+ * which rejects anything that changes option order or the numbers an answer
+ * turns on). The LMS quiz already prefers those translations and falls back to a
+ * standalone Gujarati bank only when they are absent, so a translated SOP stops
+ * serving its old English-in-Gujarati set without that bank being touched.
+ *
+ * Translation runs through the Codex CLI, which Vercel cannot run; when it is
+ * unavailable the pass is skipped with an actionable log rather than failing the
+ * generation run.
  */
-function applyGujaratiSourceFallback(reps: Map<"English" | "Gujarati", ISOP>): boolean {
-  const english = reps.get("English");
-  const gujarati = reps.get("Gujarati");
-  if (!english) return false;
-  if (scoreSopRecordForMcq(english) < 50) return false;
-  if (!gujarati || scoreSopRecordForMcq(gujarati) < 50) {
-    reps.set("Gujarati", english);
-    return true;
+async function translateEnglishBankToGujarati(
+  identifier: string,
+  onProgress: (phase: string) => Promise<void>,
+): Promise<void> {
+  const bankRef = await MCQBank.findOne({
+    sopIdentifier: escapeId(identifier),
+    isObsolete: { $ne: true },
+    $or: [{ language: "English" }, { language: { $exists: false } }],
+  })
+    .select("_id")
+    .lean();
+  if (!bankRef) {
+    await pushLog(identifier, "Gujarati · no English bank to translate from — skipping");
+    return;
   }
-  return false;
+  const bankId = String(bankRef._id);
+
+  if (!(await canStartCodexMcqHere())) {
+    await pushLog(
+      identifier,
+      "Gujarati · translation needs the local Codex worker — run: " +
+        `npx tsx scripts/translate-mcqs.ts --sop ${identifier}`,
+    );
+    return;
+  }
+
+  await ensureBankMcqIds(bankId);
+  const fresh = await MCQBank.findOne({ _id: bankRef._id }).select("mcqs").lean();
+  const masters = toMasterMcqs(
+    (fresh?.mcqs ?? []) as Parameters<typeof toMasterMcqs>[0],
+    "gu",
+  );
+  if (!masters.length) {
+    await pushLog(identifier, "Gujarati · every English question already has a translation");
+    return;
+  }
+
+  await pushLog(identifier, `Gujarati · translating ${masters.length} English question(s)`);
+  let translated = 0;
+  let rejected = 0;
+
+  for (let i = 0; i < masters.length; i += TRANSLATION_BATCH_SIZE) {
+    if (await isMcqGenerationCancelled(identifier)) {
+      await pushLog(identifier, `Gujarati · stop requested — halting at ${translated} translated`);
+      throw new McqGenerationCancelledError();
+    }
+    const batch = masters.slice(i, i + TRANSLATION_BATCH_SIZE);
+    try {
+      const { translations, failures } = await translateMcqBatch(batch, {
+        lang: "gu",
+        runKey: identifier,
+        signal: getMcqRunSignal(identifier),
+      });
+
+      // A rejected question gets one solo retry — a bad batch is usually one
+      // question confusing the model, not all of them.
+      for (const failure of failures) {
+        const master = batch.find((m) => m.mcqId === failure.mcqId);
+        if (!master) continue;
+        const retry = await translateMcqBatch([master], {
+          lang: "gu",
+          runKey: identifier,
+          signal: getMcqRunSignal(identifier),
+        });
+        const one = retry.translations.get(master.mcqId);
+        if (one) translations.set(master.mcqId, one);
+        else rejected += 1;
+      }
+
+      translated += await saveBankTranslations(bankId, "gu", translations);
+    } catch (error) {
+      rejected += batch.length;
+      await pushLog(
+        identifier,
+        `Gujarati · translation batch failed — ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    await onProgress(`Translating Gujarati · ${translated}/${masters.length}`);
+  }
+
+  await pushLog(
+    identifier,
+    `Gujarati · translation complete — ${translated}/${masters.length} translated` +
+      (rejected ? `, ${rejected} rejected by the equivalence guards` : ""),
+  );
 }
 
 /** Resolve generate-vs-regenerate (or honour an explicit "continue"), reset the
@@ -1321,7 +1417,15 @@ export async function runMcqGeneration(
   }
 
   const reps = representativesByLanguage(sops);
-  const gujaratiUsingEnglishSource = applyGujaratiSourceFallback(reps);
+  // A Gujarati bank must come from Gujarati source text. When there is none,
+  // the English bank is translated after the run instead of a second bank being
+  // generated from English text. Gujarati counts as wanted when it was asked for
+  // explicitly or a Gujarati bank already exists for this SOP.
+  const gujaratiRep = reps.get("Gujarati");
+  const gujaratiSourceReadable = Boolean(gujaratiRep && scoreSopRecordForMcq(gujaratiRep) >= 50);
+  const translateGujarati =
+    !gujaratiSourceReadable &&
+    (languageScope === "Gujarati" || (await hasActiveBankForLang(identifier, "Gujarati")));
 
   // Fold in any linked annexure files (extracted live, same as compliance audits
   // do via buildAnnexureSupplement) so clause parsing + prompts see annexure
@@ -1353,8 +1457,10 @@ export async function runMcqGeneration(
 
   // No language has readable text — the stored content is an image-only PDF or a
   // failed extraction. Generating from it just yields generic, ungrounded MCQs,
-  // so fail fast with an actionable message instead of producing junk.
-  if (!eligible.length) {
+  // so fail fast with an actionable message instead of producing junk. A
+  // Gujarati-only request is the exception: there is nothing to generate, but the
+  // English bank can still be translated.
+  if (!eligible.length && !translateGujarati) {
     await upsertMcqGenJob(identifier, {
       mode,
       languageScope: languageScope ?? null,
@@ -1415,7 +1521,9 @@ export async function runMcqGeneration(
   await SOP.updateMany({ _id: { $in: sopIds } }, { pipelineStatus: "mcq_generating" });
 
   const providerLabel = mcqProviderLabel(effectiveProvider);
-  const langLabels = eligible.map(([lang]) => lang).join(" + ");
+  // A Gujarati-only request with no Gujarati source generates nothing — the run
+  // is the translation pass alone.
+  const langLabels = eligible.map(([lang]) => lang).join(" + ") || "Gujarati (translation)";
   await pushLog(identifier, `Starting ${mode} · ${langLabels} · provider: ${providerLabel}`);
   await pushLog(
     identifier,
@@ -1425,10 +1533,10 @@ export async function runMcqGeneration(
         ? `Annexures: including ${annexureUsage.includedCount} of ${annexureUsage.linkedCount} linked file(s)`
         : `Annexures: ${annexureUsage.linkedCount} linked but none readable — generating from the main SOP content only`,
   );
-  if (gujaratiUsingEnglishSource) {
+  if (translateGujarati) {
     await pushLog(
       identifier,
-      "Gujarati source text unavailable — using readable English SOP text to generate Gujarati MCQs",
+      "No readable Gujarati SOP text — Gujarati questions will be translated from the English bank, not generated as a separate set",
     );
   }
   if (effectiveProvider === "claude" && !anthropicMcqApiAvailable()) {
@@ -1532,6 +1640,13 @@ export async function runMcqGeneration(
         `${lp.language} · complete — ${lp.collected}/${MCQ_BANK_CAP} in bank (${lp.inserted} added this run, ${lp.skipped} skipped)`,
       );
       await persist({ totalInserted: totalApproved, totalSkipped: totalRecycled });
+    }
+
+    if (translateGujarati) {
+      await persist({ phase: "Translating English bank into Gujarati…" });
+      await translateEnglishBankToGujarati(identifier, async (phase) => {
+        await persist({ phase });
+      });
     }
 
     await SOP.updateMany({ _id: { $in: sopIds } }, { pipelineStatus: "updating_platform" });

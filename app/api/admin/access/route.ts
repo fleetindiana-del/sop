@@ -11,6 +11,7 @@ import { parseAssignedDepartments } from "@/lib/access-control";
 import { effectivePageKeys } from "@/lib/page-access";
 import { APP_PAGES, sanitizePageAccess } from "@/lib/page-registry";
 import { actorFromSession, logUserAudit, snapshotUser } from "@/lib/audit-log";
+import { invalidateUserAccessCaches } from "@/lib/userAccessCacheInvalidation";
 import type { AppRole } from "@/lib/auth";
 
 type UserAccessRow = {
@@ -150,6 +151,10 @@ export async function PATCH(request: NextRequest) {
 
     const saved = user.toObject() as UserAccessRow;
     if (unsetPageAccess) delete saved.pageAccess;
+
+    // Assigned departments scope the trainer rosters and LMS views that sit
+    // behind short-lived caches, so a change here has to reach them now.
+    invalidateUserAccessCaches();
 
     await logUserAudit({
       actor: actorFromSession(auth.session, request),

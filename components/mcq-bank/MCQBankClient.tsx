@@ -1370,9 +1370,13 @@ function RegistryRow({
         )}
       </td>
       <td className="px-3 py-2.5 text-center whitespace-nowrap">
+        {/* A dual-language family holds one bank per language, so the summed
+            total cannot open anything without landing the reader on a bank whose
+            count differs from the number they clicked. It stays a plain figure
+            there; the ENG and GUJ columns beside it remain the way in. */}
         <McqCountLink
           count={entry.totalMcqs}
-          bankId={defaultBankId}
+          bankId={enBankId && guBankId ? undefined : defaultBankId}
           onView={onViewMcqs}
           colorClass="text-emerald-600"
           title="View MCQs"
@@ -1610,6 +1614,14 @@ export function MCQBankClient() {
   // Per-family MCQ generation state, keyed by registry entry id (family key).
   const [genStatus, setGenStatus] = useState<Record<string, GenProgress>>({});
   const [genModalEntry, setGenModalEntry] = useState<RegistryEntry | null>(null);
+  /**
+   * Collapses the whole progress dock to a single pill. A bulk run stacks one
+   * card per SOP down the right-hand side and buries the registry behind them;
+   * this hides them without touching the runs, which keep polling and reopen
+   * with live progress. Sticky on purpose — clicking Generate on a single row
+   * still opens that row's progress modal, so nothing goes unreported.
+   */
+  const [genDockMinimized, setGenDockMinimized] = useState(false);
   // Identifiers currently being polled, so we never start two poll loops for one row.
   const pollingRef = useRef<Set<string>>(new Set());
   const pollAbortRef = useRef<Set<string>>(new Set());
@@ -2478,6 +2490,9 @@ export function MCQBankClient() {
 
   const totalStatusCards = 1 + orderedDepts.length;
 
+  const visibleAnnexSwaps = annexSwapProgress.filter((p) => !p.hidden);
+  const genDockCount = activeGenToasts.length + visibleAnnexSwaps.length;
+
   return (
     <>
       {genModalEntry && genStatus[genModalEntry.id] && (
@@ -2494,19 +2509,46 @@ export function MCQBankClient() {
         />
       )}
 
-      {(activeGenToasts.length > 0 || annexSwapProgress.some((p) => !p.hidden)) && (
+      {genDockCount > 0 && (
         <div className="fixed bottom-4 right-4 z-[75] flex max-w-sm flex-col gap-2 pointer-events-none">
-          {annexSwapProgress.filter((p) => !p.hidden).map((progress) => (
-            <div key={progress.key} className="pointer-events-auto animate-in slide-in-from-bottom-2 fade-in duration-300">
-              <AnnexSwapProgressCard
-                progress={progress}
-                compact
-                onDismiss={() => dismissAnnexSwap(progress.key)}
-                onHide={() => hideAnnexSwap(progress.key)}
-              />
+          {genDockMinimized ? (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setGenDockMinimized(false)}
+                title="Show generation progress"
+                className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white px-3.5 py-2 text-[10px] font-bold uppercase tracking-wide text-violet-700 shadow-lg ring-1 ring-black/5 transition-colors hover:bg-violet-50"
+              >
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-600" />
+                {genDockCount} generating
+              </button>
             </div>
-          ))}
-          <McqGenProgressToast items={activeGenToasts} onOpen={setGenModalEntry} />
+          ) : (
+            <>
+              {visibleAnnexSwaps.map((progress) => (
+                <div key={progress.key} className="pointer-events-auto animate-in slide-in-from-bottom-2 fade-in duration-300">
+                  <AnnexSwapProgressCard
+                    progress={progress}
+                    compact
+                    onDismiss={() => dismissAnnexSwap(progress.key)}
+                    onHide={() => hideAnnexSwap(progress.key)}
+                  />
+                </div>
+              ))}
+              <McqGenProgressToast items={activeGenToasts} onOpen={setGenModalEntry} />
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setGenDockMinimized(true)}
+                  title="Minimize — generation keeps running in the background"
+                  className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-700 shadow-md ring-1 ring-black/5 transition-colors hover:bg-violet-50"
+                >
+                  <Minimize2 className="h-3 w-3" />
+                  Minimize
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

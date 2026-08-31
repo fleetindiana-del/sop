@@ -78,3 +78,19 @@ export const ROLE_LABELS: Record<AppRole, string> = {
 export function roleLabel(role: string): string {
   return ROLE_LABELS[role as AppRole] ?? role;
 }
+
+/**
+ * The Trainer checkbox (`User.isTrainer`, mirrored onto `Employee.isTrainer`)
+ * must never contradict the role, or a demoted login keeps showing up as a
+ * trainer in the LMS long after the role says otherwise.
+ *
+ * - `trainer` — the role *is* trainer access, so the flag is always on.
+ * - `viewer`  — a learner-only login, so the flag is always off.
+ * - admins    — trainer duty is genuinely independent of the role, so the
+ *               explicit checkbox stands.
+ */
+export function resolveTrainerFlag(role: AppRole, requested: boolean | undefined): boolean {
+  if (role === "trainer") return true;
+  if (role === "viewer") return false;
+  return requested === true;
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronUp, Loader2, X, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, Loader2, Minus, X, XCircle } from "lucide-react";
 import { bustDashboardCache } from "@/lib/cache";
 import { useDashboardStore } from "@/lib/store/dashboard-store";
 import { displaySopCode } from "@/lib/sop-display";
@@ -22,6 +22,13 @@ type SopLive = {
 export function PipelineDock({ onComplete }: { onComplete?: () => void }) {
   const { pipelineJobs, removePipelineJob, clearPipeline } = useDashboardStore();
   const [expanded, setExpanded] = useState(false);
+  /**
+   * Out of the way, but still running. Minimising leaves only a small badge in
+   * the corner — unlike Dismiss, which stops tracking the run altogether. The
+   * polling effect above is unaffected either way, so generation and compliance
+   * carry on in the background and the dock comes back with live progress.
+   */
+  const [minimized, setMinimized] = useState(false);
   const [live, setLive] = useState<Record<string, SopLive>>({});
   const completedRef = useRef(new Set<string>());
   const refreshedRef = useRef(false);
@@ -115,6 +122,7 @@ export function PipelineDock({ onComplete }: { onComplete?: () => void }) {
         completedRef.current.clear();
         refreshedRef.current = false;
         setExpanded(false);
+        setMinimized(false);
       }, 2000);
       return () => clearTimeout(timer);
     }
@@ -133,6 +141,25 @@ export function PipelineDock({ onComplete }: { onComplete?: () => void }) {
 
   const titleCount = runningCount || pipelineJobs.length;
 
+  if (minimized) {
+    return (
+      <button
+        type="button"
+        onClick={() => setMinimized(false)}
+        title={`Work in progress · ${titleCount} — click to reopen`}
+        aria-label="Reopen work in progress"
+        className="fixed bottom-4 right-4 z-50 flex h-9 w-9 items-center justify-center rounded-full border border-sky-200 bg-white text-sky-600 shadow-lg shadow-sky-100/80 transition hover:border-sky-300 hover:bg-sky-50"
+      >
+        <Loader2 className="h-4 w-4 animate-spin" />
+        {titleCount > 1 && (
+          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-600 px-1 text-[9px] font-bold text-white">
+            {titleCount}
+          </span>
+        )}
+      </button>
+    );
+  }
+
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2">
       {expanded && (
@@ -145,14 +172,25 @@ export function PipelineDock({ onComplete }: { onComplete?: () => void }) {
                 {pipelineJobs.length === 1 ? "" : "s"}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setExpanded(false)}
-              className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
-              title="Collapse"
-            >
-              <ChevronDown className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => setMinimized(true)}
+                className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                title="Minimize — keeps running in the background"
+                aria-label="Minimize"
+              >
+                <Minus className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                title="Collapse"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           <div className="max-h-72 space-y-2 overflow-y-auto p-3">
@@ -233,13 +271,24 @@ export function PipelineDock({ onComplete }: { onComplete?: () => void }) {
             >
               Dismiss
             </button>
-            <button
-              type="button"
-              onClick={() => setExpanded(false)}
-              className="text-[10px] font-medium text-sky-600 hover:text-sky-800"
-            >
-              Hide details
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                className="text-[10px] font-medium text-sky-600 hover:text-sky-800"
+              >
+                Hide details
+              </button>
+              <button
+                type="button"
+                onClick={() => setMinimized(true)}
+                className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-800"
+                title="Minimize — keeps running in the background"
+              >
+                <Minus className="h-3 w-3" />
+                Minimize
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -265,6 +314,25 @@ export function PipelineDock({ onComplete }: { onComplete?: () => void }) {
           tabIndex={0}
           onClick={(e) => {
             e.stopPropagation();
+            setMinimized(true);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.stopPropagation();
+              setMinimized(true);
+            }
+          }}
+          className="ml-0.5 rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          title="Minimize — keeps running in the background"
+          aria-label="Minimize"
+        >
+          <Minus className="h-3 w-3" />
+        </span>
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
             clearPipeline();
             setExpanded(false);
           }}
@@ -275,8 +343,8 @@ export function PipelineDock({ onComplete }: { onComplete?: () => void }) {
               setExpanded(false);
             }
           }}
-          className="ml-0.5 rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-          title="Dismiss"
+          className="rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          title="Dismiss — stops tracking this run"
         >
           <X className="h-3 w-3" />
         </span>
