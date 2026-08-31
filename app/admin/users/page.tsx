@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { isLearnerOnly } from '@/lib/page-access';
+import { resolveTrainerFlag } from '@/lib/roles';
+import { clearLmsClientCache } from '@/lib/lmsCache';
 import { AuditLogsModal } from '@/components/dashboard/AuditLogsModal';
 import {
   ArrowDown,
@@ -233,7 +235,7 @@ function lmsPasswordNote(
 
 export default function AdminUsersPage() {
   useAuthGuard({ allowedRoles: ['admin', 'sop_admin'] });
-  const { data: session } = useSession();
+  const { data: session, update: refreshSession } = useSession();
   const currentUserId = session?.user?.id;
 
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -426,7 +428,9 @@ export default function AdminUsersPage() {
       role: user.role,
       departments: splitDepartments(user.department || ''),
       designation: user.designation,
-      isTrainer: user.isTrainer === true,
+      // Normalised, so a login saved before the role/flag rule existed opens
+      // showing what its role actually grants rather than a stale tick.
+      isTrainer: resolveTrainerFlag(user.role, user.isTrainer === true),
       lmsEmployeeId: user.lmsEmployeeId || '',
       sharedLmsLogin: user.sharedLmsLogin !== false,
       password: '',
@@ -484,6 +488,14 @@ export default function AdminUsersPage() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Update failed');
         setUsers((prev) => prev.map((u) => (u.id === editing.id ? data.user : u)));
+        // The LMS views in this browser cache trainer rosters and employee
+        // training for a minute; drop them so they cannot repaint the role or
+        // trainer flag that was just changed.
+        clearLmsClientCache();
+        // Editing your own login: pull the new claims into this tab's session
+        // now, so the sidebar, page gating and role badge stop showing the
+        // designation you just changed away from.
+        if (editing.id === currentUserId) await refreshSession();
         setMessage(
           (form.password ? 'User updated and password reset' : 'User updated')
           + trainerSyncNote(data.trainerSync, form.isTrainer)
@@ -509,6 +521,7 @@ export default function AdminUsersPage() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Create failed');
         setUsers((prev) => [...prev, data.user].sort((a, b) => a.username.localeCompare(b.username)));
+        clearLmsClientCache();
         setMessage(
           `Created login for ${data.user.username}`
           + trainerSyncNote(data.trainerSync, form.isTrainer)
@@ -537,6 +550,7 @@ export default function AdminUsersPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Delete failed');
       setUsers((prev) => prev.filter((u) => u.id !== user.id));
+      clearLmsClientCache();
       setMessage(`Deleted ${user.username}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Delete failed');
@@ -912,10 +926,13 @@ export default function AdminUsersPage() {
                         onChange={(e) => {
                           const role = e.target.value as AppRole;
                           // The shared-password default belongs to the role, so
-                          // switching role re-applies it.
+                          // switching role re-applies it. The Trainer flag
+                          // follows the same rule the API enforces, so the form
+                          // never shows a Viewer still ticked as a trainer.
                           setForm((f) => ({
                             ...f,
                             role,
+                            isTrainer: resolveTrainerFlag(role, f.isTrainer),
                             sharedLmsLogin: defaultSharedLmsLogin(role),
                           }));
                         }}
@@ -1038,8 +1055,9 @@ export default function AdminUsersPage() {
                     <input
                       type="checkbox"
                       checked={form.isTrainer}
+                      disabled={form.role === 'trainer' || form.role === 'viewer'}
                       onChange={(e) => setForm((f) => ({ ...f, isTrainer: e.target.checked }))}
-                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-400"
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-400 disabled:opacity-50"
                     />
                     <span>
                       <span className="flex items-center gap-1.5 text-xs font-bold text-sky-900">
@@ -1048,6 +1066,8 @@ export default function AdminUsersPage() {
                       <span className="mt-0.5 block text-[11px] leading-relaxed text-sky-800/70">
                         Grants Trainer View in the LMS. Also sets the trainer flag on
                         this person&rsquo;s employee record.
+                        {form.role === 'trainer' && ' Always on for the Trainer role.'}
+                        {form.role === 'viewer' && ' Not available to a Viewer — change the role to grant it.'}
                       </span>
                     </span>
                   </label>

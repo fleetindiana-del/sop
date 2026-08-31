@@ -65,8 +65,18 @@ declare module "next-auth/jwt" {
   }
 }
 
-/** How long a token may serve cached access data before re-reading the user. */
-const ACCESS_SYNC_INTERVAL_MS = 60_000;
+/**
+ * How long a token may serve cached access data before re-reading the user.
+ *
+ * Kept short on purpose: a role change (Trainer -> Viewer, say) must reach the
+ * person it applies to, not only the admin screen that made it. The window only
+ * has to be long enough to collapse the burst of `getServerSession` calls one
+ * page render makes — anything longer leaves the old designation in force on
+ * their next request. Pair it with `refetchInterval` on the client
+ * `SessionProvider` (components/providers/AuthProvider.tsx), which is what
+ * rewrites the JWT cookie the middleware gates on.
+ */
+const ACCESS_SYNC_INTERVAL_MS = 5_000;
 
 export const authOptions: NextAuthOptions = {
   providers: [

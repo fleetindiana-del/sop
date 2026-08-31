@@ -33,7 +33,20 @@ interface FamilyBank {
   enQ: number;
   guQ: number;
   lastUpdated: Date | null;
-  banks: { id: string; language: string }[];
+  /**
+   * One entry per canonical language bank, each carrying its own counts. A row
+   * in the department modal opens ONE bank at a time, so the client needs the
+   * per-language figures — a combined total would never match the bank the
+   * reader actually lands on.
+   */
+  banks: {
+    id: string;
+    language: string;
+    totalQuestions: number;
+    checkedCount: number;
+    reviewedCount: number;
+    similarCount: number;
+  }[];
 }
 
 export async function GET(request: NextRequest) {
@@ -125,10 +138,22 @@ export async function GET(request: NextRequest) {
         e.similarQ += b.similarCount;
         if (mcqBankLangCode(b.language) === "GUJ") e.guQ += b.totalQuestions;
         else e.enQ += b.totalQuestions;
-        if (b._id) e.banks.push({ id: String(b._id), language: b.language ?? "English" });
+        if (b._id) {
+          e.banks.push({
+            id: String(b._id),
+            language: b.language ?? "English",
+            totalQuestions: b.totalQuestions,
+            checkedCount: b.checkedCount,
+            reviewedCount: b.reviewedCount,
+            similarCount: b.similarCount,
+          });
+        }
         const ts = b.updatedAt ? new Date(b.updatedAt) : null;
         if (ts && (!e.lastUpdated || ts > e.lastUpdated)) e.lastUpdated = ts;
       }
+      // English first, so the per-language counts and the language buttons read
+      // in the same order on every row.
+      e.banks.sort((a, b) => Number(mcqBankLangCode(a.language) === "GUJ") - Number(mcqBankLangCode(b.language) === "GUJ"));
       banksByFamily.set(fam, e);
     }
 

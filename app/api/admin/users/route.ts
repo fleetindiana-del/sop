@@ -8,6 +8,8 @@ import { isSharedLmsLogin, syncLmsPasswordFromUser } from "@/lib/lmsSharedLogin"
 import { isLearnerOnly } from "@/lib/page-access";
 import { serializeAssignedDepartments } from "@/lib/access-control";
 import { actorFromSession, logUserAudit } from "@/lib/audit-log";
+import { resolveTrainerFlag } from "@/lib/roles";
+import { invalidateUserAccessCaches } from "@/lib/userAccessCacheInvalidation";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
 
@@ -85,7 +87,9 @@ export async function POST(request: NextRequest) {
       body.departments !== undefined ? body.departments : body.department,
     );
     const designation = String(body.designation || "").trim() || undefined;
-    const isTrainer = body.isTrainer === true;
+    // The role decides trainer access for Trainer and Viewer; only an admin
+    // login keeps the checkbox as its own answer. See `resolveTrainerFlag`.
+    const isTrainer = resolveTrainerFlag(role, body.isTrainer === true);
     // Absent: fall back to the role default — learners keep a separate LMS
     // password on their Employee record, dashboard logins share one.
     const sharedLmsLogin =
@@ -145,6 +149,10 @@ export async function POST(request: NextRequest) {
     const lmsSync = sharedLmsLogin
       ? await syncLmsPasswordFromUser(user, password)
       : undefined;
+
+    // A new login can join the trainer directory, so the cached rosters and
+    // LMS views have to be rebuilt rather than wait out their TTL.
+    invalidateUserAccessCaches();
 
     return NextResponse.json(
       { success: true, user: toPublicUser(user), trainerSync: sync, lmsSync },
