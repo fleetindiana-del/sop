@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
       languageScope: job.languageScope ?? null,
       status,
       cancelRequested: Boolean(job.cancelRequested),
+      awaitingLocalWorker: Boolean(job.awaitingLocalWorker),
       phase: job.phase,
       percent: job.percent,
       languages: job.languages,

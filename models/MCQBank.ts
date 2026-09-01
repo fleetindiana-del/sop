@@ -22,6 +22,10 @@ export interface IMcqTranslation {
   options: string[];
   correctAnswer: string;
   explanation: string;
+  /** The master's `sopReference` in this language — clause numbers unchanged, the
+   *  clause title translated. Absent on translations made before it was captured;
+   *  readers fall back to the master's English reference. */
+  sopReference?: string;
   /** Model/provider that produced the translation, e.g. "codex:gpt-5.4-mini". */
   model: string;
   translatedAt: Date;
@@ -85,6 +89,9 @@ export interface IMCQBank extends Document {
   mcqs: IMCQ[];
   generatedAt: Date;
   totalQuestions: number;
+  /** How many masters carry a stored translation, per language. Denormalized like
+   *  `totalQuestions`: LMS counts must not walk `$mcqs` on Atlas (45s timeouts). */
+  translatedCounts?: Partial<Record<McqTranslationLang, number>>;
   difficultyDistribution: { easy: number; medium: number; hard: number };
   aiModel?: string;
   language?: "English" | "Gujarati";
@@ -112,6 +119,7 @@ const McqTranslationSchema = new Schema<IMcqTranslation>(
     },
     correctAnswer: { type: String, required: true },
     explanation: { type: String, default: "" },
+    sopReference: { type: String, default: "" },
     model: { type: String, default: "" },
     translatedAt: { type: Date, default: Date.now },
     isStale: { type: Boolean, default: false },
@@ -172,6 +180,7 @@ const MCQBankSchema = new Schema<IMCQBank>(
     },
     generatedAt: { type: Date, default: Date.now },
     totalQuestions: { type: Number, required: true },
+    translatedCounts: { type: Map, of: Number, default: undefined },
     difficultyDistribution: {
       easy: { type: Number, default: 0 },
       medium: { type: Number, default: 0 },

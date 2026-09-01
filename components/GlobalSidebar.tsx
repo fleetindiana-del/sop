@@ -195,9 +195,10 @@ export function GlobalSidebar() {
                         <Link
                           key={item.href}
                           href={item.href}
-                          onClick={() => {
-                            if (window.innerWidth < 1024) setOpen(false);
-                          }}
+                          // The sidebar overlays the page at every width, so it
+                          // collapses on navigation regardless of screen size —
+                          // otherwise it sits on top of the page just opened.
+                          onClick={() => setOpen(false)}
                           className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition ${
                             active
                               ? 'bg-violet-600 text-white shadow-sm'

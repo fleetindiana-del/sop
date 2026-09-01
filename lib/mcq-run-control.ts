@@ -2,8 +2,21 @@ import type { ChildProcess } from "child_process";
 import { normalizeSopIdentifierKey } from "@/lib/sopIdentifierNormalize";
 
 const cancelledKeys = new Set<string>();
-/** Child processes spawned by local CLI providers (e.g. Claude Code) — killed on cancel. */
-const subprocessProcs = new Map<string, ChildProcess>();
+/** Child processes spawned by local CLI providers (e.g. Claude Code) — killed on cancel.
+ *  A run can have several in flight at once (parallel translation batches), so every
+ *  live process is tracked, not just the most recent one. */
+const subprocessProcs = new Map<string, Set<ChildProcess>>();
+
+function killProcs(key: string): void {
+  for (const proc of subprocessProcs.get(key) ?? []) {
+    if (proc.killed) continue;
+    try {
+      proc.kill();
+    } catch {
+      /* ignore */
+    }
+  }
+}
 const runControllers = new Map<string, AbortController>();
 
 /** Canonical key so PRCL17-05 and PRCL17-5 share one run/cancel slot. */
@@ -24,8 +37,7 @@ export function endMcqRun(identifier: string): void {
   const key = mcqRunKey(identifier);
   cancelledKeys.delete(key);
   runControllers.delete(key);
-  const proc = subprocessProcs.get(key);
-  if (proc && !proc.killed) proc.kill();
+  killProcs(key);
   subprocessProcs.delete(key);
 }
 
@@ -34,14 +46,7 @@ export function requestMcqRunStop(identifier: string): void {
   const key = mcqRunKey(identifier);
   cancelledKeys.add(key);
   runControllers.get(key)?.abort();
-  const proc = subprocessProcs.get(key);
-  if (proc && !proc.killed) {
-    try {
-      proc.kill();
-    } catch {
-      /* ignore */
-    }
-  }
+  killProcs(key);
 }
 
 export function isMcqRunStopRequested(identifier: string): boolean {
@@ -58,11 +63,21 @@ export function isMcqRunActiveInProcess(identifier: string): boolean {
 }
 
 export function registerMcqSubprocess(identifier: string, proc: ChildProcess): void {
-  subprocessProcs.set(mcqRunKey(identifier), proc);
+  const key = mcqRunKey(identifier);
+  const set = subprocessProcs.get(key) ?? new Set<ChildProcess>();
+  set.add(proc);
+  subprocessProcs.set(key, set);
 }
 
-export function unregisterMcqSubprocess(identifier: string): void {
-  subprocessProcs.delete(mcqRunKey(identifier));
+export function unregisterMcqSubprocess(identifier: string, proc?: ChildProcess): void {
+  const key = mcqRunKey(identifier);
+  const set = subprocessProcs.get(key);
+  if (!set) return;
+  // Without a handle the caller cannot say which sibling finished; only clear the
+  // slot when it is the last one, so a parallel batch is never untracked early.
+  if (proc) set.delete(proc);
+  else if (set.size <= 1) set.clear();
+  if (set.size === 0) subprocessProcs.delete(key);
 }
 
 /** @deprecated Use registerMcqSubprocess */

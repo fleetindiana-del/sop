@@ -5,6 +5,7 @@ import {
   BookOpen,
   CheckCircle2,
   Edit2,
+  Languages,
   Loader2,
   MessageSquare,
   Paperclip,
@@ -14,6 +15,15 @@ import {
   Star,
   X,
 } from "lucide-react";
+
+interface McqTranslation {
+  question: string;
+  options: string[];
+  correctAnswer: string;
+  explanation?: string;
+  sopReference?: string;
+  isStale?: boolean;
+}
 
 interface MCQ {
   question: string;
@@ -27,6 +37,7 @@ interface MCQ {
   isSimilar?: boolean;
   fromAnnexure?: boolean;
   isCreative?: boolean;
+  translations?: Record<string, McqTranslation | undefined>;
 }
 
 function isAnnexureMcq(mcq: Pick<MCQ, "fromAnnexure" | "question">): boolean {
@@ -51,6 +62,9 @@ interface QuestionAnalyticsModalProps {
   index: number;
   bankId: string;
   sopIdentifier: string;
+  /** Language the viewer is showing. "GU" renders this question's Gujarati
+   *  translation — the same question, not a different one. */
+  lang?: "EN" | "GU";
   onClose: () => void;
   onUpdated: (idx: number, patch: Partial<MCQ>) => void;
 }
@@ -62,8 +76,24 @@ const DIFF_BADGE: Record<string, string> = {
 };
 
 export function QuestionAnalyticsModal({
-  mcq, index, bankId, sopIdentifier, onClose, onUpdated,
+  mcq, index, bankId, sopIdentifier, lang = "EN", onClose, onUpdated,
 }: QuestionAnalyticsModalProps) {
+  // What the reader sees. Editing always targets the English master (that is what
+  // /api/mcq-bank/edit-question writes), so edit mode drops back to `mcq`.
+  const gu = mcq.translations?.gu;
+  const showGu = lang === "GU" && !!gu;
+  const view = showGu
+    ? {
+        question: gu!.question,
+        options: gu!.options,
+        correctAnswer: gu!.correctAnswer,
+        // A translation made before sopReference was captured has none — the
+        // master's English clause reference is better than an empty panel.
+        explanation: gu!.explanation || mcq.explanation,
+        sopReference: gu!.sopReference || mcq.sopReference,
+      }
+    : mcq;
+
   const [editMode, setEditMode] = useState(false);
   const [editDraft, setEditDraft] = useState<{
     question: string; options: string[]; correctAnswer: string; explanation: string;
@@ -124,7 +154,7 @@ export function QuestionAnalyticsModal({
     }
   }
 
-  const options = editMode && editDraft ? editDraft.options : mcq.options;
+  const options = editMode && editDraft ? editDraft.options : view.options;
 
   return (
     <div
@@ -183,6 +213,15 @@ export function QuestionAnalyticsModal({
                   Annexure
                 </span>
               )}
+              {showGu && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-indigo-700"
+                  title="Showing this question's Gujarati translation"
+                >
+                  <Languages className="h-3.5 w-3.5" />
+                  ગુજરાતી
+                </span>
+              )}
               {isCreativeMcq(mcq) && (
                 <span
                   className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-violet-700"
@@ -221,6 +260,13 @@ export function QuestionAnalyticsModal({
             )}
           </div>
 
+          {showGu && editMode && (
+            <p className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-2.5 text-[11px] font-medium text-indigo-700">
+              Editing the English master. The Gujarati translation is re-made from it — regenerate the
+              Gujarati translations after saving so the two stay in step.
+            </p>
+          )}
+
           {/* Question text */}
           <div className="space-y-2">
             <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em] ml-1">Question</h4>
@@ -235,7 +281,7 @@ export function QuestionAnalyticsModal({
             ) : (
               <h3 className="text-2xl font-bold text-gray-800 leading-tight tracking-tight flex items-start gap-2">
                 <Star className="h-6 w-6 text-amber-400 fill-amber-400 shrink-0 mt-0.5" />
-                {mcq.question}
+                {view.question}
               </h3>
             )}
           </div>
@@ -250,7 +296,7 @@ export function QuestionAnalyticsModal({
                 const label = String.fromCharCode(65 + oi);
                 const isCorrect = editMode && editDraft
                   ? editDraft.correctAnswer === option || editDraft.correctAnswer === label
-                  : option === mcq.correctAnswer;
+                  : option === view.correctAnswer;
 
                 return (
                   <div
@@ -337,7 +383,7 @@ export function QuestionAnalyticsModal({
                   />
                 ) : (
                   <p className="text-sm text-gray-600 leading-relaxed">
-                    {mcq.explanation ?? "No explanation provided for this question unit."}
+                    {view.explanation ?? "No explanation provided for this question unit."}
                   </p>
                 )}
               </div>
@@ -348,7 +394,7 @@ export function QuestionAnalyticsModal({
               </h4>
               <div className="bg-blue-50 p-4 rounded-[24px] border border-blue-100 shadow-inner italic min-h-[80px]">
                 <p className="text-sm text-blue-600 leading-relaxed">
-                  &quot;{mcq.sopReference ?? "Direct reference content is being indexed…"}&quot;
+                  &quot;{view.sopReference ?? "Direct reference content is being indexed…"}&quot;
                 </p>
               </div>
             </div>

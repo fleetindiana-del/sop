@@ -66,10 +66,12 @@ import {
 } from "@/lib/mcq-generation-config";
 import {
   TRANSLATION_BATCH_SIZE,
+  TRANSLATION_CONCURRENCY,
   ensureBankMcqIds,
   saveBankTranslations,
   toMasterMcqs,
   translateMcqBatch,
+  type MasterMcq,
 } from "@/lib/mcqTranslation";
 import { generateForLanguageFactBased } from "@/lib/mcq-fact-generation";
 import { normalizeKnowledgeFactId } from "@/lib/mcq-facts";
@@ -1164,7 +1166,8 @@ function representativesByLanguage(sops: ISOP[]): Map<"English" | "Gujarati", IS
  */
 async function translateEnglishBankToGujarati(
   identifier: string,
-  onProgress: (phase: string) => Promise<void>,
+  onProgress: (progress: { translated: number; total: number }) => Promise<void>,
+  mode: McqGenMode = "generate",
 ): Promise<void> {
   const bankRef = await MCQBank.findOne({
     sopIdentifier: escapeId(identifier),
@@ -1190,61 +1193,105 @@ async function translateEnglishBankToGujarati(
 
   await ensureBankMcqIds(bankId);
   const fresh = await MCQBank.findOne({ _id: bankRef._id }).select("mcqs").lean();
-  const masters = toMasterMcqs(
-    (fresh?.mcqs ?? []) as Parameters<typeof toMasterMcqs>[0],
-    "gu",
-  );
+  // "Regenerate" means redo the Gujarati, not fill gaps in it. Without this the
+  // pass skips every question that already has a translation, so a regenerate on
+  // a fully translated bank does nothing at all and reports success.
+  const redoAll = mode === "regenerate";
+  const bankMcqs = (fresh?.mcqs ?? []) as Parameters<typeof toMasterMcqs>[0];
+  // Progress is reported against every translatable question, not just the ones
+  // this pass has work for — otherwise a bank that is already translated shows
+  // 0/100 instead of the 100 translations it actually has.
+  const total = toMasterMcqs(bankMcqs, "gu", { includeTranslated: true }).length;
+  const masters = redoAll ? toMasterMcqs(bankMcqs, "gu", { includeTranslated: true }) : toMasterMcqs(bankMcqs, "gu");
+  const alreadyTranslated = redoAll ? 0 : total - masters.length;
   if (!masters.length) {
-    await pushLog(identifier, "Gujarati · every English question already has a translation");
+    await pushLog(
+      identifier,
+      `Gujarati · every English question already has a translation (${total}/${total})`,
+    );
+    await onProgress({ translated: total, total });
     return;
   }
+  if (redoAll) {
+    await pushLog(identifier, `Gujarati · regenerate — re-translating all ${masters.length} question(s)`);
+  }
 
-  await pushLog(identifier, `Gujarati · translating ${masters.length} English question(s)`);
+  const batches: MasterMcq[][] = [];
+  for (let i = 0; i < masters.length; i += TRANSLATION_BATCH_SIZE) {
+    batches.push(masters.slice(i, i + TRANSLATION_BATCH_SIZE));
+  }
+  const lanes = Math.max(1, Math.min(TRANSLATION_CONCURRENCY, batches.length));
+
+  await pushLog(
+    identifier,
+    `Gujarati · translating ${masters.length} English question(s) — ` +
+      `${batches.length} batch(es) of ${TRANSLATION_BATCH_SIZE}, ${lanes} in parallel`,
+  );
+  await onProgress({ translated: alreadyTranslated, total });
+
   let translated = 0;
   let rejected = 0;
+  let cancelled = false;
+  let next = 0;
 
-  for (let i = 0; i < masters.length; i += TRANSLATION_BATCH_SIZE) {
-    if (await isMcqGenerationCancelled(identifier)) {
-      await pushLog(identifier, `Gujarati · stop requested — halting at ${translated} translated`);
-      throw new McqGenerationCancelledError();
-    }
-    const batch = masters.slice(i, i + TRANSLATION_BATCH_SIZE);
-    try {
-      const { translations, failures } = await translateMcqBatch(batch, {
-        lang: "gu",
-        runKey: identifier,
-        signal: getMcqRunSignal(identifier),
-      });
-
-      // A rejected question gets one solo retry — a bad batch is usually one
-      // question confusing the model, not all of them.
-      for (const failure of failures) {
-        const master = batch.find((m) => m.mcqId === failure.mcqId);
-        if (!master) continue;
-        const retry = await translateMcqBatch([master], {
+  // Each batch is its own `codex exec`, so they overlap instead of queueing. Writes
+  // touch disjoint `mcqs.<i>.translations.gu` paths, making concurrent saves safe.
+  const runLane = async (): Promise<void> => {
+    for (;;) {
+      const batch = batches[next++];
+      if (!batch || cancelled) return;
+      if (await isMcqGenerationCancelled(identifier)) {
+        cancelled = true;
+        return;
+      }
+      try {
+        const { translations, failures } = await translateMcqBatch(batch, {
           lang: "gu",
           runKey: identifier,
           signal: getMcqRunSignal(identifier),
         });
-        const one = retry.translations.get(master.mcqId);
-        if (one) translations.set(master.mcqId, one);
-        else rejected += 1;
-      }
 
-      translated += await saveBankTranslations(bankId, "gu", translations);
-    } catch (error) {
-      rejected += batch.length;
-      await pushLog(
-        identifier,
-        `Gujarati · translation batch failed — ${error instanceof Error ? error.message : String(error)}`,
-      );
+        // A rejected question gets one solo retry — a bad batch is usually one
+        // question confusing the model, not all of them.
+        for (const failure of failures) {
+          const master = batch.find((m) => m.mcqId === failure.mcqId);
+          if (!master || cancelled) continue;
+          const retry = await translateMcqBatch([master], {
+            lang: "gu",
+            runKey: identifier,
+            signal: getMcqRunSignal(identifier),
+          });
+          const one = retry.translations.get(master.mcqId);
+          if (one) translations.set(master.mcqId, one);
+          else rejected += 1;
+        }
+
+        // Read-then-add across an await would lose a sibling lane's increment
+        // (`x += await f()` reads x before suspending) — resolve first, add after.
+        const saved = await saveBankTranslations(bankId, "gu", translations);
+        translated += saved;
+      } catch (error) {
+        rejected += batch.length;
+        await pushLog(
+          identifier,
+          `Gujarati · translation batch failed — ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      await onProgress({ translated: alreadyTranslated + translated, total });
     }
-    await onProgress(`Translating Gujarati · ${translated}/${masters.length}`);
+  };
+
+  await Promise.all(Array.from({ length: lanes }, runLane));
+
+  if (cancelled) {
+    await pushLog(identifier, `Gujarati · stop requested — halting at ${translated} translated`);
+    throw new McqGenerationCancelledError();
   }
 
   await pushLog(
     identifier,
-    `Gujarati · translation complete — ${translated}/${masters.length} translated` +
+    `Gujarati · translation complete — ${translated}/${masters.length} translated this run ` +
+      `(bank now ${alreadyTranslated + translated}/${total})` +
       (rejected ? `, ${rejected} rejected by the equivalence guards` : ""),
   );
 }
@@ -1643,10 +1690,36 @@ export async function runMcqGeneration(
     }
 
     if (translateGujarati) {
+      // Translations live on the English bank's masters, so there is no Gujarati
+      // bank for activeBankCount to see. Give the pass its own progress row and
+      // count translated questions into it — otherwise the modal shows GUJ 0/100
+      // and a 0% bar for the whole run even while questions are landing.
+      const guProgress: IMcqGenLangProgress = langProgress.find((lp) => lp.language === "Gujarati") ?? {
+        language: "Gujarati",
+        status: "running",
+        batchesDone: 0,
+        batchesTotal: 0,
+        collected: 0,
+        target: MCQ_BANK_CAP,
+        inserted: 0,
+        skipped: 0,
+      };
+      if (!langProgress.includes(guProgress)) langProgress.push(guProgress);
+      guProgress.status = "running";
+
       await persist({ phase: "Translating English bank into Gujarati…" });
-      await translateEnglishBankToGujarati(identifier, async (phase) => {
-        await persist({ phase });
-      });
+      await translateEnglishBankToGujarati(
+        identifier,
+        async ({ translated, total }) => {
+          guProgress.collected = translated;
+          guProgress.inserted = translated;
+          guProgress.target = total || MCQ_BANK_CAP;
+          await persist({ phase: `Translating Gujarati · ${translated}/${total}` });
+        },
+        mode,
+      );
+      guProgress.status = "done";
+      await persist();
     }
 
     await SOP.updateMany({ _id: { $in: sopIds } }, { pipelineStatus: "updating_platform" });
@@ -1655,11 +1728,20 @@ export async function runMcqGeneration(
       { pipelineStatus: "approved", status: "completed" },
     );
 
+    // A Gujarati-only run generates nothing by design — it only translates the
+    // English bank. Reporting it through the generation wording ("creative fill
+    // could not add unique questions") reads as a failure when the bank is in
+    // fact fully translated.
+    const translationOnly = !eligible.length && translateGujarati;
+    const guRow = langProgress.find((lp) => lp.language === "Gujarati");
+
     await updateMcqGenJob(identifier, {
       status: "completed",
       phase:
         totalApproved === 0 && ctx.failedBatches > 0
           ? `Finished with errors — 0 MCQs added (${ctx.failedBatches} batch error${ctx.failedBatches === 1 ? "" : "s"}). Try Continue.`
+          : translationOnly
+            ? `Done — Gujarati translations up to date (${guRow?.collected ?? 0}/${guRow?.target ?? 0})`
           : totalApproved === 0 && langProgress.some((lp) => lp.collected < MCQ_BANK_CAP)
             ? `Done — ${langProgress.map((lp) => `${lp.collected}/${MCQ_BANK_CAP}`).join(", ")} — creative fill could not add unique questions`
             : langProgress.some((lp) => lp.collected < MCQ_BANK_CAP)

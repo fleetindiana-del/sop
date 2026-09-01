@@ -15,7 +15,7 @@ export async function GET() {
       cancelRequested: { $ne: true },
     })
       .select(
-        "identifier mode languageScope status phase percent languages totalInserted totalSkipped totalFailedBatches logs startedAt",
+        "identifier mode languageScope status phase percent languages totalInserted totalSkipped totalFailedBatches logs startedAt awaitingLocalWorker",
       )
       .sort({ startedAt: -1 })
       .lean();
@@ -34,6 +34,9 @@ export async function GET() {
         totalFailedBatches: j.totalFailedBatches,
         logs: j.logs ?? [],
         startedAt: j.startedAt,
+        // A queued job has not started: it is waiting for a local Codex worker.
+        // The UI must not paint that as an active run stuck at 0%.
+        awaitingLocalWorker: Boolean(j.awaitingLocalWorker),
       })),
     });
   } catch (error) {

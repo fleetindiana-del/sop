@@ -14,6 +14,7 @@ import {
   findObsoleteMcqFamilies,
   mcqBankLangCode,
   mcqFamilyComplete,
+  guTranslatedProjection,
   mcqResolveDept,
   selectCanonicalBanksByLang,
 } from "@/lib/mcq-bank-utils";
@@ -34,6 +35,14 @@ type RawBank = {
   easyCount: number;
   mediumCount: number;
   hardCount: number;
+  /** Questions on this (English) bank that carry a Gujarati translation. */
+  guTranslatedCount: number;
+  guTranslatedChecked: number;
+  guTranslatedReviewed: number;
+  guTranslatedSimilar: number;
+  guTranslatedEasy: number;
+  guTranslatedMedium: number;
+  guTranslatedHard: number;
   updatedAt?: Date;
   annexureUsage?: {
     linkedCount?: number;
@@ -71,6 +80,9 @@ type RegistryEntry = {
   hasGuMcq: boolean;
   enMcqCount: number;
   guMcqCount: number;
+  /** The Gujarati count comes from translations on the English masters, so it opens
+   *  the English bank in Gujarati view rather than a Gujarati bank of its own. */
+  guFromTranslations: boolean;
   isObsoleteMcq?: boolean;
   /** Count of annexure files linked to this SOP family — the MCQ generation
    *  pipeline folds their extracted text into the prompt when > 0. */
@@ -100,6 +112,9 @@ interface FamilyBank {
   guReviewed: number;
   enSimilar: number;
   guSimilar: number;
+  /** True when guQ counts translations carried on the English masters rather than
+   *  a standalone Gujarati bank — the count has no bank of its own to open. */
+  guFromTranslations: boolean;
   lastUpdated: Date | null;
   banks: { id: string; langCode: "ENG" | "GUJ" }[];
   /** Highest annexure-included count any of the family's banks recorded at
@@ -134,6 +149,7 @@ const bankProject = {
   hardCount: {
     $size: { $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.difficulty", "Hard"] } } },
   },
+  ...guTranslatedProjection,
   annexureUsage: 1,
 };
 
@@ -159,9 +175,13 @@ function foldBanks(
       easyQ: 0, mediumQ: 0, hardQ: 0,
       enQ: 0, guQ: 0,
       enChecked: 0, guChecked: 0, enReviewed: 0, guReviewed: 0, enSimilar: 0, guSimilar: 0,
+      guFromTranslations: false,
       lastUpdated: null, banks: [],
       annexuresIncluded: 0, annexureLabels: [],
     };
+    // Gujarati translations carried on the English masters — they stand in for a
+    // Gujarati bank only when the family has none (see the fold after this loop).
+    const gt = { q: 0, checked: 0, reviewed: 0, similar: 0, easy: 0, medium: 0, hard: 0 };
     for (const b of canonical) {
       e.totalQ += b.totalQuestions;
       e.checkedQ += b.checkedCount;
@@ -181,6 +201,13 @@ function foldBanks(
         e.enChecked += b.checkedCount;
         e.enReviewed += b.reviewedCount;
         e.enSimilar += b.similarCount;
+        gt.q += b.guTranslatedCount ?? 0;
+        gt.checked += b.guTranslatedChecked ?? 0;
+        gt.reviewed += b.guTranslatedReviewed ?? 0;
+        gt.similar += b.guTranslatedSimilar ?? 0;
+        gt.easy += b.guTranslatedEasy ?? 0;
+        gt.medium += b.guTranslatedMedium ?? 0;
+        gt.hard += b.guTranslatedHard ?? 0;
       }
       if (b._id) e.banks.push({ id: String(b._id), langCode });
       const included = b.annexureUsage?.includedCount ?? 0;
@@ -190,6 +217,23 @@ function foldBanks(
       }
       const ts = b.updatedAt ? new Date(b.updatedAt) : null;
       if (ts && (!e.lastUpdated || ts > e.lastUpdated)) e.lastUpdated = ts;
+    }
+    // A translated question carries its master's review state — it is the same
+    // question — so the counts mirror across. A real Gujarati bank always wins,
+    // which keeps a translated-and-banked family from being counted twice.
+    if (e.guQ === 0 && gt.q > 0) {
+      e.guQ = gt.q;
+      e.guChecked = gt.checked;
+      e.guReviewed = gt.reviewed;
+      e.guSimilar = gt.similar;
+      e.guFromTranslations = true;
+      e.totalQ += gt.q;
+      e.checkedQ += gt.checked;
+      e.reviewedQ += gt.reviewed;
+      e.similarQ += gt.similar;
+      e.easyQ += gt.easy;
+      e.mediumQ += gt.medium;
+      e.hardQ += gt.hard;
     }
     banksByFamily.set(fam, e);
   }
@@ -246,6 +290,7 @@ function toEntry(
     hasGuMcq: guQ > 0,
     enMcqCount: enQ,
     guMcqCount: guQ,
+    guFromTranslations: needsGu && guQ > 0 && (bank?.guFromTranslations ?? false),
     isObsoleteMcq,
     annexureCount,
     // Live linked count vs. what generation recorded: annexures linked after the
@@ -345,6 +390,7 @@ async function buildFullRegistry() {
         guReviewed: 0,
         enSimilar: fam.similarQ,
         guSimilar: 0,
+        guFromTranslations: fam.guFromTranslations,
         lastUpdated: fam.lastUpdated,
         banks: fam.banks,
         annexuresIncluded: 0,

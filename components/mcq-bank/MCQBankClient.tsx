@@ -9,6 +9,7 @@ import {
   Bot,
   CheckCircle2,
   ChevronDown,
+  Clock,
   Copy,
   Cpu,
   Eye,
@@ -122,6 +123,8 @@ interface RegistryEntry {
   hasGuMcq: boolean;
   enMcqCount: number;
   guMcqCount: number;
+  /** Gujarati count comes from translations on the English masters. */
+  guFromTranslations?: boolean;
   isObsoleteMcq?: boolean;
   /** Count of annexure files linked to this SOP family — included in MCQ
    *  generation prompts when > 0. */
@@ -570,6 +573,11 @@ interface LangGenProgress {
 
 interface GenProgress {
   status: "generating" | "completed" | "error" | "cancelled";
+  /** Job row exists but no worker has claimed it — nothing is being generated yet.
+   *  Shown as "Queued" rather than a run sitting at 0%, which reads as a stall. */
+  queued?: boolean;
+  /** Queued specifically for the local Codex worker (Vercel cannot run that CLI). */
+  awaitingLocalWorker?: boolean;
   mode?: "generate" | "regenerate" | "continue";
   languageScope?: McqLang;
   phase?: string;
@@ -632,6 +640,10 @@ function McqGenProgressModal({
     ? progress.languageScope === "Gujarati" ? "Gujarati" : "English"
     : langs.length > 1 ? "English & Gujarati" : langs[0]?.language ?? "MCQ";
 
+  // Queued is not "running at 0%" — no worker has claimed the job, so a spinner
+  // and an empty counter read as a stalled run when nothing has begun.
+  const isQueued = Boolean(progress.queued) && !isDone && !isError && !isCancelled;
+
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]">
       <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5">
@@ -658,7 +670,9 @@ function McqGenProgressModal({
                         ? "Generation Stopped"
                         : isError
                           ? "Generation Failed"
-                          : `${genModeLabel(progress.mode)} MCQs`}
+                          : isQueued
+                            ? "Queued — Not Started Yet"
+                            : `${genModeLabel(progress.mode)} MCQs`}
                 </h3>
               </div>
               <p className={`mt-1 font-mono text-[13px] font-bold tracking-wider ${isDone || isError || isCancelled ? "text-purple-700" : "text-white/90"}`}>
@@ -686,12 +700,24 @@ function McqGenProgressModal({
         </div>
 
         <div className="px-6 py-5 space-y-5">
+          {isQueued && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-xs font-bold text-amber-800">
+                Nothing is generating yet — this job is waiting in the queue.
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-amber-700">
+                {progress.awaitingLocalWorker
+                  ? "Codex MCQs cannot run on the server. Start the local worker (npm run mcq:worker, with codex login) pointed at the same database, and queued jobs are claimed oldest-first."
+                  : "The job is queued and will start shortly."}
+              </p>
+            </div>
+          )}
           {!isError && !isCancelled && (
             <>
               {/* Main counter */}
               <div className="text-center">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
-                  {isDone ? "Created" : "Creating"} · {scopeLabel}
+                  {isDone ? "Created" : isQueued ? "Queued" : "Creating"} · {scopeLabel}
                 </p>
                 <p className="mt-1 tabular-nums">
                   <span className="text-4xl font-black text-gray-900">{fmt(totalInBank)}</span>
@@ -878,26 +904,36 @@ function McqGenProgressToast({
               onClick={() => onOpen(entry)}
               className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-violet-50/80"
             >
-              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-violet-600" />
+              {progress.queued ? (
+                <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              ) : (
+                <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-violet-600" />
+              )}
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-violet-700">
-                  Generation in progress
+                <p className={`text-[11px] font-bold uppercase tracking-wide ${progress.queued ? "text-amber-700" : "text-violet-700"}`}>
+                  {progress.queued ? "Queued — not started" : "Generation in progress"}
                 </p>
                 <p className="truncate text-xs font-semibold text-gray-800">{sopCode}</p>
                 <p className="mt-0.5 truncate text-[10px] text-gray-500">
-                  {progress.phase ?? "Running…"} · stops at {MCQ_BANK_CAP} MCQs
+                  {progress.queued
+                    ? progress.awaitingLocalWorker
+                      ? "Waiting for the local Codex worker"
+                      : "Waiting to start"
+                    : `${progress.phase ?? "Running…"} · stops at ${MCQ_BANK_CAP} MCQs`}
                 </p>
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-violet-100">
-                    <div
-                      className="h-full rounded-full bg-violet-600 transition-all duration-500"
-                      style={{ width: `${Math.min(100, barPercent)}%` }}
-                    />
+                {!progress.queued && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-violet-100">
+                      <div
+                        className="h-full rounded-full bg-violet-600 transition-all duration-500"
+                        style={{ width: `${Math.min(100, barPercent)}%` }}
+                      />
+                    </div>
+                    <span className="shrink-0 text-[10px] font-bold tabular-nums text-violet-700">
+                      {totalInBank}/{totalTarget}
+                    </span>
                   </div>
-                  <span className="shrink-0 text-[10px] font-bold tabular-nums text-violet-700">
-                    {totalInBank}/{totalTarget}
-                  </span>
-                </div>
+                )}
               </div>
             </button>
           </div>
@@ -1181,12 +1217,15 @@ function McqCountLink({
   onView,
   colorClass,
   title,
+  viewLang,
 }: {
   count: number;
   bankId?: string;
-  onView?: (id: string) => void;
+  onView?: (id: string, lang?: "EN" | "GU") => void;
   colorClass: string;
   title?: string;
+  /** Language to open the bank in — "GU" for a count made of translations. */
+  viewLang?: "EN" | "GU";
 }) {
   const hasCount = count > 0;
   const display = hasCount ? fmt(count) : "—";
@@ -1203,7 +1242,7 @@ function McqCountLink({
   return (
     <button
       type="button"
-      onClick={() => onView!(bankId!)}
+      onClick={() => onView!(bankId!, viewLang)}
       title={title ?? "View MCQs"}
       className={`text-[11px] font-bold ${colorClass} cursor-pointer underline-offset-2 hover:underline transition-colors`}
     >
@@ -1286,7 +1325,7 @@ function RegistryRow({
   entry, isEven, onViewMcqs, onGenerate, onRegenerate, onContinue, onDeleteRequest, onOpenProgress, onStop, onAnnexureSwap, annexureSwapLang, genStatus,
 }: {
   entry: RegistryEntry; isEven: boolean;
-  onViewMcqs?: (id: string) => void;
+  onViewMcqs?: (id: string, lang?: "EN" | "GU") => void;
   onGenerate?: (entry: RegistryEntry, language?: McqLang) => void;
   onRegenerate?: (entry: RegistryEntry, language?: McqLang) => void;
   onContinue?: (entry: RegistryEntry, language?: McqLang) => void;
@@ -1394,10 +1433,15 @@ function RegistryRow({
       <td className="px-3 py-2.5 text-center whitespace-nowrap">
         <McqCountLink
           count={needsGu ? entry.guMcqCount : 0}
-          bankId={guBankId}
+          bankId={guBankId ?? (entry.guFromTranslations ? enBankId : undefined)}
+          viewLang="GU"
           onView={onViewMcqs}
           colorClass="text-indigo-700"
-          title="View Gujarati MCQs"
+          title={
+            entry.guFromTranslations
+              ? "View Gujarati MCQs (translations of the English bank)"
+              : "View Gujarati MCQs"
+          }
         />
       </td>
       <td className="px-3 py-2.5 text-center whitespace-nowrap">
@@ -1559,7 +1603,13 @@ export function MCQBankClient() {
   const userIsAdmin = isAdmin((session?.user?.role ?? "viewer") as AppRole);
 
   // Modal state
-  const [viewerBankId, setViewerBankId] = useState<string | null>(null);
+  // The bank to open, plus which language to land on. A family whose Gujarati set
+  // lives as translations on the English masters opens that same English bank, so
+  // the language has to travel with the id.
+  const [viewerBank, setViewerBank] = useState<{ id: string; lang: "EN" | "GU" } | null>(null);
+  const viewerBankId = viewerBank?.id ?? null;
+  const setViewerBankId = (id: string | null, lang: "EN" | "GU" = "EN") =>
+    setViewerBank(id ? { id, lang } : null);
   // Department folder modal (opened by clicking a department capsule/card)
   const [modalDept, setModalDept] = useState<string | null>(null);
 
@@ -1638,6 +1688,8 @@ export function MCQBankClient() {
     languages?: GenProgress["languages"];
     logs?: string[];
     startedAt?: string;
+    status?: string;
+    awaitingLocalWorker?: boolean;
   }>>([]);
   const runStartedAtRef = useRef<Record<string, number>>({});
   const [genStopping, setGenStopping] = useState(false);
@@ -1859,6 +1911,8 @@ export function MCQBankClient() {
             ...s,
             [entry.id]: {
               status: "generating",
+              queued: effectiveStatus === "queued",
+              awaitingLocalWorker: Boolean(d.awaitingLocalWorker),
               mode: d.mode,
               languageScope: d.languageScope,
               phase: d.phase,
@@ -1939,9 +1993,11 @@ export function MCQBankClient() {
         ...s,
         [entry.id]: {
           status: "generating",
+          queued: job.status === "queued",
+          awaitingLocalWorker: Boolean(job.awaitingLocalWorker),
           mode: job.mode,
           languageScope: job.languageScope,
-          phase: job.phase ?? "Running…",
+          phase: job.phase ?? (job.status === "queued" ? "Queued…" : "Running…"),
           percent: job.percent ?? 0,
           totalInserted: job.totalInserted,
           totalSkipped: job.totalSkipped,
@@ -2720,9 +2776,10 @@ export function MCQBankClient() {
       )}
 
       {/* MCQ Viewer Modal */}
-      {viewerBankId && (
+      {viewerBank && (
         <MCQViewerModal
-          bankId={viewerBankId}
+          bankId={viewerBank.id}
+          initialLang={viewerBank.lang}
           onClose={() => setViewerBankId(null)}
           onBack={() => setViewerBankId(null)}
         />
@@ -3199,7 +3256,7 @@ export function MCQBankClient() {
                         key={entry.id || `${entry.identifier}||${entry.language}`}
                         entry={entry}
                         isEven={idx % 2 === 0}
-                        onViewMcqs={(id) => setViewerBankId(id)}
+                        onViewMcqs={(id, lang) => setViewerBankId(id, lang)}
                         onGenerate={handleGenerate}
                         onRegenerate={requestRegenerate}
                         onContinue={handleContinue}

@@ -15,6 +15,11 @@ export const LANG_LABEL: Record<McqTranslationLang, string> = {
  *  model's reliable-JSON window, large enough to keep the run cheap. */
 export const TRANSLATION_BATCH_SIZE = Number(process.env.MCQ_TRANSLATION_BATCH_SIZE) || 8;
 
+/** How many translation batches run at once. Each batch is an independent `codex
+ *  exec` process, so the wall-clock cost of a 100-MCQ bank drops by roughly this
+ *  factor. Kept modest so a local worker does not exhaust its Codex rate limit. */
+export const TRANSLATION_CONCURRENCY = Number(process.env.MCQ_TRANSLATION_CONCURRENCY) || 4;
+
 /** The master MCQ fields a translation is derived from. */
 export interface MasterMcq {
   mcqId: string;
@@ -23,6 +28,8 @@ export interface MasterMcq {
   /** Option TEXT (bank convention), not a letter. */
   correctAnswer: string;
   explanation?: string;
+  /** Clause the question is grounded in — translated for display alongside it. */
+  sopReference?: string;
 }
 
 export interface TranslationFailure {
@@ -90,6 +97,7 @@ export interface CandidateTranslation {
   question: string;
   options: string[];
   explanation?: string;
+  sopReference?: string;
 }
 
 /**
@@ -163,6 +171,9 @@ export function buildTranslation(
       // Correct-by-construction: same position as the master's correct option.
       correctAnswer: options[correctIdx],
       explanation: (candidate.explanation ?? "").trim(),
+      // Falls back to the master reference so the field is never empty — a clause
+      // id with no title translates to itself.
+      sopReference: (candidate.sopReference ?? "").trim() || (master.sopReference ?? ""),
       model,
       translatedAt: new Date(),
       isStale: false,
@@ -195,14 +206,17 @@ function buildUserPrompt(batch: MasterMcq[], lang: McqTranslationLang): string {
     question: m.question,
     options: m.options,
     explanation: m.explanation ?? "",
+    sopReference: m.sopReference ?? "",
   }));
 
   return `Translate each question below into ${LANG_LABEL[lang]}.
 
 Return ONLY this JSON shape:
-{"translations":[{"id":"<same id>","question":"<translated>","options":["<opt1>","<opt2>","<opt3>","<opt4>"],"explanation":"<translated explanation>"}]}
+{"translations":[{"id":"<same id>","question":"<translated>","options":["<opt1>","<opt2>","<opt3>","<opt4>"],"explanation":"<translated explanation>","sopReference":"<translated clause reference>"}]}
 
 Return one entry per input id, with options in the SAME ORDER as the input.
+For sopReference, keep every clause number and SOP code exactly as given and translate
+only the wording around them. Return "" when the input sopReference is empty.
 
 INPUT:
 ${JSON.stringify({ questions: items }, null, 2)}`;
@@ -213,6 +227,7 @@ interface RawTranslationRow {
   question?: unknown;
   options?: unknown;
   explanation?: unknown;
+  sopReference?: unknown;
 }
 
 function parseTranslationJson(text: string): RawTranslationRow[] {
@@ -275,6 +290,7 @@ export async function translateMcqBatch(
         question: String(row.question ?? ""),
         options: Array.isArray(row.options) ? row.options.map((o) => String(o ?? "")) : [],
         explanation: row.explanation === undefined ? "" : String(row.explanation),
+        sopReference: row.sopReference === undefined ? "" : String(row.sopReference),
       },
       lang,
       `codex:${model}`,
@@ -336,15 +352,24 @@ export async function saveBankTranslations(
   if (!bank || !Array.isArray(bank.mcqs)) return 0;
 
   const set: Record<string, unknown> = {};
-  bank.mcqs.forEach((m: { mcqId?: string }, i: number) => {
+  let added = 0;
+  bank.mcqs.forEach((m: { mcqId?: string; translations?: Record<string, unknown> }, i: number) => {
     const t = m?.mcqId ? translations.get(m.mcqId) : undefined;
-    if (t) set[`mcqs.${i}.translations.${lang}`] = t;
+    if (!t) return;
+    set[`mcqs.${i}.translations.${lang}`] = t;
+    // Newly translated only — re-translating a stale one must not double-count.
+    if (!m?.translations?.[lang]) added += 1;
   });
 
   const count = Object.keys(set).length;
   if (count > 0) {
     set.updatedAt = new Date();
-    await col.updateOne({ _id }, { $set: set });
+    // Denormalized so LMS question counts never have to walk `$mcqs` on Atlas
+    // (45s timeouts). Incremented by the delta rather than written as an absolute
+    // total: batches run concurrently, and each one's read snapshot is already
+    // stale by the time it writes — an absolute total would let the last writer
+    // clobber its siblings' counts.
+    await col.updateOne({ _id }, { $set: set, ...(added ? { $inc: { [`translatedCounts.${lang}`]: added } } : {}) });
   }
   return count;
 }
@@ -357,6 +382,7 @@ export function toMasterMcqs(
     options?: string[];
     correctAnswer?: string;
     explanation?: string;
+    sopReference?: string;
     isSimilar?: boolean;
     translations?: Record<string, { isStale?: boolean }> | null;
   }>,
@@ -379,6 +405,7 @@ export function toMasterMcqs(
       options,
       correctAnswer: String(m.correctAnswer ?? ""),
       explanation: String(m.explanation ?? ""),
+      sopReference: String(m.sopReference ?? ""),
     });
   }
   return out;

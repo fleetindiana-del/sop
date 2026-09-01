@@ -125,10 +125,11 @@ function registerCliSubprocess(
 function unregisterCliSubprocess(
   runKey: string | undefined,
   scope: "mcq" | "compliance" = "mcq",
+  proc?: import("child_process").ChildProcess,
 ): void {
   if (!runKey) return;
   if (scope === "compliance") unregisterComplianceSubprocess(runKey);
-  else unregisterMcqSubprocess(runKey);
+  else unregisterMcqSubprocess(runKey, proc);
 }
 
 function codexSpawnEnv(): NodeJS.ProcessEnv {
@@ -235,7 +236,7 @@ async function runCodexExecPrompt(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (options?.runKey) unregisterCliSubprocess(options.runKey, options.subprocessScope);
+      if (options?.runKey) unregisterCliSubprocess(options.runKey, options.subprocessScope, proc);
       fn();
     };
 

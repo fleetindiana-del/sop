@@ -10,6 +10,7 @@ import {
   aggregateMcqBanksByFamily,
   buildActiveSopFamilyMap,
   findObsoleteMcqFamilies,
+  guTranslatedProjection,
   mcqBankLangCode,
   mcqFamilyComplete,
   mcqResolveDept,
@@ -92,12 +93,15 @@ export async function GET(request: NextRequest) {
           similarCount: {
             $size: { $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isSimilar", true] } } },
           },
+          ...guTranslatedProjection,
         },
       },
     ]).toArray() as {
       _id: unknown; sopIdentifier: string; sopName: string; department: string;
       language: string; updatedAt?: Date;
       totalQuestions: number; checkedCount: number; reviewedCount: number; similarCount: number;
+      guTranslatedCount: number; guTranslatedChecked: number;
+      guTranslatedReviewed: number; guTranslatedSimilar: number;
     }[];
 
     // ── 2. Dashboard registry families (single source of truth) ──────────────
@@ -131,13 +135,22 @@ export async function GET(request: NextRequest) {
       const e: FamilyBank = {
         totalQ: 0, checkedQ: 0, reviewedQ: 0, similarQ: 0, enQ: 0, guQ: 0, lastUpdated: null, banks: [],
       };
+      // Gujarati translations carried on the English masters — folded in below when
+      // the family has no Gujarati bank of its own.
+      const gt = { q: 0, checked: 0, reviewed: 0, similar: 0 };
       for (const b of canonical) {
         e.totalQ += b.totalQuestions;
         e.checkedQ += b.checkedCount;
         e.reviewedQ += b.reviewedCount;
         e.similarQ += b.similarCount;
         if (mcqBankLangCode(b.language) === "GUJ") e.guQ += b.totalQuestions;
-        else e.enQ += b.totalQuestions;
+        else {
+          e.enQ += b.totalQuestions;
+          gt.q += b.guTranslatedCount ?? 0;
+          gt.checked += b.guTranslatedChecked ?? 0;
+          gt.reviewed += b.guTranslatedReviewed ?? 0;
+          gt.similar += b.guTranslatedSimilar ?? 0;
+        }
         if (b._id) {
           e.banks.push({
             id: String(b._id),
@@ -150,6 +163,13 @@ export async function GET(request: NextRequest) {
         }
         const ts = b.updatedAt ? new Date(b.updatedAt) : null;
         if (ts && (!e.lastUpdated || ts > e.lastUpdated)) e.lastUpdated = ts;
+      }
+      if (e.guQ === 0 && gt.q > 0) {
+        e.guQ = gt.q;
+        e.totalQ += gt.q;
+        e.checkedQ += gt.checked;
+        e.reviewedQ += gt.reviewed;
+        e.similarQ += gt.similar;
       }
       // English first, so the per-language counts and the language buttons read
       // in the same order on every row.

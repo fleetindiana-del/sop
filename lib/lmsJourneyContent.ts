@@ -232,18 +232,29 @@ export async function getJourneyContentBatch(
         isObsolete: { $ne: true },
         $or: bankOr,
       })
-        .select('sopIdentifier language totalQuestions')
+        .select('sopIdentifier language totalQuestions translatedCounts')
         .maxTimeMS(15_000)
-        .lean<Array<{ sopIdentifier?: string; language?: string; totalQuestions?: number }>>()
+        .lean<
+          Array<{
+            sopIdentifier?: string;
+            language?: string;
+            totalQuestions?: number;
+            translatedCounts?: Map<string, number> | Record<string, number>;
+          }>
+        >()
     : [];
 
-  // Stored totalQuestions only — do not walk `$mcqs` on Atlas (45s timeout).
-  const bankDocs: BankCountRow[] = banks.map((b) => ({
-    sopIdentifier: b.sopIdentifier,
-    language: b.language || 'English',
-    usableQuestions: b.totalQuestions || 0,
-    translatedGu: 0,
-  }));
+  // Stored counts only — do not walk `$mcqs` on Atlas (45s timeout).
+  const bankDocs: BankCountRow[] = banks.map((b) => {
+    const counts = b.translatedCounts;
+    const gu = counts instanceof Map ? counts.get('gu') : counts?.gu;
+    return {
+      sopIdentifier: b.sopIdentifier,
+      language: b.language || 'English',
+      usableQuestions: b.totalQuestions || 0,
+      translatedGu: gu || 0,
+    };
+  });
 
   for (const code of missing) {
     let best: SopLean | null = null;

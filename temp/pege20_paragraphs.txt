@@ -1,0 +1,80 @@
+1.0
+OBJECTIVE                    :
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/><w:tab w:val="left" w:pos="395"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>To ensure a safe, hygienic and compliant workplace by delivering structured safety training that prevents hazards, eliminates unsafe conditions, and promotes a proactive culture of risk awareness.
+2.0
+SCOPE                              :
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/><w:tab w:val="left" w:pos="395"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t xml:space="preserve">This Standard Operating Procedure applies to all employees working at Indiana Ophthalmics LLP.
+3.0
+RESPONSIBILITY         :
+Personnel Head:-
+Responsible for planning, scheduling, and conducting annual and need-based safety training sessions, and ensuring overall adherence to workplace safety protocols.
+All Employees and Workers:-
+Responsible for actively attending required safety training, adhering strictly to safety guidelines and SOPs, wearing assigned Personal Protective Equipment (PPE), and promptly reporting any unsafe conditions or hazards to personnel department.
+4.0
+ACCOUNTABILITY     :
+QA Head
+5.0
+PROCEDURE                  :
+5.1
+The integration of safety awareness and adherence to the safety is mandatory for all personnel to ensure a safe, hygienic work environment and sustain optimal operational productivity.
+5.2
+The personnel head shall schedule, organize and execute comprehensive safety training for all employees and workers annually, or immediately upon identifying operational needs.
+5.3
+Training session shall detail all essential safety precautions, emergency protocols and regulatory compliance requirements applicable across factory premises and specialized work zones.
+5.4
+<w:tab w:val="left" w:pos="8352"/><w:tab w:val="left" w:pos="8622"/><w:tab w:val="left" w:pos="9930"/></w:tabs><w:jc w:val="both"/><w:rPr><w:bCs/></w:rPr></w:pPr><w:r w:rsidRPr="0034194F"><w:t>The safety training curriculum shall comprehensively cover, but is not limited to, the following critical operational areas:-
+5.4.1
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/><w:rPr><w:bCs/></w:rPr></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Mandated use, proper fitting, and maintenance of Personal Protective Equipment (PPE), including safety gloves, masks, caps, goggles, cleanroom gowning, and protective footwear.
+5.4.2
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t xml:space="preserve">Principles and core benefits of maintaining high-standard housekeeping practices across all departments.
+5.4.3
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Procedures for the safe operation and handling of equipment, analytical instruments, and heavy machinery strictly aligned with authorized Standard Operating Procedures (SOPs).
+5.4.4
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Availability and location of First Aid facilities, including emergency step-by-step response procedures during workplace injuries or medical events.
+5.4.5
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Assessment and maintenance of hazard-free environmental conditions within individual work centers.
+5.4.6
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Clear identification, accessibility, and evacuation procedures involving marked emergency exit routes and assembly points.
+5.4.7
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t xml:space="preserve">Safety impacts and standard procedures associated with the cleaning, sanitization and decontamination of facility areas, machinery, processing equipment, and storage containers.
+5.4.8
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Safe handling, storage, containment, and disposal of hazardous chemicals and laboratory reagents.
+5.4.9
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Precise location, identification of types, and hands-on operational techniques for fire extinguishers during fire emergencies.
+5.4.10
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Promotion and enforcement of personal hygiene standards and health-conscious practices within factory premises.
+5.4.11
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Preventative measures, isolation protocols, and precautions to eliminate electrical shocks, mechanical entanglements, and equipment hazards.
+5.4.12
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Strict adherence to “CAUTION”, “DANGER” and cautionary operational instructions posted on equipment, containers, and processing units.
+5.4.13
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t xml:space="preserve">Recognition, understanding, and mandatory compliance with all standardized safety symbols, warning signage and hazard pictograms.
+5.4.14
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Procedures for secure material handling and regulatory-compliant storage of raw materials, intermediates, and finished goods.
+5.4.15
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t xml:space="preserve">Fundamental cleanroom behaviors, entry/exit procedures, cross-contamination control, and specialized airlock safety rules for controlled environments.
+<w:tab w:val="left" w:pos="540"/><w:tab w:val="left" w:pos="1440"/></w:tabs><w:rPr><w:b/><w:bCs/></w:rPr></w:pPr><w:r w:rsidRPr="0034194F"><w:rPr><w:b/><w:bCs/></w:rPr><w:t>6.0
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/><w:rPr><w:b/><w:bCs/></w:rPr></w:pPr><w:r w:rsidRPr="0034194F"><w:rPr><w:b/><w:kern w:val="18"/></w:rPr><w:t xml:space="preserve">ANNEXURES:- NA
+<w:tab w:val="left" w:pos="540"/><w:tab w:val="left" w:pos="1440"/></w:tabs><w:rPr><w:b/><w:bCs/></w:rPr></w:pPr><w:r w:rsidRPr="0034194F"><w:rPr><w:b/><w:bCs/></w:rPr><w:t>7.0
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/><w:rPr><w:b/><w:bCs/></w:rPr></w:pPr><w:r w:rsidRPr="0034194F"><w:rPr><w:b/><w:bCs/><w:kern w:val="18"/></w:rPr><w:t xml:space="preserve">REFERENCES:- NA
+<w:tab w:val="left" w:pos="540"/><w:tab w:val="left" w:pos="1440"/></w:tabs><w:rPr><w:b/><w:bCs/></w:rPr></w:pPr><w:r w:rsidRPr="0034194F"><w:rPr><w:b/><w:bCs/></w:rPr><w:t>8.0
+<w:tab w:val="clear" w:pos="4320"/><w:tab w:val="clear" w:pos="8640"/></w:tabs><w:jc w:val="both"/><w:rPr><w:b/><w:bCs/></w:rPr></w:pPr><w:r w:rsidRPr="0034194F"><w:rPr><w:b/></w:rPr><w:t>REVISION HISTORY:-
+Sr.
+No.
+Date of Revision 
+SOP No.
+Supersedes No.
+Change Control No.
+Reason for Revision
+28/07/2022
+PEGE20-05
+PEGE20-4
+NA
+<w:tab w:val="left" w:pos="37"/></w:tabs><w:ind w:left="274" w:hanging="270"/><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Change in Firm Name from “Indiana Ophthalmics” to “Indiana Ophthalmics LLP”.
+<w:tab w:val="left" w:pos="37"/></w:tabs><w:ind w:left="274" w:hanging="270"/><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Addition of Annexures, References and Revision History as Section 6.0, 7.0 and 8.0 respectively in the SOP.
+24/07/2026
+PEGE20-06
+PEGE20-05
+CC-26-03
+<w:tab w:val="left" w:pos="37"/></w:tabs><w:ind w:left="274" w:hanging="270"/><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Periodic Review.
+<w:tab w:val="left" w:pos="37"/></w:tabs><w:ind w:left="274" w:hanging="270"/><w:jc w:val="both"/></w:pPr><w:r w:rsidRPr="0034194F"><w:t>Format of SOP made in line with current version of SOP of SOP.

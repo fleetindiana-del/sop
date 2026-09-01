@@ -99,6 +99,9 @@ export interface AggregatedMcqFamily {
   guQ: number;
   hasEn: boolean;
   hasGu: boolean;
+  /** True when the Gujarati questions counted above are translations carried on the
+   *  English masters rather than a standalone Gujarati bank. */
+  guFromTranslations: boolean;
   lastUpdated: Date | null;
   banks: { id: string; langCode: "ENG" | "GUJ" }[];
 }
@@ -114,7 +117,44 @@ export interface RawMcqBankAgg {
   reviewedCount: number;
   similarCount: number;
   updatedAt?: Date;
+  /** Questions on this (English) bank that carry a Gujarati translation. */
+  guTranslatedCount?: number;
+  guTranslatedChecked?: number;
+  guTranslatedReviewed?: number;
+  guTranslatedSimilar?: number;
 }
+
+/**
+ * A Gujarati translation stored on an English master is the same question rendered
+ * in Gujarati. When a family has no separate Gujarati bank, those translations ARE
+ * its Gujarati set, so every count that asks "how many Gujarati MCQs?" must see
+ * them — otherwise the registry reads 0 while the viewer shows 100.
+ *
+ * Spread into a bank `$project` stage; the counts are 0 on banks with no
+ * translations (Gujarati banks included), so folding is unconditional.
+ */
+function countTranslatedGu(extraCond?: Record<string, unknown>) {
+  const isTranslated = { $ne: [{ $ifNull: ["$$q.translations.gu", null] }, null] };
+  return {
+    $size: {
+      $filter: {
+        input: { $ifNull: ["$mcqs", []] },
+        as: "q",
+        cond: extraCond ? { $and: [isTranslated, extraCond] } : isTranslated,
+      },
+    },
+  };
+}
+
+export const guTranslatedProjection = {
+  guTranslatedCount: countTranslatedGu(),
+  guTranslatedChecked: countTranslatedGu({ $eq: ["$$q.isChecked", true] }),
+  guTranslatedReviewed: countTranslatedGu({ $eq: ["$$q.isReviewed", true] }),
+  guTranslatedSimilar: countTranslatedGu({ $eq: ["$$q.isSimilar", true] }),
+  guTranslatedEasy: countTranslatedGu({ $eq: ["$$q.difficulty", "Easy"] }),
+  guTranslatedMedium: countTranslatedGu({ $eq: ["$$q.difficulty", "Medium"] }),
+  guTranslatedHard: countTranslatedGu({ $eq: ["$$q.difficulty", "Hard"] }),
+};
 
 export type McqBankLangCode = "ENG" | "GUJ";
 
@@ -222,9 +262,14 @@ export function aggregateMcqBanksByFamily(
       guQ: 0,
       hasEn: false,
       hasGu: false,
+      guFromTranslations: false,
       lastUpdated: null,
       banks: [],
     };
+    let guTranslated = 0;
+    let guTranslatedChecked = 0;
+    let guTranslatedReviewed = 0;
+    let guTranslatedSimilar = 0;
     for (const b of canonical) {
       e.totalQ += b.totalQuestions;
       e.checkedQ += b.checkedCount;
@@ -236,11 +281,26 @@ export function aggregateMcqBanksByFamily(
       } else {
         e.hasEn = true;
         e.enQ += b.totalQuestions;
+        guTranslated += b.guTranslatedCount ?? 0;
+        guTranslatedChecked += b.guTranslatedChecked ?? 0;
+        guTranslatedReviewed += b.guTranslatedReviewed ?? 0;
+        guTranslatedSimilar += b.guTranslatedSimilar ?? 0;
       }
       if (b._id) e.banks.push({ id: String(b._id), langCode: mcqBankLangCode(b.language) });
       const ts = b.updatedAt ? new Date(b.updatedAt) : null;
       if (ts && (!e.lastUpdated || ts > e.lastUpdated)) e.lastUpdated = ts;
       if (b.sopName) e.sopName = b.sopName;
+    }
+    // Translations only stand in for a Gujarati bank the family does not have —
+    // a real Gujarati bank always wins, so the same questions are never counted twice.
+    if (e.guQ === 0 && guTranslated > 0) {
+      e.guQ = guTranslated;
+      e.hasGu = true;
+      e.guFromTranslations = true;
+      e.totalQ += guTranslated;
+      e.checkedQ += guTranslatedChecked;
+      e.reviewedQ += guTranslatedReviewed;
+      e.similarQ += guTranslatedSimilar;
     }
     map.set(famKey, e);
   }

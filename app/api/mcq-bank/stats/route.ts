@@ -11,6 +11,7 @@ import {
   aggregateMcqBanksByFamily,
   buildActiveSopFamilyMap,
   findObsoleteMcqFamilies,
+  guTranslatedProjection,
   mcqFamilyComplete,
 } from "@/lib/mcq-bank-utils";
 import { reconcileMcqBankObsoleteFlags } from "@/lib/mcq-bank-sync";
@@ -70,6 +71,7 @@ export async function GET() {
               $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isSimilar", true] } },
             },
           },
+          ...guTranslatedProjection,
           updatedAt: 1,
         },
       },
@@ -99,6 +101,7 @@ export async function GET() {
               $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isSimilar", true] } },
             },
           },
+          ...guTranslatedProjection,
           updatedAt: 1,
         },
       },

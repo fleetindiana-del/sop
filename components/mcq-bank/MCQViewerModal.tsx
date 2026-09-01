@@ -28,6 +28,8 @@ interface McqTranslation {
   options: string[];
   correctAnswer: string;
   explanation?: string;
+  /** The clause reference in this language; absent on older translations. */
+  sopReference?: string;
   isStale?: boolean;
   isVerified?: boolean;
 }
@@ -99,6 +101,8 @@ function highlight(text: string, term: string) {
 
 interface QuestionCardProps {
   mcq: MCQ;
+  /** Header GU toggle — show this question's Gujarati translation by default. */
+  preferGu?: boolean;
   originalIndex: number;
   bankId: string;
   searchTerm: string;
@@ -106,7 +110,7 @@ interface QuestionCardProps {
   onOpen: () => void;
 }
 
-function QuestionCard({ mcq, originalIndex, bankId, searchTerm, onUpdated, onOpen }: QuestionCardProps) {
+function QuestionCard({ mcq, preferGu = false, originalIndex, bankId, searchTerm, onUpdated, onOpen }: QuestionCardProps) {
   const [updating, setUpdating] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [regenError, setRegenError] = useState<string | null>(null);
@@ -115,8 +119,8 @@ function QuestionCard({ mcq, originalIndex, bankId, searchTerm, onUpdated, onOpe
   // One question, viewed in either language. The Gujarati version is a translation
   // of THIS question — same options in the same order, same correct answer.
   const gu = mcq.translations?.gu;
-  const [showGu, setShowGu] = useState(false);
-  const view = showGu && gu ? gu : mcq;
+  // Language is driven solely by the header EN/GU toggle — cards have no per-question flip.
+  const view = preferGu && gu ? gu : mcq;
 
   async function toggle(field: "isChecked" | "isReviewed" | "isSimilar") {
     setUpdating(field);
@@ -204,26 +208,14 @@ function QuestionCard({ mcq, originalIndex, bankId, searchTerm, onUpdated, onOpe
                   Creative
                 </span>
               )}
-              {gu && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowGu((v) => !v); }}
-                  title={
-                    gu.isStale
-                      ? "Gujarati translation is out of date — the English question changed since it was made"
-                      : "Show this question in Gujarati"
-                  }
-                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide transition ${
-                    gu.isStale
-                      ? "border-amber-200 bg-amber-50 text-amber-700"
-                      : showGu
-                      ? "border-indigo-300 bg-indigo-600 text-white"
-                      : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                  }`}
+              {gu?.isStale && (
+                <span
+                  className="inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700"
+                  title="Gujarati translation is out of date — the English question changed since it was made"
                 >
                   <Languages className="h-3 w-3" />
-                  {showGu ? "EN" : "ગુજ"}
-                  {gu.isStale ? " • stale" : ""}
-                </button>
+                  Stale
+                </span>
               )}
             </div>
             <div className="flex items-center gap-1.5">
@@ -343,6 +335,10 @@ function QuestionCard({ mcq, originalIndex, bankId, searchTerm, onUpdated, onOpe
 
 interface MCQViewerModalProps {
   bankId: string;
+  /** Language to land on. "GU" opens an English bank through its Gujarati
+   *  translations — what the registry's Gujarati count points at when the family
+   *  has no standalone Gujarati bank. */
+  initialLang?: "EN" | "GU";
   onClose: () => void;
   onBack?: () => void;
 }
@@ -370,10 +366,14 @@ interface VersionStatus {
   isOutdated: boolean;
 }
 
-export function MCQViewerModal({ bankId, onClose, onBack }: MCQViewerModalProps) {
-  // The bank currently being viewed. Starts at the opened bank, but the EN/GU
-  // toggle swaps it to the sibling-language bank of the same SOP family.
+export function MCQViewerModal({ bankId, initialLang = "EN", onClose, onBack }: MCQViewerModalProps) {
+  // The bank currently being viewed. Starts at the opened bank, and only swaps to
+  // a sibling-language bank for SOPs whose Gujarati still lives in a standalone
+  // legacy bank rather than as translations on the English masters.
   const [activeBankId, setActiveBankId] = useState(bankId);
+  /** Bank whose masters are being rendered through their Gujarati translations.
+   *  Keyed by bank id so opening a different bank starts in English on its own. */
+  const [viewGuFor, setViewGuFor] = useState<string | null>(initialLang === "GU" ? bankId : null);
   const [siblings, setSiblings] = useState<SiblingBank[]>([]);
   const [current, setCurrent] = useState<CurrentVersion | null>(null);
   const [versionStatus, setVersionStatus] = useState<VersionStatus | null>(null);
@@ -383,7 +383,11 @@ export function MCQViewerModal({ bankId, onClose, onBack }: MCQViewerModalProps)
   const [error, setError] = useState<string | null>(null);
 
   // Re-sync when a different SOP/bank is opened from outside.
-  useEffect(() => { setActiveBankId(bankId); }, [bankId]);
+  useEffect(() => {
+    setActiveBankId(bankId);
+    setViewGuFor(initialLang === "GU" ? bankId : null);
+  }, [bankId, initialLang]);
+  const viewGu = viewGuFor === activeBankId;
 
   const [activeTab, setActiveTab] = useState<TabType>("active");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -512,13 +516,19 @@ export function MCQViewerModal({ bankId, onClose, onBack }: MCQViewerModalProps)
 
   const isGuj = (bank?.language ?? "").toLowerCase() === "gujarati";
   const langCode = isGuj ? "GU" : "EN";
+  // Gujarati now normally lives as translations ON the English masters, so the
+  // header GU toggle re-renders THIS bank rather than swapping to a standalone
+  // Gujarati bank. Only SOPs with no translations still flip banks — matching the
+  // LMS quiz route's translation-first, legacy-bank-fallback order.
+  const displayLang: "EN" | "GU" = isGuj || viewGu ? "GU" : "EN";
+  const canViewTranslated = !isGuj && guTranslated > 0;
 
   // Prefer the SOP family's CURRENT version (from the Dashboard) over whatever
   // version the bank was generated from, so the header stays in sync with the
   // Dashboard's current SOP No. / version.
   const displayIdentifier = current?.identifier ?? bank?.sopIdentifier ?? "";
   const displayName = current
-    ? (isGuj ? (current.nameGujarati ?? current.name) : current.name)
+    ? (displayLang === "GU" ? (current.nameGujarati ?? current.name) : current.name)
     : (bank?.sopName ?? "");
   // A newer version of this language is live but its MCQs were never generated.
   const isOutdated = Boolean(versionStatus?.isOutdated);
@@ -567,7 +577,8 @@ export function MCQViewerModal({ bankId, onClose, onBack }: MCQViewerModalProps)
                     </span>
                     <span className="h-1 w-1 rounded-full bg-gray-300" />
                     <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400">
-                      {bank.language ?? "English"} Version{current ? ` · v${current.version}` : ""}
+                      {displayLang === "GU" ? "Gujarati" : "English"} Version{current ? ` · v${current.version}` : ""}
+                      {viewGu ? " · translated" : ""}
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
@@ -669,31 +680,45 @@ export function MCQViewerModal({ bankId, onClose, onBack }: MCQViewerModalProps)
                   </div>
                 )}
 
-                {/* EN/GU toggle — flips between the English & Gujarati banks of this SOP */}
-                <div className="flex overflow-hidden rounded-xl border border-gray-200">
-                  <button type="button"
-                    onClick={() => switchLang(enSibling)}
-                    disabled={!enSibling || langCode === "EN"}
-                    title={enSibling ? "View English version" : "No English version for this SOP"}
-                    className={`px-3 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${
-                      langCode === "EN"
-                        ? "bg-purple-100 text-purple-700"
-                        : enSibling
-                        ? "bg-white text-gray-500 hover:bg-gray-100 cursor-pointer"
-                        : "bg-white text-gray-300 cursor-not-allowed"
-                    }`}>EN</button>
-                  <button type="button"
-                    onClick={() => switchLang(guSibling)}
-                    disabled={!guSibling || langCode === "GU"}
-                    title={guSibling ? "View Gujarati version" : "No Gujarati version for this SOP"}
-                    className={`px-3 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${
-                      langCode === "GU"
-                        ? "bg-purple-100 text-purple-700"
-                        : guSibling
-                        ? "bg-white text-gray-500 hover:bg-gray-100 cursor-pointer"
-                        : "bg-white text-gray-300 cursor-not-allowed"
-                    }`}>GU</button>
-                </div>
+                {/* EN/GU toggle — renders this bank's Gujarati translations when it
+                    has them, and only falls back to a legacy standalone Gujarati
+                    bank for SOPs that were never translated. */}
+                {(() => {
+                  const canEn = isGuj ? Boolean(enSibling) : true;
+                  const canGu = canViewTranslated || Boolean(guSibling);
+                  return (
+                    <div className="flex overflow-hidden rounded-xl border border-gray-200">
+                      <button type="button"
+                        onClick={() => { if (isGuj) switchLang(enSibling); else setViewGuFor(null); }}
+                        disabled={!canEn || displayLang === "EN"}
+                        title={canEn ? "View English version" : "No English version for this SOP"}
+                        className={`px-3 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${
+                          displayLang === "EN"
+                            ? "bg-purple-100 text-purple-700"
+                            : canEn
+                            ? "bg-white text-gray-500 hover:bg-gray-100 cursor-pointer"
+                            : "bg-white text-gray-300 cursor-not-allowed"
+                        }`}>EN</button>
+                      <button type="button"
+                        onClick={() => { if (canViewTranslated) setViewGuFor(activeBankId); else switchLang(guSibling); }}
+                        disabled={!canGu || displayLang === "GU"}
+                        title={
+                          canViewTranslated
+                            ? `View the Gujarati translation of these questions (${guTranslated}/${mcqs.length})`
+                            : guSibling
+                            ? "View the legacy standalone Gujarati bank — these questions are not translations"
+                            : "No Gujarati version for this SOP"
+                        }
+                        className={`px-3 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${
+                          displayLang === "GU"
+                            ? "bg-purple-100 text-purple-700"
+                            : canGu
+                            ? "bg-white text-gray-500 hover:bg-gray-100 cursor-pointer"
+                            : "bg-white text-gray-300 cursor-not-allowed"
+                        }`}>GU</button>
+                    </div>
+                  );
+                })()}
 
                 {/* Reset & Regen */}
                 <button type="button"
@@ -815,6 +840,7 @@ export function MCQViewerModal({ bankId, onClose, onBack }: MCQViewerModalProps)
                   <QuestionCard
                     key={originalIndex}
                     mcq={mcq}
+                    preferGu={viewGu}
                     originalIndex={originalIndex}
                     bankId={activeBankId}
                     searchTerm={searchTerm}
@@ -835,6 +861,7 @@ export function MCQViewerModal({ bankId, onClose, onBack }: MCQViewerModalProps)
           index={selectedQuestion.index}
           bankId={activeBankId}
           sopIdentifier={displayIdentifier}
+          lang={displayLang}
           onClose={() => setSelectedQuestion(null)}
           onUpdated={(idx, patch) => {
             handleUpdated(idx, patch);
