@@ -3,6 +3,7 @@ import { connectDB } from '@/lib/mongodb';
 import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import {
   getOrBuildLmsCache,
+  invalidateLmsAdminCaches,
   invalidateLmsLearnerCache,
   invalidateLmsServerPrefix,
   lmsCacheControl,
@@ -153,6 +154,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     await progress.save();
     invalidateLmsLearnerCache(payload.sub, sopCode);
+    // Trainer/admin dashboards (Trainer View month/employee/SOP-wise counts) cache
+    // this employee's completion status too — bust them so counts stay in sync.
+    invalidateLmsServerPrefix('lms:trainer:');
+    invalidateLmsAdminCaches();
 
     // When a trainer completes an SOP, unlock exams for their department learners.
     if (progress.status === 'completed') {

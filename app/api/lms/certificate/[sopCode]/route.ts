@@ -3,7 +3,9 @@ import { connectDB } from '@/lib/mongodb';
 import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import {
   getOrBuildLmsCache,
+  invalidateLmsAdminCaches,
   invalidateLmsLearnerCache,
+  invalidateLmsServerPrefix,
   lmsCacheControl,
   lmsServerKeys,
   lmsServerTtl,
@@ -101,6 +103,8 @@ export async function POST(_req: NextRequest, { params }: Params) {
       }
       await progress.save();
       invalidateLmsLearnerCache(payload.sub, sopCode);
+      invalidateLmsServerPrefix('lms:trainer:');
+      invalidateLmsAdminCaches();
     }
 
     if (progress.overallPercentage < 100 || progress.status !== 'completed') {
@@ -140,6 +144,8 @@ export async function POST(_req: NextRequest, { params }: Params) {
     });
 
     invalidateLmsLearnerCache(payload.sub, sopCode);
+    invalidateLmsServerPrefix('lms:trainer:');
+    invalidateLmsAdminCaches();
     return NextResponse.json({ certificate: cert.toObject() }, { status: 201 });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
