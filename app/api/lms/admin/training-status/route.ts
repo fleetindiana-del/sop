@@ -2,12 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
-import {
-  getOrBuildLmsCache,
-  lmsCacheControl,
-  lmsServerKeys,
-  lmsServerTtl,
-} from '@/lib/lmsCache';
+import { lmsCacheControl } from '@/lib/lmsCache';
 import Employee from '@/models/Employee';
 import LearningProgress from '@/models/lms/LearningProgress';
 import Certificate from '@/models/lms/Certificate';
@@ -28,10 +23,7 @@ export async function GET(req: NextRequest) {
   const department = searchParams.get('department');
 
   try {
-    const body = await getOrBuildLmsCache(
-      lmsServerKeys.adminTrainingStatus(department || 'all'),
-      lmsServerTtl.adminTrainingStatus,
-      async () => {
+    const body = await (async () => {
         await connectDB();
 
         const empFilter: Record<string, unknown> = { isActive: { $ne: false } };
@@ -111,10 +103,9 @@ export async function GET(req: NextRequest) {
         });
 
         return { records };
-      },
-    );
+    })();
 
-    return NextResponse.json(body, { headers: lmsCacheControl(120) });
+    return NextResponse.json(body, { headers: lmsCacheControl(0) });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }

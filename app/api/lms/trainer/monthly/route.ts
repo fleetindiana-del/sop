@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import {
-  getOrBuildLmsCache,
-  lmsCacheControl,
-  lmsServerTtl,
-} from '@/lib/lmsCache';
+import { lmsCacheControl } from '@/lib/lmsCache';
 import { requireLmsTrainer, deptMatchesTrainerScope } from '@/lib/lmsTrainerAuth';
 import { listActiveTrainers, type TrainerDirectoryEntry } from '@/lib/lmsTrainerDirectory';
 import TrainerEmployee from '@/models/lms/TrainerEmployee';
@@ -124,10 +120,7 @@ export async function GET(req: NextRequest) {
   const includeIgnored = params.get('includeIgnored') === '1';
 
   try {
-    const body = await getOrBuildLmsCache(
-          `lms:trainer:monthly:v13:${trainer.employeeId}:${trainer.allDepartments ? 'admin' : 'trainer'}:${deptParam || 'all'}:${yearParam || 'all'}:${includeIgnored ? 'inc' : 'exc'}`,
-      lmsServerTtl.adminEmployeeTraining,
-      async () => {
+    const body = await (async () => {
         await connectDB();
         const now = new Date();
         const cycle = getTrainingCycleStart(now);
@@ -373,10 +366,9 @@ export async function GET(req: NextRequest) {
           },
           generatedAt: toDateOnlyIso(today),
         };
-      },
-    );
+    })();
 
-    return NextResponse.json(body, { headers: lmsCacheControl(30) });
+    return NextResponse.json(body, { headers: lmsCacheControl(0) });
   } catch (err: unknown) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

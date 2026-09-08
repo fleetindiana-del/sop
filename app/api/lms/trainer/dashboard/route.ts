@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import {
-  getOrBuildLmsCache,
-  lmsCacheControl,
-  lmsServerKeys,
-  lmsServerTtl,
-} from '@/lib/lmsCache';
+import { lmsCacheControl } from '@/lib/lmsCache';
 import { requireLmsTrainer } from '@/lib/lmsTrainerAuth';
 import SOP from '@/models/SOP';
 import LearningProgress from '@/models/lms/LearningProgress';
@@ -92,14 +87,7 @@ export async function GET(req: NextRequest) {
   const deptParam = req.nextUrl.searchParams.get('department')?.trim() || '';
 
   try {
-    const body = await getOrBuildLmsCache(
-      // The scope is part of the key: the same employee sees every department
-      // through the admin login and only their own through the learner login.
-      `${lmsServerKeys.trainerDashboard(trainer.employeeId)}:${deptParam || 'all'}:${
-        trainer.allDepartments ? 'admin' : 'trainer'
-      }`,
-      lmsServerTtl.adminEmployeeTraining,
-      async () => {
+    const body = await (async () => {
         await connectDB();
         const cycle = getTrainingCycleStart();
         const scopedDepts = trainer.trainerDepartments.filter((d) =>
@@ -364,10 +352,9 @@ export async function GET(req: NextRequest) {
           monthExamCounts: monthSops.map((set) => set.size),
           statusTotals: { due, overdue, completed, ignored, upcoming, notCompleted },
         };
-      },
-    );
+    })();
 
-    return NextResponse.json(body, { headers: lmsCacheControl(60) });
+    return NextResponse.json(body, { headers: lmsCacheControl(0) });
   } catch (err: unknown) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
