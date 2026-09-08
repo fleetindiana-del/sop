@@ -44,6 +44,14 @@ export const DEPARTMENT_ORDER = [
   "Personnel",
 ];
 
+/**
+ * Natural-order comparator for SOP identifiers/codes, so "QAGE2" sorts before
+ * "QAGE10" instead of after it (plain string compare treats them as text).
+ */
+export function compareSopCodes(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
 export function sortByDeptOrder(departments: string[]): string[] {
   return [...departments].sort((a, b) => {
     const ai = DEPARTMENT_ORDER.indexOf(a);
@@ -1284,10 +1292,10 @@ function sortRegistry(
 
     switch (sortBy) {
       case "name":
-        return compare(a.name.toLowerCase(), b.name.toLowerCase());
+        return compareSopCodes(a.name.toLowerCase(), b.name.toLowerCase()) * dir;
       case "department": {
         const deptCmp = deptOrderCompare(a.department, b.department) * dir;
-        return deptCmp !== 0 ? deptCmp : identifierOrderCompare(a.identifier, b.identifier);
+        return deptCmp !== 0 ? deptCmp : compareSopCodes(a.identifier, b.identifier);
       }
       case "location":
         return compare(a.location ?? "", b.location ?? "");
@@ -1311,7 +1319,7 @@ function sortRegistry(
       case "uploadedAt":
         return compare(a.uploadedAt, b.uploadedAt);
       default:
-        return identifierOrderCompare(a.identifier, b.identifier) * dir;
+        return compareSopCodes(a.identifier, b.identifier) * dir;
     }
   });
 }

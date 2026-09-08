@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { sopFamilyCodesMatch } from '@/lib/sopIdentifierNormalize';
 import { resolveSopStatusFromMap } from '@/lib/trainingMatrixMcqStats';
+import { compareSopCodes } from '@/lib/sop-utils';
 
 function stripVersion(code: string): string {
   return String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
@@ -206,7 +207,7 @@ import {
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+// 'xlsx' (~270KB) is pulled in on demand by exportToExcel — see the dynamic import there.
 import { buildOfficeOnlineEmbedUrl, buildPreviewHref, isOfficePreviewAvailable } from '@/lib/file-urls';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1883,9 +1884,9 @@ function SopDetailsInline({
     };
 
     list.sort((a, b) => {
-      if (sortKey === 'sopCode') return dir * norm(a?.sopCode).localeCompare(norm(b?.sopCode));
+      if (sortKey === 'sopCode') return dir * compareSopCodes(norm(a?.sopCode), norm(b?.sopCode));
       if (sortKey === 'title') return dir * norm(a?.title).localeCompare(norm(b?.title));
-      if (sortKey === 'sopNo') return dir * norm(a?.db?.sopNo).localeCompare(norm(b?.db?.sopNo));
+      if (sortKey === 'sopNo') return dir * compareSopCodes(norm(a?.db?.sopNo), norm(b?.db?.sopNo));
       if (sortKey === 'month') return dir * norm(a?.excel?.month).localeCompare(norm(b?.excel?.month));
       if (sortKey === 'version') return dir * (num(a?.db?.version) - num(b?.db?.version));
       if (sortKey === 'status') return dir * (getStatusRank(a) - getStatusRank(b));
@@ -3286,7 +3287,7 @@ export default function InductionTrainingMatrixPage() {
         }
       }
     }
-    return [...codes].sort((a, b) => a.localeCompare(b)).map((c) => ({ code: c, month: monthOf[c] }));
+    return [...codes].sort(compareSopCodes).map((c) => ({ code: c, month: monthOf[c] }));
   }, [data, activeDept, activeMonth]);
 
   const visibleEmployees = useMemo(() => {
@@ -3447,7 +3448,7 @@ export default function InductionTrainingMatrixPage() {
             const completionPct = totalApplicable ? Math.round((v.trained / totalApplicable) * 100) : 0;
             return { sopCode, trained: v.trained, pending: v.pending, totalApplicable, completionPct };
           })
-          .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+          .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
 
         if (!cancelled) setMonthDetail({ loading: false, error: '', sopRows: rows });
       } catch (e: any) {
@@ -3460,8 +3461,9 @@ export default function InductionTrainingMatrixPage() {
     };
   }, [detailModal]);
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     if (!visibleEmployees.length) return;
+    const XLSX = await import('xlsx');
     const header = ['Employee Name', 'Designation', 'Department', ...visibleSops.map((s) => s.code), 'Trained', 'Total', 'Pct'];
     const rows = visibleEmployees.map((e) => {
       let trained = 0;
@@ -3868,7 +3870,7 @@ export default function InductionTrainingMatrixPage() {
         for (const [code, v] of Object.entries(empRow.training || {})) {
           employeeSops.push({ sopCode: code, month: monthForCode(monthMap, code), symbol: v ? '√' : 'X' });
         }
-        employeeSops.sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+        employeeSops.sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
       }
       setEmpModalSearch('');
       setEmpModalFilter('all');
@@ -4134,7 +4136,7 @@ export default function InductionTrainingMatrixPage() {
             r.completedEmployees.length > 0
           );
         })
-        .sort((a, b) => a.sopCode.localeCompare(b.sopCode) || a.primaryDept.localeCompare(b.primaryDept));
+        .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode) || a.primaryDept.localeCompare(b.primaryDept));
       return sops.length > 0 ? [{ department: activeDept === 'All' ? 'All' : activeDept, sops }] : [];
     }
 
@@ -4189,14 +4191,14 @@ export default function InductionTrainingMatrixPage() {
           if (!term) return true;
           return r.sopCode.toLowerCase().includes(term) || r.pendingEmployees.length > 0 || r.completedEmployees.length > 0;
         })
-        .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+        .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
       return sops.length > 0 ? [{ department: depts[0] || 'All', sops }] : [];
     }
 
     // When a capsule filter is active across all departments, deduplicate SOPs and
     // aggregate employee training data across every department the SOP appears in.
     if (capsuleSopFilter && activeDept === 'All' && !capsuleSopFilter.excelOccurrenceMeta) {
-      const allFilteredCodes = Array.from(capsuleSopFilter.sopCodes).sort((a, b) => a.localeCompare(b));
+      const allFilteredCodes = Array.from(capsuleSopFilter.sopCodes).sort(compareSopCodes);
 
       const sops = allFilteredCodes
         .map((sopCode) => {
@@ -4364,7 +4366,7 @@ export default function InductionTrainingMatrixPage() {
           // keep if sop matches month/code search too
           return r.sopCode.toLowerCase().includes(term) || (r.month || '').toLowerCase().includes(term) || r.pendingEmployees.length > 0 || r.completedEmployees.length > 0;
         })
-        .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+        .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
 
       out.push({ department: dept, sops });
     }
@@ -4395,7 +4397,7 @@ export default function InductionTrainingMatrixPage() {
         });
       }
     }
-    return rows.sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+    return rows.sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
   }, [sopWiseGroups]);
 
   const pendingFalsyRows = useMemo(
@@ -5661,7 +5663,7 @@ export default function InductionTrainingMatrixPage() {
         for (const [code, v] of Object.entries(empRow.training || {})) {
           employeeSops.push({ sopCode: code, month: monthForCode(monthMap, code), symbol: v ? '√' : 'X' });
         }
-        employeeSops.sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+        employeeSops.sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
       }
       setDetailModal({
         kind: 'employee',
@@ -6066,7 +6068,7 @@ export default function InductionTrainingMatrixPage() {
                   const sb = sopStatusForCode(data?.sopStatusByCode, b.sopCode);
                   va = sa?.title || ''; vb = sb?.title || '';
                 }
-                const cmp = va.localeCompare(vb);
+                const cmp = empModalSort.field === 'code' ? compareSopCodes(va, vb) : va.localeCompare(vb);
                 return empModalSort.dir === 'asc' ? cmp : -cmp;
               });
 
@@ -6536,6 +6538,7 @@ export default function InductionTrainingMatrixPage() {
         else if (sopSortField === 'mcq_eng_approved') { va = a.mcqEngApproved ?? 0; vb = b.mcqEngApproved ?? 0; }
         else if (sopSortField === 'mcq_guj_approved') { va = a.mcqGujApproved ?? 0; vb = b.mcqGujApproved ?? 0; }
         if (typeof va === 'number' && typeof vb === 'number') return sopSortDir === 'asc' ? va - vb : vb - va;
+        if (sopSortField === 'sopCode') return sopSortDir === 'asc' ? compareSopCodes(String(va), String(vb)) : compareSopCodes(String(vb), String(va));
         return sopSortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
       };
 
@@ -6815,7 +6818,7 @@ export default function InductionTrainingMatrixPage() {
                               symbol: v ? '√' : 'X',
                             });
                           }
-                          employeeSops.sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+                          employeeSops.sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
                         }
                         setDetailModal({
                           kind: 'employee',

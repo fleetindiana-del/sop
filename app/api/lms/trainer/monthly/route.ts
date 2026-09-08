@@ -12,7 +12,7 @@ import {
   employeeAssignmentKey,
   listTrainerScopedEmployees,
 } from '@/lib/lmsTrainerEmployees';
-import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
+import { getEmployeeAssignmentsMap, type EmployeeSopAssignment } from '@/lib/employeeAssignments';
 import { applyReschedulesToList, listTrainingReschedules } from '@/lib/lmsTrainingReschedule';
 import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTrainingIgnore';
 import {
@@ -36,6 +36,8 @@ import {
 import { isInvalidSopAssignmentCode } from '@/lib/sop-name-resolution';
 import { toDateOnlyIso } from '@/lib/trainingExamSchedule';
 import { countUniqueSops, countUniqueSopsByMonth } from '@/lib/lmsTrainerExamCounts';
+import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
+import { compareSopCodes } from '@/lib/sop-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -190,23 +192,41 @@ export async function GET(req: NextRequest) {
         const rows: MonthlyExamRow[] = [];
         const yearSet = new Set<number>();
 
-        for (const emp of employees) {
-          if (emp.isTrainer) continue; // trainers are not learners on this board
-          // Only employees whose home department is in the trainer's scope.
-          if (!deptMatchesTrainerScope(emp.department, scopedDepts)) continue;
-          const employeeId = emp.employeeId;
+        // Resolved once up front so the SOP-code set below (for the
+        // completion check) and the row-building loop agree on the exact
+        // same assignments.
+        const scopedEmployees = employees.filter(
+          (emp) => !emp.isTrainer && deptMatchesTrainerScope(emp.department, scopedDepts),
+        );
+        const assignmentsByEmployee = new Map<
+          string,
+          Array<EmployeeSopAssignment & { rescheduledFrom?: { year: number; month: number } }>
+        >();
+        const allSopCodes = new Set<string>();
+        for (const emp of scopedEmployees) {
           const raw = assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || [];
-          // Mirror /api/lms/auth/me exactly: drop admin-ignored assignments
-          // first, then apply reschedules. Any other order reports months the
-          // employee never sees in their own LMS.
           const notIgnored = filterIgnoredAssignments(raw, ignoreRules, emp.department);
+          const assignments = applyReschedulesToList(notIgnored, rescheduleRules, {
+            employeeId: emp.employeeId,
+            employeeDepartment: emp.department,
+          });
+          assignmentsByEmployee.set(emp.employeeId, assignments);
+          for (const a of assignments) allSopCodes.add(a.sopCode);
+        }
+
+        // Available steps per SOP, so completion agrees with the learner's own
+        // LMS (lib/lmsCompletion.ts) instead of only recognizing quiz-bearing SOPs.
+        const contentByCode = await getJourneyContentBatch(allSopCodes);
+        const availableByCode = new Map<string, string[]>(
+          [...contentByCode.entries()].map(([code, content]) => [code, content.availableStepIds]),
+        );
+
+        for (const emp of scopedEmployees) {
+          const employeeId = emp.employeeId;
           // Every SOP assigned to that employee — including company-wide QA
           // documents Store/Production staff still sit. Scope is the person,
           // not the SOP's owning department (that filter emptied this board).
-          const assignments = applyReschedulesToList(notIgnored, rescheduleRules, {
-            employeeId,
-            employeeDepartment: emp.department,
-          });
+          const assignments = assignmentsByEmployee.get(employeeId) || [];
 
           for (const a of assignments) {
             if (isInvalidSopAssignmentCode(a.sopCode)) continue;
@@ -217,7 +237,7 @@ export async function GET(req: NextRequest) {
             if (yearParam && a.year !== yearParam) continue;
 
             const progress = progressMap.get(`${employeeId}::${code}`);
-            const completed = isExamCompleted(progress);
+            const completed = isExamCompleted(progress, availableByCode.get(a.sopCode));
             const scheduleStatus = classifyScheduleStatus(
               { year: a.year, month: a.month },
               { now, cycle, completed },
@@ -303,7 +323,7 @@ export async function GET(req: NextRequest) {
           if (a.employeeName !== b.employeeName) {
             return a.employeeName.localeCompare(b.employeeName);
           }
-          return a.sopCode.localeCompare(b.sopCode);
+          return compareSopCodes(a.sopCode, b.sopCode);
         });
 
         // Month tiles are SOP-wise: 4 August exams × 20 employees = 4, not 80.
@@ -348,7 +368,7 @@ export async function GET(req: NextRequest) {
             ].sort(),
             exams: [...examMap.entries()]
               .map(([sopCode, sopName]) => ({ sopCode, sopName }))
-              .sort((a, b) => a.sopCode.localeCompare(b.sopCode)),
+              .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode)),
             years: [...yearSet].sort((a, b) => b - a),
           },
           generatedAt: toDateOnlyIso(today),

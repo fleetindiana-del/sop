@@ -1,6 +1,9 @@
 import SystemCache from '@/models/SystemCache';
+import { pruneSupersededSystemCache } from '@/lib/systemCachePrune';
 
-const CACHE_PREFIX = 'manage-sop-view:v12';
+const CACHE_FAMILY = 'manage-sop-view';
+const CACHE_VERSION = 'v12';
+const CACHE_PREFIX = `${CACHE_FAMILY}:${CACHE_VERSION}`;
 const MEMORY_CACHE_TTL_MS = 30 * 60 * 1000;
 
 type MemoryEntry = { cachedAt: number; payload: unknown };
@@ -127,6 +130,7 @@ export async function setManageSopViewCached(
       { $set: { payload, computedAt } },
       { upsert: true },
     );
+    void pruneSupersededSystemCache(CACHE_FAMILY, CACHE_VERSION);
   } catch {
     // Persisting is best-effort; the in-memory copy still serves requests.
   }

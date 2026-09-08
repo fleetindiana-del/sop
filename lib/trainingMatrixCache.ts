@@ -1,8 +1,11 @@
 import SystemCache from '@/models/SystemCache';
+import { pruneSupersededSystemCache } from '@/lib/systemCachePrune';
 
 // Bump the version suffix whenever the payload shape changes so stale snapshots
 // (memory or persisted) are ignored after a deploy.
-const CACHE_KEY = 'training-matrix-overview:v58';
+const CACHE_FAMILY = 'training-matrix-overview';
+const CACHE_VERSION = 'v58';
+const CACHE_KEY = `${CACHE_FAMILY}:${CACHE_VERSION}`;
 
 export type TrainingMatrixCacheEntry = { computedAt: number; payload: unknown };
 
@@ -63,6 +66,7 @@ export async function setTrainingMatrixCached(payload: unknown) {
       { $set: { payload, computedAt } },
       { upsert: true },
     );
+    void pruneSupersededSystemCache(CACHE_FAMILY, CACHE_VERSION);
   } catch {
     // Persisting is best-effort; the in-memory copy still serves requests.
   }

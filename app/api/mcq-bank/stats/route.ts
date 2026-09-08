@@ -5,7 +5,7 @@ import User from "@/models/User";
 import { requireAuth, filterByAssignedDepartments, isDeptScopedRole } from "@/lib/withAuth";
 import { parseAssignedDepartments, departmentsMatch } from "@/lib/roles";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
-import { sopFamilyGroupKey } from "@/lib/sop-utils";
+import { compareSopCodes, sopFamilyGroupKey } from "@/lib/sop-utils";
 import {
   MCQ_DEPARTMENT_ORDER,
   aggregateMcqBanksByFamily,
@@ -119,7 +119,7 @@ export async function GET() {
       if (!obsoleteMcqFamilyMap.has(famKey)) obsoleteMcqFamilyMap.set(famKey, fam);
     }
     const obsoleteMcqFamilies = [...obsoleteMcqFamilyMap.values()].sort((a, b) =>
-      a.identifier.localeCompare(b.identifier),
+      compareSopCodes(a.identifier, b.identifier),
     );
 
     // Active MCQ families only (must match an active SOP family)

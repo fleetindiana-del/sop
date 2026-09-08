@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { useSession } from "next-auth/react";
 import type { DashboardStats, RegistrySOP } from "@/lib/types";
 import {
@@ -39,10 +40,18 @@ import {
 import { BulkUploadAllModal } from "./BulkUploadAllModal";
 import { PipelineDock, ToastNotification } from "./PipelineDock";
 import { AdminToolsModal, ComplianceModal, GuidelinesPanel } from "./ExtraModals";
-import { AuditLogsModal } from "./AuditLogsModal";
 import GuidelinesComplianceWizard from "./GuidelinesComplianceWizard";
-import GuidelinesResultPanel, { type ComplianceResult } from "./GuidelinesResultPanel";
-import ComplianceFullViewer from "./ComplianceFullViewer";
+import type { ComplianceResult } from "./GuidelinesResultPanel";
+
+// Three panels the dashboard renders only on demand, and which together are a
+// sizeable slice of its bundle. They are already gated on state below, so
+// deferring the chunk changes nothing except when it is downloaded.
+const AuditLogsModal = dynamic(
+  () => import("./AuditLogsModal").then((m) => m.AuditLogsModal),
+  { ssr: false },
+);
+const GuidelinesResultPanel = dynamic(() => import("./GuidelinesResultPanel"), { ssr: false });
+const ComplianceFullViewer = dynamic(() => import("./ComplianceFullViewer"), { ssr: false });
 
 export function DashboardClient() {
   const { data: session, status: sessionStatus } = useSession();
@@ -540,7 +549,7 @@ export function DashboardClient() {
   // just the current page). Respects the active missing-data category so users
   // can export exactly what the registry is showing.
   const handleExportExcel = useCallback(() => {
-    exportSopsToExcel(filtered, filters);
+    void exportSopsToExcel(filtered, filters);
   }, [filtered, filters]);
 
   return (
@@ -726,8 +735,12 @@ export function DashboardClient() {
         </>
       )}
       <ToastNotification />
-      {userIsAdmin && (
-        <AuditLogsModal open={auditLogsOpen} onClose={() => setAuditLogsOpen(false)} />
+      {/* Gated on `auditLogsOpen` as well as the role so the lazy chunk is only
+          requested once the modal is actually opened. The component renders
+          null and skips its effects while closed, so not mounting it is
+          equivalent to mounting it closed. */}
+      {userIsAdmin && auditLogsOpen && (
+        <AuditLogsModal open onClose={() => setAuditLogsOpen(false)} />
       )}
     </div>
   );

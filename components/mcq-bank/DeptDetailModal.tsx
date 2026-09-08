@@ -18,6 +18,7 @@ import {
   Zap,
 } from "lucide-react";
 import { displaySopCode, displaySopTitle } from "@/lib/sop-display";
+import { compareSopCodes } from "@/lib/sop-utils";
 
 interface DeptSopEntry {
   sopId: string;
@@ -205,7 +206,7 @@ export function DeptDetailModal({ dept, deptColor, onClose, onViewMcqs }: DeptDe
       return s.sopCode.toLowerCase().includes(lc) || s.sopName.toLowerCase().includes(lc);
     });
     return [...filtered].sort((a, b) => {
-      const cmp = sortKey === "sopCode" ? a.sopCode.localeCompare(b.sopCode) : b[sortKey] - a[sortKey];
+      const cmp = sortKey === "sopCode" ? compareSopCodes(a.sopCode, b.sopCode) : b[sortKey] - a[sortKey];
       return sortDir === "desc" ? -cmp : cmp;
     });
   }, [sops, search, sortKey, sortDir]);

@@ -5,12 +5,18 @@ import {
   AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, CalendarPlus, ChevronDown, ClipboardList,
   Loader2, Pencil, Plus, RefreshCw, Search, Target, Trash2, X,
 } from 'lucide-react';
-import { TrainerExamCalendar } from '@/components/lms/TrainerExamCalendar';
+import dynamic from 'next/dynamic';
 import { countEmployeeUniqueSops, countUniqueSops, countUniqueSopsByMonth, listEmployeeUniqueSops, listUniqueSops, listUniqueSopsForMonth } from '@/lib/lmsTrainerExamCounts';
 import { localDateOnlyIso } from '@/lib/lmsTrainingCycle';
 import { deptMatchesTrainerScope, resolveTrainerDeptFilter } from '@/lib/lmsTrainerScope';
 import { displaySopCode } from '@/lib/sop-display';
-import { getExpiryTier } from '@/lib/sop-utils';
+import { compareSopCodes, getExpiryTier } from '@/lib/sop-utils';
+
+// FullCalendar (~260KB) is only needed once the scheduling dialog is opened.
+const TrainerExamCalendar = dynamic(
+  () => import('@/components/lms/TrainerExamCalendar').then((m) => m.TrainerExamCalendar),
+  { ssr: false },
+);
 
 export type ExamStatus = 'completed' | 'pending' | 'overdue';
 
@@ -376,7 +382,7 @@ function sortExamRows(a: MonthlyExamRow, b: MonthlyExamRow): number {
   const aMonth = a.year * 12 + a.month;
   const bMonth = b.year * 12 + b.month;
   if (aMonth !== bMonth) return aMonth - bMonth;
-  return a.sopCode.localeCompare(b.sopCode);
+  return compareSopCodes(a.sopCode, b.sopCode);
 }
 
 const EXAM_STATUS_RANK: Record<ExamStatus, number> = {
@@ -1015,7 +1021,7 @@ export function TrainerMonthlyExams({
     const detailRows = scopeRows
       .filter((r) => !r.isIgnored && codes.has(r.sopCode.trim().toUpperCase()))
       .sort((a, b) => {
-        const byCode = a.sopCode.localeCompare(b.sopCode);
+        const byCode = compareSopCodes(a.sopCode, b.sopCode);
         if (byCode !== 0) return byCode;
         return a.employeeName.localeCompare(b.employeeName);
       });
@@ -1041,7 +1047,7 @@ export function TrainerMonthlyExams({
     const codes = new Set(live.map((i) => i.sopCode));
     const detailRows = emp.rows
       .filter((r) => !r.isIgnored && codes.has(r.sopCode.trim().toUpperCase()))
-      .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+      .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
     setSopPopup({
       title: kind === 'completed'
         ? `Completed · ${emp.employeeName}`
@@ -2031,7 +2037,7 @@ function groupSopLines(
   }
   return [...grouped.entries()]
     .map(([sopCode, sopRows]) => toSopLine(sopCode, sopRows, catalog, sheets, scope))
-    .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+    .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
 }
 
 function formatShortDate(iso: string) {
@@ -3342,7 +3348,7 @@ function groupRowsByEmployee(rows: MonthlyExamRow[]) {
 
 function SopWiseSummaryTable({ rows }: { rows: MonthlyExamRow[] }) {
   const groups = groupRowsBySop(rows);
-  const sorted = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const sorted = [...groups.entries()].sort((a, b) => compareSopCodes(a[0], b[0]));
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200">
       <div className="max-h-[min(75vh,44rem)] overflow-auto">

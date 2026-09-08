@@ -1,4 +1,5 @@
-import * as XLSX from "xlsx";
+// The ~270KB "xlsx" runtime is loaded on demand inside exportSopsToExcel so the
+// dashboard bundle does not carry it for a button most sessions never press.
 import type { RegistrySOP, SOPFilters } from "@/lib/types";
 import { describeFilters } from "@/lib/filter-breadcrumb";
 
@@ -161,7 +162,8 @@ function slug(text: string): string {
  * The active filters are used only to label the file, sheet, and title row — the
  * `sops` array is the source of truth for what gets exported.
  */
-export function exportSopsToExcel(sops: RegistrySOP[], filters: SOPFilters): void {
+export async function exportSopsToExcel(sops: RegistrySOP[], filters: SOPFilters): Promise<void> {
+  const XLSX = await import("xlsx");
   const breadcrumb = describeFilters(filters);
   const contextLabel = breadcrumb.segments.length > 0 ? breadcrumb.segments.join(" · ") : "All SOPs";
   const today = new Date().toISOString().slice(0, 10);

@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -16,6 +16,8 @@ import { TrainerMonthlyExams, DeptFilterBtn } from '@/components/lms/TrainerMont
 import { TrainerRosterPanel } from '@/components/lms/TrainerRosterPanel';
 import { TrainerAttendancePanel } from '@/components/lms/TrainerAttendancePanel';
 import { isAdmin } from '@/lib/roles';
+import { readCachedValue, writeCachedValue } from '@/lib/clientCache';
+import { compareSopCodes } from '@/lib/sop-utils';
 
 type ScheduleStatus = 'ignored' | 'upcoming' | 'due' | 'overdue' | 'missed';
 type SopStatus = 'completed' | 'not_completed';
@@ -104,6 +106,11 @@ function statusLabel(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/** Cache key for the last dashboard payload of a department filter. */
+function trainerCacheKey(dept: string): string {
+  return `lms:trainer-dashboard:v1:${dept}`;
+}
+
 export default function LmsTrainerPage() {
   const router = useRouter();
   const { data: appSession } = useSession();
@@ -113,6 +120,15 @@ export default function LmsTrainerPage() {
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('monthly');
   const [dept, setDept] = useState('All');
+  // SOP Admin lands on QA's schedule by default (most relevant to them), not
+  // the mixed all-department view. Applied once, and only while the filter
+  // still holds its initial value — never overrides a deliberate change.
+  const appliedDefaultDept = useRef(false);
+  useEffect(() => {
+    if (appliedDefaultDept.current || !appSession?.user?.role) return;
+    appliedDefaultDept.current = true;
+    if (isAdmin(appSession.user.role)) setDept((d) => (d === 'All' ? 'QA' : d));
+  }, [appSession]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   /** Empty = all months. Matrix views can multi-select. */
   const [monthFilter, setMonthFilter] = useState<number[]>([]);
@@ -132,7 +148,6 @@ export default function LmsTrainerPage() {
   const [assignBusy, setAssignBusy] = useState(false);
 
   const load = useCallback(async (force = false) => {
-    setLoading(true);
     setError('');
     try {
       const q = dept !== 'All' ? `?department=${encodeURIComponent(dept)}` : '';
@@ -149,6 +164,7 @@ export default function LmsTrainerPage() {
       }
       if (!res.ok) throw new Error(json.error || 'Failed to load trainer dashboard');
       setData(json);
+      writeCachedValue(trainerCacheKey(dept), json);
       void force;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load');
@@ -158,8 +174,17 @@ export default function LmsTrainerPage() {
   }, [dept, router]);
 
   useEffect(() => {
+    // First paint from the last response for this department filter; `load`
+    // below refetches unconditionally, so the view never settles on stale data.
+    const cached = readCachedValue<DashboardPayload>(trainerCacheKey(dept));
+    if (cached) {
+      setData(cached.value);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     void load();
-  }, [load]);
+  }, [load, dept]);
 
   const records = data?.records ?? [];
   const depts = data?.trainer.trainerDepartments ?? [];
@@ -275,7 +300,7 @@ export default function LmsTrainerPage() {
     const q = search.trim().toLowerCase();
     return [...byKey.values()]
       .filter((row) => !q || `${row.sopCode} ${row.sopName}`.toLowerCase().includes(q))
-      .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+      .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
   }, [records, dept, monthFilter, statusFilter, search]);
 
   const totals = data?.statusTotals;

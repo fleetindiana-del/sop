@@ -20,6 +20,7 @@ import {
   getEmployeeAssignmentsMap,
   employeeAssignmentMapKey,
 } from "@/lib/employeeAssignments";
+import { compareSopCodes } from "@/lib/sop-utils";
 import {
   getManageSopViewCacheEntry,
   getManageSopViewMemoryEntry,
@@ -1493,7 +1494,7 @@ async function buildManageSopViewResponse(
         const ra = deptRank(a);
         const rb = deptRank(b);
         if (ra !== rb) return ra - rb;
-        return a.sopCode.localeCompare(b.sopCode);
+        return compareSopCodes(a.sopCode, b.sopCode);
       }),
       departments,
       designationsByDept: designationsByDeptObj,

@@ -24,6 +24,11 @@ import {
 } from '@/lib/employeeInduction';
 import { EMPLOYEE_DEPARTMENTS, parseTrainerDepartments } from '@/lib/employeeTrainer';
 import { bustEmployeeClientCaches } from '@/lib/employeeClientCache';
+import { readCachedValue, writeCachedValue } from '@/lib/clientCache';
+import { SortableTh, compareText, toggleSortDir, type SortState } from '@/components/shared/SortableTh';
+
+/** Bump the suffix when the employee payload shape changes. */
+const EMPLOYEES_CACHE_KEY = 'employees:roster:v1';
 
 const FALLBACK_DEPARTMENTS = [...EMPLOYEE_DEPARTMENTS];
 
@@ -573,6 +578,8 @@ function DeleteConfirm({
   );
 }
 
+type DeletedEmpSortKey = 'name' | 'department' | 'status' | 'removed';
+
 function DeletedEmployeesPanel({
   employees,
   loading,
@@ -587,10 +594,12 @@ function DeletedEmployeesPanel({
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [sort, setSort] = useState<SortState<DeletedEmpSortKey>>({ key: 'name', dir: 'asc' });
+  const toggleDeletedSort = (key: DeletedEmpSortKey) => setSort((s) => toggleSortDir(s, key));
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return employees.filter((e) => {
+    const filtered = employees.filter((e) => {
       if (!term) return true;
       return (
         e.name.toLowerCase().includes(term) ||
@@ -598,7 +607,20 @@ function DeletedEmployeesPanel({
         e.department.toLowerCase().includes(term)
       );
     });
-  }, [employees, search]);
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      switch (sort.key) {
+        case 'department':
+          return (compareText(a.department, b.department) || compareText(a.name, b.name)) * dir;
+        case 'status':
+          return (compareText(a.deletedKind || '', b.deletedKind || '') || compareText(a.name, b.name)) * dir;
+        case 'removed':
+          return (compareText(a.deletedAt || '', b.deletedAt || '') || compareText(a.name, b.name)) * dir;
+        default:
+          return compareText(a.name, b.name) * dir;
+      }
+    });
+  }, [employees, search, sort]);
 
   const restore = async (emp: Employee) => {
     setBusyId(emp._id);
@@ -668,10 +690,31 @@ function DeletedEmployeesPanel({
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-500">
                 <tr>
-                  <th className="px-5 py-2.5">Employee</th>
-                  <th className="px-3 py-2.5">Dept</th>
-                  <th className="px-3 py-2.5">Status</th>
-                  <th className="px-3 py-2.5">Removed</th>
+                  <SortableTh
+                    label="Employee"
+                    active={sort.key === 'name'}
+                    dir={sort.dir}
+                    onClick={() => toggleDeletedSort('name')}
+                    className="px-5"
+                  />
+                  <SortableTh
+                    label="Dept"
+                    active={sort.key === 'department'}
+                    dir={sort.dir}
+                    onClick={() => toggleDeletedSort('department')}
+                  />
+                  <SortableTh
+                    label="Status"
+                    active={sort.key === 'status'}
+                    dir={sort.dir}
+                    onClick={() => toggleDeletedSort('status')}
+                  />
+                  <SortableTh
+                    label="Removed"
+                    active={sort.key === 'removed'}
+                    dir={sort.dir}
+                    onClick={() => toggleDeletedSort('removed')}
+                  />
                   <th className="w-28 px-3 py-2.5" />
                 </tr>
               </thead>
@@ -886,20 +929,52 @@ export default function EmployeesPage() {
     }
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // No `setLoading(true)` here: `loading` starts true for the first paint, and
+  // the effect below clears it as soon as a cached roster is on screen. Raising
+  // it again would replace that roster with a spinner on every revalidation.
+  const loadRoster = useCallback(async () => {
     try {
       const res  = await fetch('/api/employees?includeInactive=1&skipSync=1');
       const json = await res.json();
-      setEmployees(json.employees || []);
+      const roster = (json.employees || []) as Employee[];
+      setEmployees(roster);
+      writeCachedValue(EMPLOYEES_CACHE_KEY, roster);
     } finally {
       setLoading(false);
     }
-    void loadTraining(activeDept !== 'All' ? activeDept : undefined);
-    void loadDeleted();
-  }, [loadTraining, loadDeleted, activeDept]);
+  }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // The roster, the left-employee list and the training map are independent
+  // reads — awaiting the roster before starting the other two made opening the
+  // page cost two round-trips instead of one.
+  const load = useCallback(async () => {
+    await Promise.all([
+      loadRoster(),
+      loadDeleted(),
+      loadTraining(activeDept !== 'All' ? activeDept : undefined),
+    ]);
+  }, [loadRoster, loadTraining, loadDeleted, activeDept]);
+
+  // Paint the last known roster immediately, then let the effects below refresh
+  // it. The cached copy is only ever the first frame — every mount refetches.
+  useEffect(() => {
+    const cached = readCachedValue<Employee[]>(EMPLOYEES_CACHE_KEY);
+    if (cached) {
+      setEmployees(cached.value);
+      setLoading(false);
+    }
+  }, []);
+
+  // Roster and left employees do not vary by the selected department tab, so
+  // they load once; only the training map is re-read when the tab changes.
+  useEffect(() => {
+    void loadRoster();
+    void loadDeleted();
+  }, [loadRoster, loadDeleted]);
+
+  useEffect(() => {
+    void loadTraining(activeDept !== 'All' ? activeDept : undefined);
+  }, [loadTraining, activeDept]);
 
   useEffect(() => {
     let cancelled = false;

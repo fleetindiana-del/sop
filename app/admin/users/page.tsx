@@ -7,6 +7,7 @@ import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { isLearnerOnly } from '@/lib/page-access';
 import { resolveTrainerFlag } from '@/lib/roles';
 import { clearLmsClientCache } from '@/lib/lmsCache';
+import { readCachedValue, writeCachedValue } from '@/lib/clientCache';
 import { AuditLogsModal } from '@/components/dashboard/AuditLogsModal';
 import {
   ArrowDown,
@@ -74,11 +75,14 @@ const ROLE_LABEL: Record<AppRole, string> = {
   trainer: 'Trainer',
   viewer: 'Viewer',
 };
+/** Bump the suffix when the user payload shape changes. */
+const USERS_CACHE_KEY = 'admin:users:v1';
+
 /**
  * Only used until `/api/departments` answers — the real catalogue is loaded at
  * mount so a department added after this file was written is still selectable.
  */
-const FALLBACK_DEPARTMENTS = ['QA', 'QC', 'Microbiology', 'Production', 'Store', 'Engineering', 'Personnel'];
+const FALLBACK_DEPARTMENTS =['QA', 'QC', 'Microbiology', 'Production', 'Store', 'Engineering', 'Personnel'];
 
 const ROLE_STYLE: Record<AppRole, string> = {
   admin: 'bg-violet-100 text-violet-800 border-violet-200',
@@ -259,13 +263,13 @@ export default function AdminUsersPage() {
   const [auditUser, setAuditUser] = useState<AppUser | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
     setError('');
     try {
       const res = await fetch('/api/admin/users');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load users');
       setUsers(data.users || []);
+      writeCachedValue(USERS_CACHE_KEY, data.users || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load users');
     } finally {
@@ -274,6 +278,13 @@ export default function AdminUsersPage() {
   }, []);
 
   useEffect(() => {
+    // Paint the previous list immediately; `load` below always refetches, so
+    // what settles on screen is the server's current answer.
+    const cached = readCachedValue<AppUser[]>(USERS_CACHE_KEY);
+    if (cached) {
+      setUsers(cached.value);
+      setLoading(false);
+    }
     void load();
   }, [load]);
 

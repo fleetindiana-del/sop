@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { isAdmin } from '@/lib/roles';
 import {
   ArrowLeft, Loader2, RefreshCw, Search, ChevronDown, X,
 } from 'lucide-react';
@@ -427,7 +428,7 @@ type ViewMode = 'employee' | 'sop';
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function EmployeeTrainingDashboardPage() {
-  const { status: authStatus } = useSession();
+  const { data: session, status: authStatus } = useSession();
   const router = useRouter();
 
   const [records, setRecords] = useState<EmployeeTrainingRecord[]>([]);
@@ -435,6 +436,15 @@ export default function EmployeeTrainingDashboardPage() {
   const [sopStats, setSopStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [dept,    setDept]    = useState('All');
+  // SOP Admin lands on QA's schedule by default (most relevant to them), not
+  // the mixed all-department view. Applied once, and only while the filter
+  // still holds its initial value — never overrides a deliberate change.
+  const appliedDefaultDept = useRef(false);
+  useEffect(() => {
+    if (appliedDefaultDept.current || !session?.user?.role) return;
+    appliedDefaultDept.current = true;
+    if (isAdmin(session.user.role)) setDept((d) => (d === 'All' ? 'QA' : d));
+  }, [session]);
   const [search,  setSearch]  = useState('');
   const [empFilter, setEmpFilter] = useState<EmpCapsuleFilter>(DEFAULT_EMP_FILTER);
   const [sopFilter, setSopFilter] = useState<'all' | SopStatus>('all');

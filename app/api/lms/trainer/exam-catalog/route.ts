@@ -3,6 +3,7 @@ import { requireLmsTrainer, deptMatchesTrainerScope } from '@/lib/lmsTrainerAuth
 import { buildSopList } from '@/app/api/lms/admin/sop-exam-settings/route';
 import { getOrBuildLmsCache, lmsServerKeys, lmsServerTtl } from '@/lib/lmsCache';
 import { buildTrainerMcqCatalogMap } from '@/lib/trainerMcqCatalog';
+import { compareSopCodes } from '@/lib/sop-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,7 +54,7 @@ export async function GET() {
           passingScore: settings?.effective.passingScore,
         };
       })
-      .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+      .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
 
     return NextResponse.json({
       departments: depts,

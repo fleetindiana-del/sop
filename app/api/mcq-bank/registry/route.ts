@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth, filterByAssignedDepartments } from "@/lib/withAuth";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
-import { sopFamilyGroupKey } from "@/lib/sop-utils";
+import { compareSopCodes, sopFamilyGroupKey } from "@/lib/sop-utils";
 import {
   deriveMcqAnnexureStatus,
   type McqAnnexureStatus,
@@ -332,7 +332,7 @@ async function buildFullRegistry() {
   const obsoleteMcqFamilies = [...new Map([
     ...orphanFamilies.map((f) => [f.famKey, f] as const),
     ...[...markedObsoleteFamilies.values()].map((f) => [f.famKey, f] as const),
-  ]).values()].sort((a, b) => a.identifier.localeCompare(b.identifier));
+  ]).values()].sort((a, b) => compareSopCodes(a.identifier, b.identifier));
   const obsoleteFamKeys = new Set(obsoleteMcqFamilies.map((f) => f.famKey));
 
   const activeBanksByFamily = foldBanks(

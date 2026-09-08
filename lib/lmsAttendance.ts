@@ -17,6 +17,7 @@ import TrainingAttendance, {
   type ITrainingAttendance,
 } from '@/models/lms/TrainingAttendance';
 import { toDateOnlyIso } from '@/lib/trainingExamSchedule';
+import { compareSopCodes } from '@/lib/sop-utils';
 import type { TrainerScopedEmployee } from '@/lib/lmsTrainerEmployees';
 import { departmentAliasStrings } from '@/lib/trainingMatrixDepartments';
 
@@ -238,7 +239,7 @@ export function buildTrainableSopList(
     }
   }
 
-  return [...byCode.values()].sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+  return [...byCode.values()].sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
 }
 
 /** Per-employee roll-up across the given sheets, for the report view. */

@@ -15,6 +15,7 @@
 import LearningProgress from '@/models/lms/LearningProgress';
 import ScheduledExam, { type IScheduledExam } from '@/models/lms/ScheduledExam';
 import { toDateOnlyIso } from '@/lib/trainingExamSchedule';
+import { isSopComplete } from '@/lib/lmsCompletion';
 import {
   currentDesignationById,
   type EmployeeMasterIndex,
@@ -89,9 +90,28 @@ export function computeExamStatus(
   return dueDay < utcToday(now) ? 'overdue' : 'pending';
 }
 
-/** True when the learner finished this SOP's assessment in either language. */
-export function isExamCompleted(progress: ExamProgress | undefined): boolean {
+/**
+ * True when the learner finished this SOP's assessment in either language —
+ * or, for an SOP with no assessment, finished every other available step.
+ *
+ * When `availableSteps` is supplied this defers to {@link isSopComplete}, the
+ * single canonical completion rule, so trainer/admin exam boards agree with
+ * the learner's own LMS. Without it (callers that have no journey content on
+ * hand), this falls back to a quiz-only check.
+ */
+export function isExamCompleted(
+  progress: ExamProgress | undefined,
+  availableSteps?: readonly string[],
+): boolean {
   if (!progress) return false;
+  if (availableSteps) {
+    return isSopComplete({
+      steps: progress.steps,
+      availableSteps,
+      status: progress.status,
+      overallPercentage: progress.overallPercentage,
+    });
+  }
   if (progress.status === 'completed' && (progress.overallPercentage ?? 0) >= 100) return true;
   const steps = progress.steps || {};
   for (const key of ['quiz', 'quizGu'] as const) {

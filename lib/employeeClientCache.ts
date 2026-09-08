@@ -12,6 +12,7 @@
  */
 
 import { LMS_CACHE_KEY } from '@/lib/lmsCache';
+import { dropCachedValues } from '@/lib/clientCache';
 
 const MANAGE_SOP_VIEW_LOCAL_CACHE_KEY = 'manage_sop_view_cache_v10';
 const TRAINING_MATRIX_OVERVIEW_CACHE_KEY = 'training_matrix_overview_cache_v6';
@@ -31,4 +32,8 @@ export function bustEmployeeClientCaches(): void {
   } catch {
     /* storage unavailable — non-fatal */
   }
+  // Shared stale-while-revalidate store (lib/clientCache): the Employees and
+  // Designation/Login admin pages keep their rosters there.
+  dropCachedValues('employees:');
+  dropCachedValues('admin:');
 }

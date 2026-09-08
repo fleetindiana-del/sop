@@ -4,6 +4,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { bustEmployeeClientCaches } from '@/lib/employeeClientCache';
+import { readCachedValue, writeCachedValue } from '@/lib/clientCache';
+import { SortableTh, compareText, toggleSortDir, type SortState } from '@/components/shared/SortableTh';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -19,6 +21,9 @@ import {
   X,
 } from 'lucide-react';
 
+/** Bump the suffix when the designation payload shape changes. */
+const DESIGNATIONS_CACHE_KEY = 'admin:designations:v1';
+
 interface Designation {
   id: string;
   name: string;
@@ -30,6 +35,8 @@ interface Designation {
   createdAt?: string;
   updatedAt?: string;
 }
+
+type DesignationSortKey = 'name' | 'description' | 'employeeCount' | 'isActive';
 
 interface DesignationEmployee {
   id: string;
@@ -88,6 +95,7 @@ export default function DesignationMasterPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<SortState<DesignationSortKey>>({ key: 'name', dir: 'asc' });
 
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Designation | null>(null);
@@ -112,7 +120,6 @@ export default function DesignationMasterPage() {
   const [employeeListSearch, setEmployeeListSearch] = useState('');
 
   const load = useCallback(async () => {
-    setLoading(true);
     setError('');
     try {
       const res = await fetch('/api/designations?withCounts=1&includeInactive=1');
@@ -122,6 +129,7 @@ export default function DesignationMasterPage() {
         return;
       }
       setDesignations(json.designations || []);
+      writeCachedValue(DESIGNATIONS_CACHE_KEY, json.designations || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load designations');
     } finally {
@@ -161,17 +169,39 @@ export default function DesignationMasterPage() {
   }, []);
 
   useEffect(() => {
+    // Paint the previous list immediately; `load` always refetches behind it.
+    const cached = readCachedValue<Designation[]>(DESIGNATIONS_CACHE_KEY);
+    if (cached) {
+      setDesignations(cached.value);
+      setLoading(false);
+    }
     void load();
     void loadAudit();
   }, [load, loadAudit]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return designations;
-    return designations.filter(
-      (d) => d.name.toLowerCase().includes(q) || d.description.toLowerCase().includes(q),
-    );
-  }, [designations, search]);
+    const rows = q
+      ? designations.filter(
+          (d) => d.name.toLowerCase().includes(q) || d.description.toLowerCase().includes(q),
+        )
+      : designations;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      switch (sort.key) {
+        case 'description':
+          return (compareText(a.description, b.description) || compareText(a.name, b.name)) * dir;
+        case 'employeeCount':
+          return (a.employeeCount - b.employeeCount || compareText(a.name, b.name)) * dir;
+        case 'isActive':
+          return (Number(b.isActive) - Number(a.isActive) || compareText(a.name, b.name)) * dir;
+        default:
+          return compareText(a.name, b.name) * dir;
+      }
+    });
+  }, [designations, search, sort]);
+
+  const toggleDesignationSort = (key: DesignationSortKey) => setSort((s) => toggleSortDir(s, key));
 
   const openEmployeeList = useCallback(async (d: Designation) => {
     if (d.employeeCount === 0) return;
@@ -428,10 +458,32 @@ export default function DesignationMasterPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-200 bg-gray-50">
               <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-gray-700">
-                <th className="px-4 py-2.5">Designation</th>
-                <th className="px-4 py-2.5">Description</th>
-                <th className="px-4 py-2.5 text-center">Employees</th>
-                <th className="px-4 py-2.5 text-center">Status</th>
+                <SortableTh
+                  label="Designation"
+                  active={sort.key === 'name'}
+                  dir={sort.dir}
+                  onClick={() => toggleDesignationSort('name')}
+                />
+                <SortableTh
+                  label="Description"
+                  active={sort.key === 'description'}
+                  dir={sort.dir}
+                  onClick={() => toggleDesignationSort('description')}
+                />
+                <SortableTh
+                  label="Employees"
+                  align="center"
+                  active={sort.key === 'employeeCount'}
+                  dir={sort.dir}
+                  onClick={() => toggleDesignationSort('employeeCount')}
+                />
+                <SortableTh
+                  label="Status"
+                  align="center"
+                  active={sort.key === 'isActive'}
+                  dir={sort.dir}
+                  onClick={() => toggleDesignationSort('isActive')}
+                />
                 <th className="px-4 py-2.5 text-right">Actions</th>
               </tr>
             </thead>

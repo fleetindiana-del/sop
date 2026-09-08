@@ -18,6 +18,11 @@ import dynamic from 'next/dynamic';
 import { exportComplianceReportToPdf } from '@/lib/complianceReportPdf';
 import { PendingRunRequests } from '@/components/compliance/PendingRunRequests';
 import { ComplianceModuleNav } from '@/components/compliance/ComplianceModuleNav';
+import { readCachedValue, writeCachedValue } from '@/lib/clientCache';
+
+/** Bump the suffixes when either payload shape changes. */
+const COMPLIANCE_SOPS_CACHE_KEY = 'compliance:sops:v1';
+const COMPLIANCE_REPORTS_CACHE_KEY = 'compliance:reports:v1';
 
 const FinalSopModal = dynamic(() => import('@/components/compliance/FinalSopModal'), { ssr: false });
 const SopSourcePreviewModal = dynamic(() => import('@/components/compliance/SopSourcePreviewModal'), { ssr: false });
@@ -876,7 +881,6 @@ export default function ComplianceEnginePage() {
   const [uploadResults, setUploadResults] = useState<{ name: string; clauses: number; status: string; error?: string; folder?: string }[] | null>(null);
 
   const fetchSops = async () => {
-    setLoadingSops(true);
     try {
       const res = await fetch('/api/compliance/sops');
       const data = await res.json();
@@ -885,6 +889,11 @@ export default function ComplianceEnginePage() {
         setSops(loaded);
         setSopTotal(data.total ?? loaded.length ?? 0);
         setDepartments(data.departments ?? []);
+        writeCachedValue(COMPLIANCE_SOPS_CACHE_KEY, {
+          sops: loaded,
+          total: data.total ?? loaded.length ?? 0,
+          departments: data.departments ?? [],
+        });
         // Keep existing selection on refresh; do not auto-select the entire library.
         setSelectedSopIds((prev) => {
           if (prev.size === 0) return prev;
@@ -943,11 +952,13 @@ export default function ComplianceEnginePage() {
   };
 
   const fetchReports = async () => {
-    setLoadingReports(true);
     try {
       const res = await fetch('/api/compliance/analyze');
       const data = await res.json();
-      if (data.success) setReports(data.reports ?? []);
+      if (data.success) {
+        setReports(data.reports ?? []);
+        writeCachedValue(COMPLIANCE_REPORTS_CACHE_KEY, data.reports ?? []);
+      }
     } catch { /* silent */ } finally { setLoadingReports(false); }
   };
 
@@ -1088,6 +1099,30 @@ export default function ComplianceEnginePage() {
   };
 
   useEffect(() => {
+    // Paint the SOP library and the report list from the previous visit so the
+    // wizard is usable straight away; the fetches below always run and replace
+    // both with the server's current answer. Guideline selection is deliberately
+    // not seeded from cache — its default "select everything" would then be
+    // computed from a stale list.
+    const cachedSops = readCachedValue<{ sops: SOP[]; total: number; departments: string[] }>(
+      COMPLIANCE_SOPS_CACHE_KEY,
+    );
+    if (cachedSops) {
+      setSops(cachedSops.value.sops);
+      setSopTotal(cachedSops.value.total);
+      setDepartments(cachedSops.value.departments);
+      setLoadingSops(false);
+    } else {
+      setLoadingSops(true);
+    }
+    const cachedReports = readCachedValue<ComplianceReport[]>(COMPLIANCE_REPORTS_CACHE_KEY);
+    if (cachedReports) {
+      setReports(cachedReports.value);
+      setLoadingReports(false);
+    } else {
+      setLoadingReports(true);
+    }
+
     fetchSops();
     fetchGuidelines();
     fetchReports();

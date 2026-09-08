@@ -15,11 +15,20 @@ import React, {
 } from 'react';
 import { Search, Download, ArrowLeft, Filter, ScrollText, Users, Tag, Wand2, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
-import * as XLSX from 'xlsx';
+// Type-only: the ~270KB 'xlsx' runtime is loaded on demand by handleExport.
+import type * as XLSX from 'xlsx';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { sopCodeMatchesSearch } from '@/lib/sopIdentifierNormalize';
-import TrainingCalendar from '@/components/training-matrix/TrainingCalendar';
+import { compareSopCodes } from '@/lib/sop-utils';
+
+// FullCalendar (~260KB) only matters in the calendar view mode, which most
+// sessions never open — keep it out of the initial Manage SOP bundle.
+const TrainingCalendar = dynamic(
+  () => import('@/components/training-matrix/TrainingCalendar'),
+  { ssr: false },
+);
 
 const MONTH_SHORT = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 const MONTH_FULL = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
@@ -687,7 +696,7 @@ function ManageSOPDashboard() {
         }
       }
 
-      sops.sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+      sops.sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
       setEmpModal(prev => (prev ? { ...prev, sops, loading: false } : null));
     } catch (err) {
       setEmpModal(prev =>
@@ -1238,7 +1247,7 @@ function ManageSOPDashboard() {
     for (const dept of viewData.departments || []) {
       const group = byDept.get(dept);
       if (!group) continue;
-      group.sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+      group.sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
 
       // Seed the affinity centre from the department's EXISTING assignments so new
       // SOPs cluster near where the department already trains.
@@ -1733,13 +1742,13 @@ function ManageSOPDashboard() {
     };
 
     const cmp = (a: ManageSOPViewResponse['sops'][0], b: ManageSOPViewResponse['sops'][0]) => {
+      if (sortKey === 'sopCode') {
+        const naturalCmp = compareSopCodes(a.sopCode || '', b.sopCode || '');
+        return sortDir === 'asc' ? naturalCmp : -naturalCmp;
+      }
       let va: string | number = 0;
       let vb: string | number = 0;
       switch (sortKey) {
-        case 'sopCode':
-          va = (a.sopCode || '').toLowerCase();
-          vb = (b.sopCode || '').toLowerCase();
-          break;
         case 'sopName':
           va = (a.sopName || '').toLowerCase();
           vb = (b.sopName || '').toLowerCase();
@@ -1931,7 +1940,7 @@ function ManageSOPDashboard() {
           designations: collectDesignations(sop, scope.dept),
           trainingEvents: sumTrainingEvents(sop, scope.dept, scope.month),
         }))
-        .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+        .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
     }
 
     if (scope.kind === 'month-total') {
@@ -1949,7 +1958,7 @@ function ManageSOPDashboard() {
             trainingEvents: sumTrainingEvents(sop, ds?.department, scope.month),
           };
         })
-        .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+        .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
     }
 
     if (scope.kind === 'dept-total') {
@@ -1972,7 +1981,7 @@ function ManageSOPDashboard() {
           const am = MONTH_SHORT.indexOf(a.scheduledMonthName || '');
           const bm = MONTH_SHORT.indexOf(b.scheduledMonthName || '');
           if (am !== bm) return am - bm;
-          return a.sopCode.localeCompare(b.sopCode);
+          return compareSopCodes(a.sopCode, b.sopCode);
         });
     }
 
@@ -1993,7 +2002,7 @@ function ManageSOPDashboard() {
           trainingEvents: sumTrainingEvents(sop),
         };
       })
-      .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+      .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
   };
 
   const popupHeader = (scope: CountScope): { title: string; subtitle: string; dept: string } => {
@@ -2077,7 +2086,7 @@ function ManageSOPDashboard() {
   //   • Body : one row per employee → name, designation, then √ / X per SOP
   //            (√ when the SOP is assigned to that employee's designation in this dept).
   // Returns null when the department has no assigned SOPs so it can be skipped.
-  const buildDeptMatrixSheet = (dept: string): XLSX.WorkSheet | null => {
+  const buildDeptMatrixSheet = (xlsx: typeof XLSX, dept: string): XLSX.WorkSheet | null => {
     if (!viewData) return null;
     const designationsByDept = viewData.designationsByDept || {};
     const manualDesignations = viewData.manualDesignations || {};
@@ -2115,7 +2124,7 @@ function ManageSOPDashboard() {
       const ma = a.month || 13;
       const mb = b.month || 13;
       if (ma !== mb) return ma - mb;
-      return a.code.localeCompare(b.code);
+      return compareSopCodes(a.code, b.code);
     });
 
     const monthLabel = (m: number) => (m >= 1 && m <= 12 ? MONTH_FULL[m - 1] : 'NOT SCHEDULED');
@@ -2150,41 +2159,42 @@ function ManageSOPDashboard() {
       aoa.push(row);
     }
 
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const ws = xlsx.utils.aoa_to_sheet(aoa);
     ws['!merges'] = merges;
     ws['!cols'] = [{ wch: 22 }, { wch: 16 }, ...cols.map(() => ({ wch: 9 }))];
     return ws;
   };
 
   // target: 'all' → one workbook with a sheet per department; otherwise a single dept file.
-  const handleExport = (target: 'all' | string = 'all') => {
+  const handleExport = async (target: 'all' | string = 'all') => {
     if (!viewData) return;
     setExportMenuOpen(false);
+    const xlsx = await import('xlsx');
     const departments = viewData.departments || [];
-    const wb = XLSX.utils.book_new();
+    const wb = xlsx.utils.book_new();
     const date = new Date().toISOString().split('T')[0];
 
     if (target === 'all') {
       let any = false;
       for (const dept of departments) {
-        const ws = buildDeptMatrixSheet(dept);
+        const ws = buildDeptMatrixSheet(xlsx, dept);
         if (!ws) continue;
-        XLSX.utils.book_append_sheet(wb, ws, dept.slice(0, 31));
+        xlsx.utils.book_append_sheet(wb, ws, dept.slice(0, 31));
         any = true;
       }
       if (!any) {
         setApplyMsg({ kind: 'err', text: 'No assigned SOPs to export.' });
         return;
       }
-      XLSX.writeFile(wb, `Training Matrix_All Departments_${date}.xlsx`);
+      xlsx.writeFile(wb, `Training Matrix_All Departments_${date}.xlsx`);
     } else {
-      const ws = buildDeptMatrixSheet(target);
+      const ws = buildDeptMatrixSheet(xlsx, target);
       if (!ws) {
         setApplyMsg({ kind: 'err', text: `No assigned SOPs for ${target}.` });
         return;
       }
-      XLSX.utils.book_append_sheet(wb, ws, target.slice(0, 31));
-      XLSX.writeFile(wb, `Training Matrix_${target}_${date}.xlsx`);
+      xlsx.utils.book_append_sheet(wb, ws, target.slice(0, 31));
+      xlsx.writeFile(wb, `Training Matrix_${target}_${date}.xlsx`);
     }
   };
 

@@ -5,7 +5,7 @@ import SOP from "@/models/SOP";
 import User from "@/models/User";
 import { requireAuth, forbidUnlessDepartmentAccess } from "@/lib/withAuth";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
-import { sopFamilyGroupKey } from "@/lib/sop-utils";
+import { compareSopCodes, sopFamilyGroupKey } from "@/lib/sop-utils";
 import {
   aggregateMcqBanksByFamily,
   buildActiveSopFamilyMap,
@@ -241,7 +241,7 @@ export async function GET(request: NextRequest) {
         mcqBanks: bank?.banks ?? [],
         lastUpdated: bank?.lastUpdated?.toISOString() ?? null,
       };
-    }).sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+    }).sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
 
     // ── 5. Department totals ─────────────────────────────────────────────────
     const withMcqs = sopList.filter((s) => s.hasMcq).length;

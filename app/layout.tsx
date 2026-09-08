@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/components/providers/AuthProvider";
 import { ComplianceRunHost } from "@/components/compliance/ComplianceRunHost";
 import { GlobalSidebar } from "@/components/GlobalSidebar";
+import { RoutePrefetcher } from "@/components/RoutePrefetcher";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -42,6 +43,7 @@ export default function RootLayout({
         <AuthProvider>
           {children}
           <GlobalSidebar />
+          <RoutePrefetcher />
           <ComplianceRunHost />
         </AuthProvider>
       </body>

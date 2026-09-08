@@ -17,7 +17,7 @@ import SopExamSettings, {
 } from '@/models/lms/SopExamSettings';
 import MCQBank from '@/models/MCQBank';
 import { getGroupedRegistryRows } from '@/lib/dashboardRegistrySource';
-import { baseIdentifierFromIdentifier, sopFamilyGroupKey, sortByDeptOrder } from '@/lib/sop-utils';
+import { baseIdentifierFromIdentifier, compareSopCodes, sopFamilyGroupKey, sortByDeptOrder } from '@/lib/sop-utils';
 import { buildActiveSopFamilyMap } from '@/lib/mcq-bank-utils';
 import {
   getDashboardDepartments,
@@ -265,7 +265,7 @@ export async function buildSopList() {
       const ordered = sortByDeptOrder([a.department, b.department]);
       if (ordered[0] === a.department && ordered[0] !== b.department) return -1;
       if (ordered[0] === b.department && ordered[0] !== a.department) return 1;
-      return a.sopCode.localeCompare(b.sopCode);
+      return compareSopCodes(a.sopCode, b.sopCode);
     })
     .map((fam) => {
       const override = settingsByCode.get(fam.sopCode);

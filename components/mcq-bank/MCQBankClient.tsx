@@ -30,11 +30,13 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { readCachedValue, writeCachedValue } from "@/lib/clientCache";
 import { MCQViewerModal } from "./MCQViewerModal";
 import { DeptDetailModal } from "./DeptDetailModal";
 import { DeptGridSkeleton } from "./MCQSkeleton";
 import { displaySopCode, displaySopTitle } from "@/lib/sop-display";
 import { normalizeSopIdentifierKey } from "@/lib/sopIdentifierNormalize";
+import { compareSopCodes } from "@/lib/sop-utils";
 import {
   mcqAnnexureStatusClass,
   mcqAnnexureStatusTitle,
@@ -42,6 +44,10 @@ import {
 } from "@/lib/mcqAnnexureStatus";
 import { isAdmin } from "@/lib/roles";
 import type { AppRole } from "@/lib/auth";
+
+/** Bump the suffixes when either payload shape changes. */
+const MCQ_STATS_CACHE_KEY = "mcq-bank:stats:v1";
+const MCQ_REGISTRY_CACHE_KEY = "mcq-bank:registry:v1";
 
 type McqGenProvider = "claude" | "codex" | "ollama";
 
@@ -1717,12 +1723,13 @@ export function MCQBankClient() {
   const mcqRegistryRef = useRef<HTMLDivElement>(null);
 
   const fetchStats = useCallback(async () => {
-    setStatsLoading(true);
     setStatsError(null);
     try {
       const statsRes = await fetch("/api/mcq-bank/stats");
       if (!statsRes.ok) throw new Error((await statsRes.json()).error ?? "Failed to load MCQ stats");
-      setStats(await statsRes.json());
+      const data = await statsRes.json();
+      setStats(data);
+      writeCachedValue(MCQ_STATS_CACHE_KEY, data);
     } catch (e) {
       setStatsError(e instanceof Error ? e.message : "Failed to load stats");
     } finally {
@@ -1731,7 +1738,6 @@ export function MCQBankClient() {
   }, []);
 
   const fetchRegistry = useCallback(async () => {
-    setRegLoading(true);
     setRegError(null);
     try {
       const res = await fetch("/api/mcq-bank/registry?all=1");
@@ -1739,9 +1745,32 @@ export function MCQBankClient() {
       const data = await res.json();
       setAllActiveEntries(data.active ?? []);
       setAllObsoleteEntries(data.obsolete ?? []);
+      writeCachedValue(MCQ_REGISTRY_CACHE_KEY, {
+        active: data.active ?? [],
+        obsolete: data.obsolete ?? [],
+      });
     } catch (e) {
       setRegError(e instanceof Error ? e.message : "Failed to load registry");
     } finally {
+      setRegLoading(false);
+    }
+  }, []);
+
+  // Paint whatever the last visit left behind, then always refetch. The stats
+  // header and the registry table are the two things this page waits on, and
+  // both are large enough that a cold fetch used to leave it blank for seconds.
+  useEffect(() => {
+    const cachedStats = readCachedValue<MCQBankGlobalStats>(MCQ_STATS_CACHE_KEY);
+    if (cachedStats) {
+      setStats(cachedStats.value);
+      setStatsLoading(false);
+    }
+    const cachedReg = readCachedValue<{ active: RegistryEntry[]; obsolete: RegistryEntry[] }>(
+      MCQ_REGISTRY_CACHE_KEY,
+    );
+    if (cachedReg) {
+      setAllActiveEntries(cachedReg.value.active);
+      setAllObsoleteEntries(cachedReg.value.obsolete);
       setRegLoading(false);
     }
   }, []);
@@ -2446,7 +2475,7 @@ export function MCQBankClient() {
 
     const sorted = [...rows].sort((a, b) => {
       let cmp = 0;
-      if (sortCol === "identifier") cmp = a.identifier.localeCompare(b.identifier);
+      if (sortCol === "identifier") cmp = compareSopCodes(a.identifier, b.identifier);
       else if (sortCol === "name") cmp = a.sopName.localeCompare(b.sopName);
       else if (sortCol === "dept") cmp = a.department.localeCompare(b.department);
       else if (sortCol === "annexure") {
@@ -2465,7 +2494,7 @@ export function MCQBankClient() {
       else if (sortCol === "similar") cmp = a.similar - b.similar;
       else if (sortCol === "lastUpdated" || sortCol === "date") {
         cmp = (Date.parse(a.lastUpdated ?? "") || 0) - (Date.parse(b.lastUpdated ?? "") || 0);
-      } else cmp = a.identifier.localeCompare(b.identifier);
+      } else cmp = compareSopCodes(a.identifier, b.identifier);
       return sortDir === "desc" ? -cmp : cmp;
     });
 

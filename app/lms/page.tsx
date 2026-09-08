@@ -22,6 +22,7 @@ import {
   writeLmsClientCache,
 } from '@/lib/lmsCache';
 import { hasGujaratiScript, isPlaceholderSopName, isInvalidSopAssignmentCode } from '@/lib/sop-name-resolution';
+import { compareSopCodes } from '@/lib/sop-utils';
 import { getDeptLabelClasses, normalizeDepartment } from '@/lib/department-colors';
 import {
   classifyScheduleStatus,
@@ -599,7 +600,7 @@ function TrainingTable({
       let cmp = 0;
       switch (sort.key) {
         case 'sopCode':
-          cmp = a.sopCode.localeCompare(b.sopCode);
+          cmp = compareSopCodes(a.sopCode, b.sopCode);
           break;
         case 'sopName':
           cmp = displayTrainingName(a).english.localeCompare(displayTrainingName(b).english);

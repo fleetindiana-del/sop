@@ -1,6 +1,6 @@
 import type { RegistrySOP } from "@/lib/types";
 import { normalizeSopIdentifierKey } from "@/lib/sopIdentifierNormalize";
-import { sopFamilyGroupKey, versionFromIdentifier } from "@/lib/sop-utils";
+import { compareSopCodes, sopFamilyGroupKey, versionFromIdentifier } from "@/lib/sop-utils";
 
 // ── Subcategory prefix → canonical department (aligned with Dashboard / TM) ──
 export const MCQ_SUBCAT_TO_DEPT: Record<string, string> = {
@@ -336,5 +336,5 @@ export function findObsoleteMcqFamilies(
   for (const [famKey, bank] of mcqFamilies) {
     if (!activeFamilies.has(famKey)) obsolete.push(bank);
   }
-  return obsolete.sort((a, b) => a.identifier.localeCompare(b.identifier));
+  return obsolete.sort((a, b) => compareSopCodes(a.identifier, b.identifier));
 }

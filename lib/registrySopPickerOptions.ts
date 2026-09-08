@@ -1,4 +1,5 @@
 import { filterPrimaryRegistryRows } from "@/lib/registryPrimaryRows";
+import { compareSopCodes } from "@/lib/sop-utils";
 
 export type RegistrySopOption = {
   _id: string;
@@ -23,6 +24,6 @@ export function buildRealSopPickerOptions(rows: any[] | undefined | null): Regis
       department: String(r.department || "").trim() || "—",
     });
   }
-  out.sort((a, b) => a.sopNo.localeCompare(b.sopNo));
+  out.sort((a, b) => compareSopCodes(a.sopNo, b.sopNo));
   return out;
 }

@@ -21,7 +21,7 @@
 
 import { connectDB } from '@/lib/mongodb';
 import { getDashboardDepartments } from '@/lib/dashboardDepartments';
-import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
+import { getEmployeeAssignmentsMap, type EmployeeSopAssignment } from '@/lib/employeeAssignments';
 import { listActiveTrainers, type TrainerDirectoryEntry } from '@/lib/lmsTrainerDirectory';
 import {
   employeeAssignmentKey,
@@ -50,7 +50,9 @@ import {
   type ExamCompletionStatus,
 } from '@/lib/lmsExamScheduling';
 import { countUniqueSops, countUniqueSopsByMonth } from '@/lib/lmsTrainerExamCounts';
+import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
 import { isInvalidSopAssignmentCode } from '@/lib/sop-name-resolution';
+import { compareSopCodes } from '@/lib/sop-utils';
 import { toDateOnlyIso } from '@/lib/trainingExamSchedule';
 
 /** Live exam counts (ignored sittings tracked separately). */
@@ -346,14 +348,34 @@ export async function buildTrainerOverview(
   const yearSet = new Set<number>();
   const built: OverviewEmployee[] = [];
 
+  // Ignore rules first, then reschedules — the order /api/lms/auth/me uses.
+  // Resolved once so the SOP-code set below (for the completion check) and
+  // the row-building loop agree on the exact same assignments.
+  const assignmentsByEmployee = new Map<
+    string,
+    Array<EmployeeSopAssignment & { rescheduledFrom?: { year: number; month: number } }>
+  >();
+  const allSopCodes = new Set<string>();
   for (const emp of employees) {
     const raw = assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || [];
-    // Ignore rules first, then reschedules — the order /api/lms/auth/me uses.
     const notIgnored = filterIgnoredAssignments(raw, ignoreRules, emp.department);
     const assignments = applyReschedulesToList(notIgnored, rescheduleRules, {
       employeeId: emp.employeeId,
       employeeDepartment: emp.department,
     });
+    assignmentsByEmployee.set(emp.employeeId, assignments);
+    for (const a of assignments) allSopCodes.add(a.sopCode);
+  }
+
+  // Available steps per SOP, so completion agrees with the learner's own LMS
+  // (lib/lmsCompletion.ts) instead of only recognizing quiz-bearing SOPs.
+  const contentByCode = await getJourneyContentBatch(allSopCodes);
+  const availableByCode = new Map<string, string[]>(
+    [...contentByCode.entries()].map(([code, content]) => [code, content.availableStepIds]),
+  );
+
+  for (const emp of employees) {
+    const assignments = assignmentsByEmployee.get(emp.employeeId) || [];
 
     const rows: OverviewExamRow[] = [];
     for (const a of assignments) {
@@ -364,7 +386,7 @@ export async function buildTrainerOverview(
       if (yearFilter && a.year !== yearFilter) continue;
 
       const progress = progressMap.get(`${emp.employeeId}::${code}`);
-      const completed = isExamCompleted(progress);
+      const completed = isExamCompleted(progress, availableByCode.get(a.sopCode));
       const scheduleStatus = classifyScheduleStatus(
         { year: a.year, month: a.month },
         { now, cycle, completed },
@@ -426,7 +448,7 @@ export async function buildTrainerOverview(
 
     rows.sort((a, b) => {
       if (a.month !== b.month) return a.month - b.month;
-      return a.sopCode.localeCompare(b.sopCode);
+      return compareSopCodes(a.sopCode, b.sopCode);
     });
     built.push(buildEmployee(emp, rows));
   }

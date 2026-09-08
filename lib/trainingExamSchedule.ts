@@ -9,6 +9,7 @@ import {
   monthOfDate,
   yearOfDate,
 } from '@/lib/trainingExamScheduleShared';
+import { compareSopCodes } from '@/lib/sop-utils';
 
 export {
   MONTH_NAMES,
@@ -171,7 +172,7 @@ export async function loadMonthRequirements(
   requirements.sort((a, b) => {
     if (a.plannedMonth !== b.plannedMonth) return a.plannedMonth - b.plannedMonth;
     if (a.department !== b.department) return a.department.localeCompare(b.department);
-    return a.sopCode.localeCompare(b.sopCode);
+    return compareSopCodes(a.sopCode, b.sopCode);
   });
 
   return requirements;

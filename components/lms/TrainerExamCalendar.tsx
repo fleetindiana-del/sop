@@ -12,6 +12,7 @@ import {
 import { DEPT_COLORS, MONTH_NAMES } from '@/lib/trainingExamScheduleShared';
 import type { ExamStatus, MonthlyExamRow } from '@/components/lms/TrainerMonthlyExams';
 import { ScheduleExamModal } from '@/components/lms/ScheduleExamModal';
+import { compareSopCodes } from '@/lib/sop-utils';
 
 type EmployeeOption = {
   employeeId: string;
@@ -147,7 +148,7 @@ export function TrainerExamCalendar({
       .sort((a, b) => {
         if (a.year !== b.year) return a.year - b.year;
         if (a.month !== b.month) return a.month - b.month;
-        return a.sopCode.localeCompare(b.sopCode);
+        return compareSopCodes(a.sopCode, b.sopCode);
       });
   }, [rows, selectedEmployeeId]);
 

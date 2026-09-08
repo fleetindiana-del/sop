@@ -4,7 +4,7 @@ import SOP from '@/models/SOP';
 import MCQBank from '@/models/MCQBank';
 import TrainingMatrixUpload from '@/models/TrainingMatrixUpload';
 import DepartmentTrainer from '@/models/DepartmentTrainer';
-import { groupSOPRecords, baseIdentifierFromIdentifier, sopFamilyGroupKey } from '@/lib/sop-utils';
+import { compareSopCodes, groupSOPRecords, baseIdentifierFromIdentifier, sopFamilyGroupKey } from '@/lib/sop-utils';
 import {
   aliasSopStatusByCode,
   buildMcqStatMapsFromAgg,
@@ -466,7 +466,7 @@ export async function computeOverviewPayload(forceFresh: boolean) {
       if (!codesByDept[d]) codesByDept[d] = [];
       codesByDept[d].push(base);
     }
-    for (const d of Object.keys(codesByDept)) codesByDept[d].sort((a, b) => a.localeCompare(b));
+    for (const d of Object.keys(codesByDept)) codesByDept[d].sort(compareSopCodes);
 
     // 5. sopStatusByCode (used by the table + detail panels).
     const sopStatusByCode: Record<string, {
@@ -751,7 +751,7 @@ export async function computeOverviewPayload(forceFresh: boolean) {
         repeat2List,
         repeat1List,
         excelDeptSplit,
-        sopCodes: [...excelCodes].sort((a, b) => a.localeCompare(b)),
+        sopCodes: [...excelCodes].sort(compareSopCodes),
         employeeCount: employees.length,
         fullyTrained,
         incomplete: employees.length - fullyTrained,
@@ -787,7 +787,7 @@ export async function computeOverviewPayload(forceFresh: boolean) {
     }
 
     // 8. Total card — aggregate Excel data across all departments.
-    const allCodes = [...dbBaseSet].sort((a, b) => a.localeCompare(b));
+    const allCodes = [...dbBaseSet].sort(compareSopCodes);
     const totalExcel: DeptExcel = {
       uploaded: excelByDept.size > 0,
       fileUrl: null, uploadedAt: null,

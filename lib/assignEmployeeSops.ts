@@ -15,7 +15,7 @@ import {
 } from '@/lib/trainingMatrixDepartments';
 import { POST as postManageSopView } from '@/app/api/training-matrix/manage-sop-view/route';
 import SOP from '@/models/SOP';
-import { isSopDocumentExpired } from '@/lib/sop-utils';
+import { compareSopCodes, isSopDocumentExpired } from '@/lib/sop-utils';
 
 export type ApplicableSop = {
   sopCode: string;
@@ -171,7 +171,7 @@ export async function listSopsApplicableToDesignation(
   }
 
   return annotateExpiry(
-    [...byCode.values()].sort((a, b) => a.sopCode.localeCompare(b.sopCode)),
+    [...byCode.values()].sort((a, b) => compareSopCodes(a.sopCode, b.sopCode)),
   );
 }
 
@@ -195,7 +195,7 @@ export async function listSopsAssignedToEmployee(
     mergeSop(byCode, a.sopCode, a.sopName || a.sopCode, a.month ? [a.month] : []);
   }
   return annotateExpiry(
-    [...byCode.values()].sort((a, b) => a.sopCode.localeCompare(b.sopCode)),
+    [...byCode.values()].sort((a, b) => compareSopCodes(a.sopCode, b.sopCode)),
   );
 }
 

@@ -1,3 +1,5 @@
+import { dropCachedValues } from "@/lib/clientCache";
+
 /* Client-safe dashboard cache helpers and keys.
  * Server-side grouped-registry caching lives in @/lib/server-cache. */
 
@@ -39,4 +41,9 @@ export function writeClientCache(key: string, field: string, value: unknown) {
 /** Clear browser-side dashboard caches (safe to call from client components). */
 export function bustDashboardCache() {
   clearClientDashboardCache();
+  // The MCQ Bank and Compliance first-paint copies (lib/clientCache) are built
+  // from the same SOP registry, so a change here must drop them too — otherwise
+  // the next visit paints the pre-edit registry before its refetch lands.
+  dropCachedValues("mcq-bank:");
+  dropCachedValues("compliance:");
 }

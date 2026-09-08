@@ -9,7 +9,7 @@ import TrainingExamSchedule from '@/models/TrainingExamSchedule';
 import ScheduledExam from '@/models/lms/ScheduledExam';
 import { getGroupedRegistryRows } from '@/lib/dashboardRegistrySource';
 import { normalizeDepartment } from '@/lib/department-colors';
-import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
+import { baseIdentifierFromIdentifier, compareSopCodes } from '@/lib/sop-utils';
 import {
   buildExcelToDbBaseLookup,
   expandSopIdentifierVariants,
@@ -623,7 +623,7 @@ async function computeEmployeeAssignmentsMap(
     list.sort((a, b) => {
       if (a.year !== b.year) return b.year - a.year;
       if (a.month !== b.month) return a.month - b.month;
-      return a.sopCode.localeCompare(b.sopCode);
+      return compareSopCodes(a.sopCode, b.sopCode);
     });
   }
 
@@ -699,7 +699,7 @@ async function computeEmployeeAssignmentsMap(
       existing.sort((a, b) => {
         if (a.year !== b.year) return b.year - a.year;
         if (a.month !== b.month) return a.month - b.month;
-        return a.sopCode.localeCompare(b.sopCode);
+        return compareSopCodes(a.sopCode, b.sopCode);
       });
       setAliasedAssignments(map, homeDept, name, existing);
     }
@@ -865,7 +865,7 @@ async function mergeDesignationMatrixAssignments(
         existing.sort((a, b) => {
           if (a.year !== b.year) return b.year - a.year;
           if (a.month !== b.month) return a.month - b.month;
-          return a.sopCode.localeCompare(b.sopCode);
+          return compareSopCodes(a.sopCode, b.sopCode);
         });
         setAliasedAssignments(map, empDept, name, existing);
       }
@@ -954,7 +954,7 @@ async function mergeTrainerScheduledExams(
     list.sort((a, b) => {
       if (a.year !== b.year) return b.year - a.year;
       if (a.month !== b.month) return a.month - b.month;
-      return a.sopCode.localeCompare(b.sopCode);
+      return compareSopCodes(a.sopCode, b.sopCode);
     });
   }
 }

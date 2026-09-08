@@ -6,6 +6,8 @@
  * month) is counted once.
  */
 
+import { compareSopCodes } from '@/lib/sop-utils';
+
 export type ExamSittingLike = {
   month: number;
   sopCode: string;
@@ -136,7 +138,7 @@ function toListItems(
       sittingCount: agg.sittingCount,
     });
   }
-  return items.sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+  return items.sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
 }
 
 /**

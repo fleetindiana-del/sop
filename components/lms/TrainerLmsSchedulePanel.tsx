@@ -12,7 +12,7 @@ import {
 import { MarkAttendanceModal } from '@/components/lms/MarkAttendanceModal';
 import { toDateOnlyIso } from '@/lib/trainingExamScheduleShared';
 import { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
-import { isSopDocumentExpired } from '@/lib/sop-utils';
+import { compareSopCodes, isSopDocumentExpired } from '@/lib/sop-utils';
 
 type ExamStatus = 'completed' | 'pending' | 'overdue';
 
@@ -429,7 +429,7 @@ export function TrainerLmsSchedulePanel({
     for (const e of map.values()) {
       e.employees.sort((a, b) => a.employeeName.localeCompare(b.employeeName));
     }
-    return [...map.values()].sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+    return [...map.values()].sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
   }, [monthScopedRows]);
 
   const toggleSop = useCallback((code: string) => {
@@ -639,7 +639,7 @@ export function TrainerLmsSchedulePanel({
     const codes = new Set(live.map((i) => i.sopCode));
     const detailRows = emp.rows
       .filter((r) => !r.isIgnored && codes.has(r.sopCode.trim().toUpperCase()))
-      .sort((a, b) => a.sopCode.localeCompare(b.sopCode));
+      .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
     setEmpSopDetail({
       title: kind === 'completed'
         ? `Completed · ${emp.employeeName}`
