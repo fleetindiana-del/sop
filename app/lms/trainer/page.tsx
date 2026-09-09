@@ -120,15 +120,22 @@ export default function LmsTrainerPage() {
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('monthly');
   const [dept, setDept] = useState('All');
-  // SOP Admin lands on QA's schedule by default (most relevant to them), not
-  // the mixed all-department view. Applied once, and only while the filter
-  // still holds its initial value — never overrides a deliberate change.
+  // Land on the trainer's own assigned department by default when they cover
+  // more than one (Super Admin / SOP Admin included — their own department,
+  // not a hardcoded one) rather than the mixed all-department view. Explicitly
+  // choosing "All Departments" still shows everything scheduled for the
+  // current month across every department. Applied once, from the first
+  // loaded response, and only while the filter still holds its initial value
+  // — never overrides a deliberate change.
   const appliedDefaultDept = useRef(false);
   useEffect(() => {
-    if (appliedDefaultDept.current || !appSession?.user?.role) return;
+    if (appliedDefaultDept.current || !data) return;
     appliedDefaultDept.current = true;
-    if (isAdmin(appSession.user.role)) setDept((d) => (d === 'All' ? 'QA' : d));
-  }, [appSession]);
+    const home = data.trainer.department;
+    if (home && data.trainer.trainerDepartments.length > 1) {
+      setDept((d) => (d === 'All' ? home : d));
+    }
+  }, [data]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   /** Empty = all months. Matrix views can multi-select. */
   const [monthFilter, setMonthFilter] = useState<number[]>([]);

@@ -7,6 +7,7 @@ import TrainerEmployee from '@/models/lms/TrainerEmployee';
 import {
   employeeAssignmentKey,
   listTrainerScopedEmployees,
+  type TrainerScopedEmployee,
 } from '@/lib/lmsTrainerEmployees';
 import { getEmployeeAssignmentsMap, type EmployeeSopAssignment } from '@/lib/employeeAssignments';
 import { applyReschedulesToList, listTrainingReschedules } from '@/lib/lmsTrainingReschedule';
@@ -28,6 +29,8 @@ import {
   stripVersion,
   utcToday,
   type ExamCompletionStatus,
+  type ExamProgress,
+  type ScheduledExamLean,
 } from '@/lib/lmsExamScheduling';
 import { isInvalidSopAssignmentCode } from '@/lib/sop-name-resolution';
 import { toDateOnlyIso } from '@/lib/trainingExamSchedule';
@@ -98,6 +101,115 @@ const EMPTY_MONTH_COUNTS = () =>
 /** Active department trainers — used by Super Admin / SOP Admin to filter the employee board. */
 export type MonthlyTrainerSummary = TrainerDirectoryEntry;
 
+interface ExamRowContext {
+  now: Date;
+  today: Date;
+  cycle: ReturnType<typeof getTrainingCycleStart>;
+  yearParam: number;
+  includeIgnored: boolean;
+  progressMap: Map<string, ExamProgress>;
+  availableByCode: Map<string, string[]>;
+  scheduleByKey: Map<string, ScheduledExamLean>;
+  rosterIds: Set<string>;
+}
+
+/**
+ * One employee × SOP row, live-derived from assignment + progress.
+ *
+ * Shared by the department roster loop and the trainer's-own-training loop
+ * (a trainer's own required SOPs, per Super Admin / SOP Admin request) so
+ * both agree on the exact same completion, scheduling and sitting rules.
+ */
+function buildExamRow(
+  emp: Pick<TrainerScopedEmployee, 'employeeId' | 'name' | 'designation' | 'department' | 'hasLmsAccess'>,
+  a: EmployeeSopAssignment & { rescheduledFrom?: { year: number; month: number } },
+  ctx: ExamRowContext,
+): MonthlyExamRow | null {
+  const code = stripVersion(a.sopCode);
+  const scheduled = ctx.scheduleByKey.get(`${emp.employeeId}::${code}`);
+
+  if (ctx.yearParam && a.year !== ctx.yearParam) return null;
+
+  const progress = ctx.progressMap.get(`${emp.employeeId}::${code}`);
+  const completed = isExamCompleted(progress, ctx.availableByCode.get(a.sopCode));
+  const scheduleStatus = classifyScheduleStatus(
+    { year: a.year, month: a.month },
+    { now: ctx.now, cycle: ctx.cycle, completed },
+  );
+  // Scheduled before the active cycle started: the learner lists this under
+  // "Ignored", never as work to do.
+  const isIgnored = !completed && scheduleStatus === 'ignored';
+  if (isIgnored && !ctx.includeIgnored) return null;
+
+  // Sitting 1 is only a trainer-assigned exam date. Matrix/calendar
+  // placeholders (often the last day of the month) are not sittings.
+  const sitting1 = scheduled
+    ? toDateOnlyIso(new Date(scheduled.scheduledDate))
+    : a.scheduledByTrainer
+      ? a.examDate
+      : undefined;
+  const sitting2 = scheduled?.scheduledDate2
+    ? toDateOnlyIso(new Date(scheduled.scheduledDate2))
+    : undefined;
+  const sitting3 = scheduled?.scheduledDate3
+    ? toDateOnlyIso(new Date(scheduled.scheduledDate3))
+    : undefined;
+  const dueDate = latestSittingIso([sitting3, sitting2, sitting1]);
+
+  let status: ExamCompletionStatus;
+  let daysOverdue = 0;
+  if (completed) {
+    status = 'completed';
+  } else if (dueDate) {
+    status = computeExamStatus(dueDate, false, ctx.now);
+    if (status === 'overdue') {
+      daysOverdue = Math.max(
+        0,
+        Math.round((ctx.today.getTime() - new Date(dueDate).getTime()) / 86_400_000),
+      );
+    }
+  } else {
+    // No deadline set — fall back to the cycle month classification.
+    status = scheduleStatus === 'missed' || scheduleStatus === 'overdue'
+      ? 'overdue'
+      : 'pending';
+  }
+
+  return {
+    key: `${emp.employeeId}:${code}:${a.year}:${a.month}`,
+    employeeId: emp.employeeId,
+    employeeName: emp.name,
+    designation: emp.designation || '',
+    department: emp.department,
+    sopCode: code,
+    sopName: a.sopName || code,
+    sopNameGujarati: a.sopNameGujarati,
+    month: a.month,
+    year: a.year,
+    scheduledDate: sitting1,
+    scheduledDate2: sitting2,
+    scheduledDate3: sitting3,
+    expiryDate: a.expiryDate,
+    assignedAt: scheduled?.createdAt
+      ? toDateOnlyIso(new Date(scheduled.createdAt))
+      : undefined,
+    status,
+    scheduleStatus: scheduleStatus === 'missed' ? 'overdue' : scheduleStatus,
+    isIgnored,
+    completedDate: completed ? examCompletionDate(progress) : undefined,
+    score: completed ? examScore(progress) : undefined,
+    progressPct: completed
+      ? 100
+      : Math.max(0, Math.min(100, progress?.overallPercentage ?? 0)),
+    daysOverdue,
+    source: a.scheduledByTrainer || scheduled ? 'trainer' : 'matrix',
+    scheduleId: scheduled ? String(scheduled._id) : undefined,
+    scheduledBy: a.scheduledBy || scheduled?.trainerName,
+    onRoster: ctx.rosterIds.has(emp.employeeId),
+    hasLmsAccess: emp.hasLmsAccess,
+  };
+}
+
 /**
  * GET /api/lms/trainer/monthly?year=&department=
  *
@@ -152,6 +264,7 @@ export async function GET(req: NextRequest) {
           return {
             ...base,
             rows: [] as MonthlyExamRow[],
+            trainerOwnRows: [] as MonthlyExamRow[],
             monthCounts: EMPTY_MONTH_COUNTS(),
             totals: {
               total: 0, completed: 0, pending: 0, overdue: 0, ignored: 0, scheduled: 0,
@@ -160,12 +273,22 @@ export async function GET(req: NextRequest) {
           };
         }
 
+        // Data-fetch scope: the filtered departments plus each Super Admin / SOP
+        // Admin trainer's own home department, so a trainer's own required SOPs
+        // are still found when the board is filtered to a department that isn't
+        // their home one. `scopedEmployees` below still limits the displayed
+        // roster to `scopedDepts` — this only widens what is available to look up.
+        const fetchDepts = [...new Set([
+          ...scopedDepts,
+          ...adminTrainers.map((t) => t.department).filter(Boolean),
+        ])];
+
         // Same synced, deduplicated roster the Employees page and the scheduler use.
-        const employees = await listTrainerScopedEmployees(scopedDepts);
+        const employees = await listTrainerScopedEmployees(fetchDepts);
         const employeeIds = employees.map((e) => e.employeeId);
         const [assignmentsMap, rescheduleRules, ignoreRules, progressMap, roster, schedules] =
           await Promise.all([
-            getEmployeeAssignmentsMap({ departments: scopedDepts }),
+            getEmployeeAssignmentsMap({ departments: fetchDepts }),
             listTrainingReschedules(),
             // Same admin ignore rules the learner's own LMS applies.
             listTrainingIgnores(),
@@ -173,7 +296,7 @@ export async function GET(req: NextRequest) {
             TrainerEmployee.find({ trainerId: trainer.employeeId })
               .select('employeeId')
               .lean<Array<{ employeeId: string }>>(),
-            listScheduledExams({ departments: scopedDepts }),
+            listScheduledExams({ departments: fetchDepts }),
           ]);
 
         const rosterIds = new Set(roster.map((r) => r.employeeId));
@@ -214,99 +337,64 @@ export async function GET(req: NextRequest) {
           [...contentByCode.entries()].map(([code, content]) => [code, content.availableStepIds]),
         );
 
+        const rowCtx: ExamRowContext = {
+          now, today, cycle, yearParam, includeIgnored, progressMap, availableByCode, scheduleByKey, rosterIds,
+        };
+
         for (const emp of scopedEmployees) {
-          const employeeId = emp.employeeId;
           // Every SOP assigned to that employee — including company-wide QA
           // documents Store/Production staff still sit. Scope is the person,
           // not the SOP's owning department (that filter emptied this board).
-          const assignments = assignmentsByEmployee.get(employeeId) || [];
+          const assignments = assignmentsByEmployee.get(emp.employeeId) || [];
 
           for (const a of assignments) {
             if (isInvalidSopAssignmentCode(a.sopCode)) continue;
-            const code = stripVersion(a.sopCode);
-            const scheduled = scheduleByKey.get(`${employeeId}::${code}`);
-
             yearSet.add(a.year);
-            if (yearParam && a.year !== yearParam) continue;
+            const row = buildExamRow(emp, a, rowCtx);
+            if (row) rows.push(row);
+          }
+        }
 
-            const progress = progressMap.get(`${employeeId}::${code}`);
-            const completed = isExamCompleted(progress, availableByCode.get(a.sopCode));
-            const scheduleStatus = classifyScheduleStatus(
-              { year: a.year, month: a.month },
-              { now, cycle, completed },
-            );
-            // Scheduled before the active cycle started: the learner lists this
-            // under "Ignored", never as work to do.
-            const isIgnored = !completed && scheduleStatus === 'ignored';
-            if (isIgnored && !includeIgnored) continue;
-
-            // Sitting 1 is only a trainer-assigned exam date. Matrix/calendar
-            // placeholders (often the last day of the month) are not sittings.
-            const sitting1 = scheduled
-              ? toDateOnlyIso(new Date(scheduled.scheduledDate))
-              : a.scheduledByTrainer
-                ? a.examDate
-                : undefined;
-            const sitting2 = scheduled?.scheduledDate2
-              ? toDateOnlyIso(new Date(scheduled.scheduledDate2))
-              : undefined;
-            const sitting3 = scheduled?.scheduledDate3
-              ? toDateOnlyIso(new Date(scheduled.scheduledDate3))
-              : undefined;
-            const dueDate = latestSittingIso([sitting3, sitting2, sitting1]);
-
-            let status: ExamCompletionStatus;
-            let daysOverdue = 0;
-            if (completed) {
-              status = 'completed';
-            } else if (dueDate) {
-              status = computeExamStatus(dueDate, false, now);
-              if (status === 'overdue') {
-                daysOverdue = Math.max(
-                  0,
-                  Math.round((today.getTime() - new Date(dueDate).getTime()) / 86_400_000),
-                );
-              }
-            } else {
-              // No deadline set — fall back to the cycle month classification.
-              status = scheduleStatus === 'missed' || scheduleStatus === 'overdue'
-                ? 'overdue'
-                : 'pending';
-            }
-
-            rows.push({
-              key: `${employeeId}:${code}:${a.year}:${a.month}`,
-              employeeId,
-              employeeName: emp.name,
-              designation: emp.designation || '',
-              department: emp.department,
-              sopCode: code,
-              sopName: a.sopName || code,
-              sopNameGujarati: a.sopNameGujarati,
-              month: a.month,
-              year: a.year,
-              scheduledDate: sitting1,
-              scheduledDate2: sitting2,
-              scheduledDate3: sitting3,
-              expiryDate: a.expiryDate,
-              assignedAt: scheduled?.createdAt
-                ? toDateOnlyIso(new Date(scheduled.createdAt))
-                : undefined,
-              status,
-              scheduleStatus: scheduleStatus === 'missed' ? 'overdue' : scheduleStatus,
-              isIgnored,
-              completedDate: completed ? examCompletionDate(progress) : undefined,
-              score: completed ? examScore(progress) : undefined,
-              progressPct: completed
-                ? 100
-                : Math.max(0, Math.min(100, progress?.overallPercentage ?? 0)),
-              daysOverdue,
-              source: a.scheduledByTrainer || scheduled ? 'trainer' : 'matrix',
-              scheduleId: scheduled ? String(scheduled._id) : undefined,
-              scheduledBy: a.scheduledBy || scheduled?.trainerName,
-              onRoster: rosterIds.has(employeeId),
-              hasLmsAccess: emp.hasLmsAccess,
+        // Each Super Admin / SOP Admin trainer's own required SOPs — trainers
+        // are excluded from the department roster above (they are not trained
+        // by themselves), so without this a trainer's own training/exam status
+        // has nowhere to show on this board at all.
+        const trainerOwnRows: MonthlyExamRow[] = [];
+        if (adminTrainers.length > 0) {
+          const employeesById = new Map(employees.map((e) => [e.employeeId, e]));
+          const trainerAssignments = new Map<
+            string,
+            Array<EmployeeSopAssignment & { rescheduledFrom?: { year: number; month: number } }>
+          >();
+          const trainerSopCodes = new Set<string>();
+          for (const t of adminTrainers) {
+            const emp = employeesById.get(t.id);
+            if (!emp) continue;
+            const raw = assignmentsMap.get(employeeAssignmentKey(emp.department, emp.name)) || [];
+            const notIgnored = filterIgnoredAssignments(raw, ignoreRules, emp.department);
+            const assignments = applyReschedulesToList(notIgnored, rescheduleRules, {
+              employeeId: emp.employeeId,
+              employeeDepartment: emp.department,
             });
+            trainerAssignments.set(t.id, assignments);
+            for (const a of assignments) trainerSopCodes.add(a.sopCode);
+          }
+
+          const trainerContentByCode = await getJourneyContentBatch(trainerSopCodes);
+          const trainerAvailableByCode = new Map<string, string[]>(
+            [...trainerContentByCode.entries()].map(([code, content]) => [code, content.availableStepIds]),
+          );
+          const trainerRowCtx: ExamRowContext = { ...rowCtx, availableByCode: trainerAvailableByCode };
+
+          for (const t of adminTrainers) {
+            const emp = employeesById.get(t.id);
+            if (!emp) continue;
+            for (const a of trainerAssignments.get(t.id) || []) {
+              if (isInvalidSopAssignmentCode(a.sopCode)) continue;
+              yearSet.add(a.year);
+              const row = buildExamRow(emp, a, trainerRowCtx);
+              if (row) trainerOwnRows.push(row);
+            }
           }
         }
 
@@ -352,6 +440,7 @@ export async function GET(req: NextRequest) {
         return {
           ...base,
           rows,
+          trainerOwnRows,
           monthCounts,
           totals,
           filters: {

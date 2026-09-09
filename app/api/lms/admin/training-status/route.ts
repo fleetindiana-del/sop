@@ -7,6 +7,7 @@ import Employee from '@/models/Employee';
 import LearningProgress from '@/models/lms/LearningProgress';
 import Certificate from '@/models/lms/Certificate';
 import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
+import { stripVersion } from '@/lib/lmsExamScheduling';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,7 +55,9 @@ export async function GET(req: NextRequest) {
           const sop = String((p as { sopCode: string }).sopCode);
           const st  = String((p as { status: string }).status);
           if (!progressByEmp.has(id)) progressByEmp.set(id, new Set());
-          if (st === 'completed') progressByEmp.get(id)!.add(sop.toUpperCase());
+          // Base code (version suffix stripped): an assignment can carry a newer
+          // version than the one the employee actually sat the exam under.
+          if (st === 'completed') progressByEmp.get(id)!.add(stripVersion(sop));
           startedByEmp.set(id, (startedByEmp.get(id) ?? 0) + 1);
         }
 
@@ -72,7 +75,7 @@ export async function GET(req: NextRequest) {
 
           const totalSops     = assignments.length;
           const completedSops = assignments.filter(
-            (a) => completedSet.has(a.sopCode.toUpperCase()),
+            (a) => completedSet.has(stripVersion(a.sopCode)),
           ).length;
           const certCount = certsByEmp.get(id) ?? 0;
           const inProgress = startedByEmp.get(id) ?? 0;

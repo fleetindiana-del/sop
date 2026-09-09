@@ -21,6 +21,8 @@ import {
   buildProgressMap,
   getProgress,
   isFullyComplete,
+  progressLookupKey,
+  stripVersion,
   type ProgressRecord,
 } from '@/lib/lmsProgressLookup';
 import { classifyScheduleStatus } from '@/lib/lmsTrainingCycle';
@@ -46,6 +48,15 @@ interface Learner {
   department: string;
 }
 
+interface CertificateRecord {
+  sopCode: string;
+  sopVersion?: string;
+  certificateNumber: string;
+  quizScore: number;
+  hasPractical: boolean;
+  practicalScore?: number;
+}
+
 type RecordTab = 'all' | 'completed' | 'remaining';
 
 const MONTHS_SHORT = [
@@ -55,6 +66,79 @@ const MONTHS_SHORT = [
 
 function cleanText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
+}
+
+/** Same base-code matching used for progress (see lmsProgressLookup) so a
+ * certificate issued under an earlier SOP version still matches after the
+ * SOP is revised. */
+function buildCertMap(records: CertificateRecord[]): Map<string, CertificateRecord> {
+  const map = new Map<string, CertificateRecord>();
+  for (const c of records) {
+    const exact = String(c.sopCode || '').trim();
+    if (!exact) continue;
+    map.set(exact, c);
+    map.set(progressLookupKey(exact), c);
+    map.set(stripVersion(exact), c);
+  }
+  return map;
+}
+
+function getCert(map: Map<string, CertificateRecord>, sopCode: string): CertificateRecord | undefined {
+  const exact = String(sopCode || '').trim();
+  if (!exact) return undefined;
+  return map.get(exact) || map.get(progressLookupKey(exact)) || map.get(stripVersion(exact));
+}
+
+/** Version shown for a completed row: the version the certificate was issued
+ * under, falling back to the version suffix on the current assignment code. */
+function versionLabel(a: SopAssignment, cert?: CertificateRecord): string {
+  if (cert?.sopVersion) return cert.sopVersion;
+  const match = a.sopCode.trim().toUpperCase().match(/-(\d+)$/);
+  return match ? String(parseInt(match[1], 10)) : '—';
+}
+
+/** DD/MM/YYYY, standardized across this page. */
+function formatDDMMYYYY(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+
+function formatIsoDate(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return formatDDMMYYYY(d);
+}
+
+/** The learner's final (or latest) quiz attempt, if any. */
+function latestQuizAttempt(progress?: ProgressRecord) {
+  const history = progress?.steps?.quiz?.attemptHistory;
+  return history && history.length > 0 ? history[history.length - 1] : undefined;
+}
+
+/** Date the training content was started — distinct from the exam date. */
+function trainingDateLabel(progress?: ProgressRecord): string {
+  return formatIsoDate(progress?.startedAt);
+}
+
+/** Date of the quiz attempt that decided the outcome, falling back to the
+ * overall completion date when no attempt history is available. */
+function examDateLabel(progress?: ProgressRecord): string {
+  const attempt = latestQuizAttempt(progress);
+  return formatIsoDate(attempt?.at ?? progress?.completedAt);
+}
+
+function marksLabel(progress?: ProgressRecord): string {
+  const quiz = progress?.steps?.quiz;
+  if (!quiz || quiz.attempts <= 0) return '—';
+  return `${Math.round(quiz.score)}%`;
+}
+
+function passFailLabel(progress?: ProgressRecord): 'Pass' | 'Fail' | '—' {
+  const quiz = progress?.steps?.quiz;
+  if (!quiz || quiz.attempts <= 0) return '—';
+  return quiz.passed ? 'Pass' : 'Fail';
 }
 
 /** Mirrors the dashboard: fall back to the SOP code when the name is a placeholder. */
@@ -75,19 +159,11 @@ function dueLabel(a: SopAssignment): string {
   if (a.examDate && /^\d{4}-\d{2}-\d{2}$/.test(a.examDate.slice(0, 10))) {
     const d = new Date(`${a.examDate.slice(0, 10)}T12:00:00`);
     if (!Number.isNaN(d.getTime())) {
-      return d.toLocaleString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+      return formatDDMMYYYY(d);
     }
   }
   const month = MONTHS_SHORT[a.month - 1] || a.monthName || '—';
   return `${month} ${a.year}`;
-}
-
-function completedLabel(progress?: ProgressRecord): string {
-  const iso = progress?.completedAt;
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function StatCard({
@@ -120,17 +196,19 @@ export default function EmployeeTrainingRecordPage() {
   const [learner, setLearner] = useState<Learner | null>(null);
   const [assignments, setAssignments] = useState<SopAssignment[]>([]);
   const [progressMap, setProgressMap] = useState<Map<string, ProgressRecord>>(new Map());
+  const [certMap, setCertMap] = useState<Map<string, CertificateRecord>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [tab, setTab] = useState<RecordTab>('all');
+  const [tab, setTab] = useState<RecordTab>('completed');
   const [search, setSearch] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [meRes, progressRes] = await Promise.all([
+      const [meRes, progressRes, certRes] = await Promise.all([
         fetch('/api/lms/auth/me'),
         fetch('/api/lms/progress'),
+        fetch('/api/lms/certificates'),
       ]);
       if (meRes.status === 401 || meRes.status === 403) {
         router.push('/lms');
@@ -142,6 +220,7 @@ export default function EmployeeTrainingRecordPage() {
       }
       const me = await meRes.json();
       const prog = progressRes.ok ? await progressRes.json() : { progress: [] };
+      const cert = certRes.ok ? await certRes.json() : { certificates: [] };
       setLearner(me.employee ?? null);
       setAssignments(
         ((me.assignments || []) as SopAssignment[]).filter(
@@ -149,6 +228,7 @@ export default function EmployeeTrainingRecordPage() {
         ),
       );
       setProgressMap(buildProgressMap((prog.progress || []) as ProgressRecord[]));
+      setCertMap(buildCertMap((cert.certificates || []) as CertificateRecord[]));
       setError('');
     } catch {
       setError('Could not reach the server. Check your connection and try again.');
@@ -164,15 +244,17 @@ export default function EmployeeTrainingRecordPage() {
       const progress = getProgress(progressMap, a.sopCode);
       const completed = isFullyComplete(progress);
       const schedule = classifyScheduleStatus(a, { completed });
+      const certificate = getCert(certMap, a.sopCode);
       return {
         assignment: a,
         progress,
+        certificate,
         completed,
         overdue: !completed && (schedule === 'missed' || schedule === 'overdue'),
         pct: Math.round(progress?.overallPercentage ?? 0),
       };
     });
-  }, [assignments, progressMap]);
+  }, [assignments, progressMap, certMap]);
 
   const counts = useMemo(() => ({
     all: rows.length,
@@ -337,16 +419,21 @@ export default function EmployeeTrainingRecordPage() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-                <table className="w-full min-w-[760px] text-left text-xs">
+                <table className="w-full min-w-[1180px] text-left text-xs">
                   <thead className="border-b border-gray-200 bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500">
                     <tr>
+                      <th className="px-3 py-2 font-semibold">Employee</th>
                       <th className="px-3 py-2 font-semibold">SOP</th>
+                      <th className="px-3 py-2 font-semibold">Version</th>
                       <th className="px-3 py-2 font-semibold">Department</th>
                       <th className="px-3 py-2 font-semibold">Type</th>
                       <th className="px-3 py-2 font-semibold">Due</th>
                       <th className="px-3 py-2 font-semibold">Progress</th>
                       <th className="px-3 py-2 font-semibold">Status</th>
-                      <th className="px-3 py-2 font-semibold">Completed on</th>
+                      <th className="px-3 py-2 font-semibold">Training Date</th>
+                      <th className="px-3 py-2 font-semibold">Exam Date</th>
+                      <th className="px-3 py-2 font-semibold">Marks Obtained</th>
+                      <th className="px-3 py-2 font-semibold">Pass/Fail</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -359,6 +446,9 @@ export default function EmployeeTrainingRecordPage() {
                           key={`${row.assignment.sopCode}-${row.assignment.month}-${row.assignment.year}`}
                           className="border-b border-gray-100 last:border-0 hover:bg-gray-50"
                         >
+                          <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-700">
+                            {learner?.name || '—'}
+                          </td>
                           <td className="px-3 py-2">
                             <Link
                               href={`/lms/journey/${row.assignment.sopCode}`}
@@ -368,6 +458,9 @@ export default function EmployeeTrainingRecordPage() {
                             </Link>
                             <p className="text-gray-600">{english}</p>
                             {gujarati && <p className="text-[11px] text-gray-400">{gujarati}</p>}
+                          </td>
+                          <td className="px-3 py-2 text-gray-600">
+                            {versionLabel(row.assignment, row.certificate)}
                           </td>
                           <td className="px-3 py-2">
                             {dept ? (
@@ -405,7 +498,29 @@ export default function EmployeeTrainingRecordPage() {
                             </span>
                           </td>
                           <td className="px-3 py-2 text-gray-600">
-                            {row.completed ? completedLabel(row.progress) : '—'}
+                            {row.completed ? trainingDateLabel(row.progress) : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-gray-600">
+                            {row.completed ? examDateLabel(row.progress) : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-gray-600">
+                            {row.completed ? marksLabel(row.progress) : '—'}
+                          </td>
+                          <td className="px-3 py-2">
+                            {(() => {
+                              const passFail = row.completed ? passFailLabel(row.progress) : '—';
+                              return passFail === '—' ? (
+                                <span className="text-gray-300">—</span>
+                              ) : (
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  passFail === 'Pass'
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-red-100 text-red-700'
+                                }`}>
+                                  {passFail}
+                                </span>
+                              );
+                            })()}
                           </td>
                         </tr>
                       );

@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertCircle, CalendarCheck, Check, ClipboardList, RefreshCw, Trash2, UserCheck, Users, X,
+  AlertCircle, CalendarCheck, Check, ChevronDown, ClipboardList, RefreshCw, Trash2, UserCheck, Users, X,
 } from 'lucide-react';
 import {
   countEmployeeUniqueSops,
@@ -272,6 +272,14 @@ export function TrainerLmsSchedulePanel({
     employees: TrainerSopEmployee[];
   } | null>(null);
   const [trainerDepartments, setTrainerDepartments] = useState<string[]>([]);
+  const [homeDepartment, setHomeDepartment] = useState('');
+  const [dept, setDept] = useState('All');
+  // Land on the trainer's own assigned department by default when they cover
+  // more than one (Super Admin / SOP Admin included) rather than the mixed
+  // all-department view — "All Departments" remains a deliberate opt-in.
+  // Applied once, from the first loaded response, and only while the filter
+  // still holds its initial value.
+  const appliedDefaultDept = useRef(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignDept, setAssignDept] = useState('');
   const [assignName, setAssignName] = useState('');
@@ -302,8 +310,9 @@ export function TrainerLmsSchedulePanel({
     setLoading(true);
     setError('');
     try {
+      const deptQs = dept !== 'All' ? `&department=${encodeURIComponent(dept)}` : '';
       const [monthlyRes, catalogRes] = await Promise.all([
-        fetch(`/api/lms/trainer/monthly?year=${year}`, { cache: 'no-store' }),
+        fetch(`/api/lms/trainer/monthly?year=${year}${deptQs}`, { cache: 'no-store' }),
         fetch('/api/lms/trainer/exam-catalog', { cache: 'no-store' }),
       ]);
       const json = await monthlyRes.json();
@@ -326,6 +335,7 @@ export function TrainerLmsSchedulePanel({
           ? (json.trainer.trainerDepartments as string[])
           : [],
       );
+      setHomeDepartment(String(json.trainer?.department || ''));
       const parsed = parseCycleStart(json.trainingCycleStart);
       if (parsed) setCycleStart(parsed);
 
@@ -348,11 +358,19 @@ export function TrainerLmsSchedulePanel({
     } finally {
       setLoading(false);
     }
-  }, [year]);
+  }, [year, dept]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (appliedDefaultDept.current || trainerDepartments.length === 0) return;
+    appliedDefaultDept.current = true;
+    if (homeDepartment && trainerDepartments.length > 1) {
+      setDept((d) => (d === 'All' ? homeDepartment : d));
+    }
+  }, [trainerDepartments, homeDepartment]);
 
   /** Rows limited to employees in the trainer's departments (QA, Production, …). */
   const scopedRows = useMemo(() => {
@@ -817,6 +835,21 @@ export function TrainerLmsSchedulePanel({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
+          {trainerDepartments.length > 1 && (
+            <div className="relative">
+              <select
+                value={dept}
+                onChange={(e) => setDept(e.target.value)}
+                className="appearance-none rounded-lg border border-gray-200 bg-white py-1.5 pl-2.5 pr-7 text-xs font-medium text-gray-600"
+              >
+                <option value="All">All departments</option>
+                {trainerDepartments.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            </div>
+          )}
           {overdueSopCount > 0 && (
             <button
               type="button"

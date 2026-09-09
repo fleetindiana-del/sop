@@ -77,6 +77,8 @@ interface MonthlyPayload {
   currentYear: number;
   includeIgnored: boolean;
   rows: MonthlyExamRow[];
+  /** Each Super Admin / SOP Admin trainer's own required SOPs, as a learner. */
+  trainerOwnRows?: MonthlyExamRow[];
   monthCounts: Array<{
     total: number; completed: number; pending: number; overdue: number; ignored: number;
   }>;
@@ -788,17 +790,19 @@ export function TrainerMonthlyExams({
   const byTrainer = useMemo(() => {
     if (!showTrainerSection) return [];
     const employeeDeptScope = resolveTrainerDeptFilter(data?.trainer.trainerDepartments ?? [], dept);
+    const ownRowsAll = data?.trainerOwnRows ?? [];
     return (data?.trainers ?? [])
       .filter((t) =>
         employeeDeptScope.length === 0
         || t.trainerDepartments.some((d) => deptMatchesTrainerScope(d, employeeDeptScope)),
       )
       .map((t) => {
-        const rows = searchFilteredRows.filter((r) =>
-          deptMatchesTrainerScope(r.department, t.trainerDepartments),
-        );
+        // Each trainer's own required SOPs, as a learner — trainers are not
+        // trained by themselves, so this tile is their personal training/exam
+        // status, not a roll-up of the employees they train.
+        const ownRows = ownRowsAll.filter((r) => r.employeeId === t.id);
         const extras = buildMonthScopeExtras(
-          rows,
+          ownRows,
           countScope.months,
           countScope.viewYear,
           countScope.expiryYear,
@@ -810,7 +814,7 @@ export function TrainerMonthlyExams({
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [showTrainerSection, data, dept, searchFilteredRows, countScope]);
+  }, [showTrainerSection, data, dept, countScope]);
 
   const selectedTrainer = useMemo(() => {
     if (!showTrainerSection || !selectedTrainerId) return null;
@@ -834,10 +838,19 @@ export function TrainerMonthlyExams({
     return nearExpiryRows.filter((r) => deptMatchesTrainerScope(r.department, trainerDeptScope));
   }, [nearExpiryRows, trainerDeptScope]);
 
-  const allTrainerLayers = useMemo(
-    () => fourLayersFromExtras(selectedScopeExtras, layerFromEmployeeSops),
-    [selectedScopeExtras],
-  );
+  /** Combined own required SOPs across every trainer currently in scope. */
+  const allTrainerLayers = useMemo(() => {
+    const ids = new Set(byTrainer.map((t) => t.id));
+    const ownRows = (data?.trainerOwnRows ?? []).filter((r) => ids.has(r.employeeId));
+    const extras = buildMonthScopeExtras(
+      ownRows,
+      countScope.months,
+      countScope.viewYear,
+      countScope.expiryYear,
+      countScope.carryIntoMonth,
+    );
+    return fourLayersFromExtras(extras, layerFromEmployeeSops);
+  }, [byTrainer, data, countScope]);
 
   const selectTrainer = (id: string | null) => {
     const next = id !== null && selectedTrainerId === id ? null : id;

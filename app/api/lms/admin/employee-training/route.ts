@@ -5,11 +5,11 @@ import { connectDB } from '@/lib/mongodb';
 import { lmsCacheControl } from '@/lib/lmsCache';
 import Employee from '@/models/Employee';
 import SOP from '@/models/SOP';
-import LearningProgress from '@/models/lms/LearningProgress';
 import TrainingMatrixUpload from '@/models/TrainingMatrixUpload';
 import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
 import { resolveTrainerDepartments } from '@/lib/employeeTrainer';
 import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
+import { loadExamProgressMap, stripVersion } from '@/lib/lmsExamScheduling';
 import {
   hasGujaratiScript,
   isInvalidSopAssignmentCode,
@@ -49,10 +49,6 @@ function monthNameToNum(name: string): number | null {
     (m) => m && m.toLowerCase() === String(name || '').trim().toLowerCase(),
   );
   return idx > 0 ? idx : null;
-}
-
-function stripVersion(code: string): string {
-  return String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
 }
 
 /**
@@ -203,29 +199,17 @@ export async function GET(req: NextRequest) {
         ]);
         const cycle = getTrainingCycleStart();
 
-        // Progress keyed by employeeId + uppercased SOP code (matches the
-        // convention used by the training-status endpoint).
+        // Progress keyed by employeeId + BASE SOP code (version suffix stripped),
+        // matching how the trainer boards resolve completion. A SOP assignment
+        // can carry a newer version code than the one the employee actually sat
+        // the exam under (e.g. the SOP was revised after they completed it) —
+        // matching on the exact versioned code missed those and showed a
+        // completed/certified SOP as still pending here.
         // `status` / `overallPercentage` are the learner's own stored result —
         // what they were shown and what their certificate was issued against.
         // Without them this roll-up recomputed completion from raw steps alone
         // and disagreed with the learner's own screen.
-        const progressList = await LearningProgress.find({ employeeId: { $in: employeeIds } })
-          .select('employeeId sopCode steps status overallPercentage')
-          .lean();
-        const progressMap = new Map<string, {
-          steps: Record<string, unknown>;
-          status?: string;
-          overallPercentage?: number;
-        }>();
-        for (const p of progressList) {
-          const id  = String((p as { employeeId: unknown }).employeeId);
-          const sop = String((p as { sopCode: string }).sopCode).toUpperCase();
-          progressMap.set(`${id}::${sop}`, {
-            steps: (p as { steps?: Record<string, unknown> }).steps || {},
-            status: (p as { status?: string }).status,
-            overallPercentage: (p as { overallPercentage?: number }).overallPercentage,
-          });
-        }
+        const progressMap = await loadExamProgressMap(employeeIds.map(String));
 
         const assignmentKeyLocal = (code: string) =>
           String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
@@ -376,7 +360,7 @@ export async function GET(req: NextRequest) {
 
             const available = availableByCode.get(a.sopCode) ?? [];
             const availableSet = new Set(available);
-            const prog = progressMap.get(`${id}::${a.sopCode.toUpperCase()}`);
+            const prog = progressMap.get(`${id}::${stripVersion(a.sopCode)}`);
             const steps = prog?.steps;
 
             const doneCount = available.filter((s) => isStepDone(steps, s)).length;

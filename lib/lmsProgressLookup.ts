@@ -9,12 +9,29 @@
  * record (`app/lms/my-record/page.tsx`) so both report the same status.
  */
 
+export interface QuizAttemptRecord {
+  attempt: number;
+  score: number;
+  at: string;
+}
+
 export interface ProgressRecord {
   sopCode: string;
   status: 'not_started' | 'in_progress' | 'completed';
   overallPercentage: number;
   lastAccessedAt: string;
   completedAt?: string;
+  /** When the learner first opened this SOP's training content. */
+  startedAt?: string;
+  steps?: {
+    quiz?: {
+      completed: boolean;
+      passed: boolean;
+      score: number;
+      attempts: number;
+      attemptHistory?: QuizAttemptRecord[];
+    };
+  };
 }
 
 export function stripVersion(code: string): string {

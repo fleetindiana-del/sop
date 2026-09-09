@@ -3,7 +3,7 @@ import { connectDB } from '@/lib/mongodb';
 import { lmsCacheControl } from '@/lib/lmsCache';
 import { requireLmsTrainer } from '@/lib/lmsTrainerAuth';
 import SOP from '@/models/SOP';
-import LearningProgress from '@/models/lms/LearningProgress';
+import { loadExamProgressMap, stripVersion } from '@/lib/lmsExamScheduling';
 import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
 import {
   employeeAssignmentKey,
@@ -38,10 +38,6 @@ import type { ISOP } from '@/models/SOP';
 export const dynamic = 'force-dynamic';
 
 type SopStatus = 'completed' | 'not_completed';
-
-function stripVersion(code: string): string {
-  return String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
-}
 
 export interface TrainerSopRow {
   sopCode: string;
@@ -122,35 +118,20 @@ export async function GET(req: NextRequest) {
         }));
 
         const employeeIds = scopedEmployees.map((e) => e._id);
-        const [assignmentsMap, rescheduleRules, ignoreRules, progressList] = await Promise.all([
+        const [assignmentsMap, rescheduleRules, ignoreRules, progressMap] = await Promise.all([
           getEmployeeAssignmentsMap({ departments: scopedDepts }),
           listTrainingReschedules(),
           // Same admin ignore rules the learner's LMS applies, so the trainer's
           // totals cannot drift from what the employee actually sees.
           listTrainingIgnores(),
-          LearningProgress.find({ employeeId: { $in: employeeIds } })
-            .select('employeeId sopCode steps status overallPercentage')
-            .lean(),
+          // Keyed by BASE SOP code (version stripped) — an assignment can carry
+          // a newer version code than the one the employee sat the exam under.
+          loadExamProgressMap(employeeIds),
         ]);
 
         // Only staff assigned an SOP on the Manage SOPs page belong on the
         // trainer's board — everyone else in the department has nothing to train.
         const employees = filterEmployeesWithAssignments(scopedEmployees, assignmentsMap);
-
-        const progressMap = new Map<string, {
-          steps: Record<string, unknown>;
-          status?: string;
-          overallPercentage?: number;
-        }>();
-        for (const p of progressList) {
-          const id = String((p as { employeeId: unknown }).employeeId);
-          const sop = String((p as { sopCode: string }).sopCode).toUpperCase();
-          progressMap.set(`${id}::${sop}`, {
-            steps: (p as { steps?: Record<string, unknown> }).steps || {},
-            status: (p as { status?: string }).status,
-            overallPercentage: (p as { overallPercentage?: number }).overallPercentage,
-          });
-        }
 
         const uniqueCodes = new Set<string>();
         for (const emp of employees) {
@@ -225,7 +206,7 @@ export async function GET(req: NextRequest) {
             if (isInvalidSopAssignmentCode(a.sopCode)) return [];
             const available = availableByCode.get(a.sopCode) ?? [];
             const availableSet = new Set(available);
-            const prog = progressMap.get(`${id}::${a.sopCode.toUpperCase()}`);
+            const prog = progressMap.get(`${id}::${stripVersion(a.sopCode)}`);
             const steps = prog?.steps;
             const doneCount = available.filter((s) => isStepDone(steps, s)).length;
             totalSteps += available.length;

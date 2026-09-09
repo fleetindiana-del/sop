@@ -49,10 +49,19 @@ export type ScheduledExamLean = {
   createdAt?: Date;
 };
 
+/**
+ * Base SOP code with the version suffix removed and zero-padding normalised —
+ * `QAGE4-02`, `QAGE04` and `QAGE4` all collapse to `QAGE4`. Same rule
+ * `lib/lmsProgressLookup.ts` applies for the learner's own progress lookup;
+ * without the zero-padding step here too, a learner recorded under one
+ * padding style could show as "exam remaining" on the trainer boards even
+ * after completing the SOP under another.
+ */
 export function stripVersion(code: string): string {
   return String(code || '')
     .toUpperCase()
     .replace(/-\d+$/, '')
+    .replace(/^([A-Z]+)0+(\d+)/, '$1$2')
     .trim();
 }
 
