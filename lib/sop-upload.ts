@@ -39,7 +39,7 @@ import {
 } from "@/lib/sop-content-metadata";
 import { parseRequiredAnnexuresFromContent } from "@/lib/sop-annexure-requirements";
 import { extractRefSopNoFromAnnexure } from "@/lib/annexure-parent-extract";
-import { linkAnnexureToParent } from "@/lib/sop-annexure";
+import { linkAnnexureToParent, resolvePendingAnnexuresForSop } from "@/lib/sop-annexure";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { invalidateViewerUrlCache } from "@/lib/viewerHelper";
 import { invalidateDocxHtmlCache } from "@/lib/docxHtmlCache";
@@ -360,6 +360,15 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
     updated: snapshotSop(sop),
     comments: wasExisting ? `Replaced ${fileType.toUpperCase()} file: ${fileName}` : `Uploaded ${fileName}`,
   });
+
+  try {
+    const linked = await resolvePendingAnnexuresForSop(identifier);
+    if (linked > 0) {
+      console.log(`[sop-upload] linked ${linked} previously-unresolved annexure(s) to ${identifier}`);
+    }
+  } catch (e) {
+    console.error(`[sop-upload] pending-annexure resolve error for ${identifier}:`, e);
+  }
 
   return {
     file: fileName,

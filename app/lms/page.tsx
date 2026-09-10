@@ -799,7 +799,16 @@ function TrainingTable({
                 }
                 return { total: empList.length, completed, notTaken, later };
               })();
+              // Once this row's own training is done, the exam date is history —
+              // show when it was actually completed instead of a bare dash.
+              const completedAtDisplay = isFullyComplete(progress)
+                ? String(progress?.completedAt || '').trim().slice(0, 10)
+                : '';
+              const assignedAtDisplay = String(
+                trainerExtras?.assignedAtByCode?.[codeKey] || '',
+              ).trim().slice(0, 10);
               const scheduledExamDisplay = (() => {
+                if (/^\d{4}-\d{2}-\d{2}$/.test(completedAtDisplay)) return completedAtDisplay;
                 const fromAssignment = String(assignment.examDate || '').trim().slice(0, 10);
                 if (/^\d{4}-\d{2}-\d{2}$/.test(fromAssignment)) return fromAssignment;
                 const dates = empList
@@ -807,9 +816,15 @@ function TrainingTable({
                   .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
                   .sort();
                 if (dates.length) return dates[0];
+                // Not sat yet and no sitting date set — fall back to when the
+                // SOP was assigned rather than leaving the column blank.
+                if (/^\d{4}-\d{2}-\d{2}$/.test(assignedAtDisplay)) return assignedAtDisplay;
                 return '—';
               })();
               const scheduledExamTitle = (() => {
+                if (/^\d{4}-\d{2}-\d{2}$/.test(completedAtDisplay)) {
+                  return `Completed ${completedAtDisplay}`;
+                }
                 if (scheduledExamDisplay === '—') return 'No exam date scheduled';
                 const all = [
                   ...new Set(
@@ -819,6 +834,7 @@ function TrainingTable({
                   ),
                 ].sort();
                 if (all.length > 1) return `Exam dates: ${all.join(', ')}`;
+                if (scheduledExamDisplay === assignedAtDisplay) return `Assigned ${assignedAtDisplay} — not yet scheduled`;
                 return `Exam scheduled ${scheduledExamDisplay}`;
               })();
               // Exams lock when the SOP is expired, the department trainer has not
@@ -2096,33 +2112,64 @@ export default function LmsPage() {
       setEmployee(cachedEmp);
       setChecking(false);
     }
+
+    let cancelled = false;
+    // A transient backend error (e.g. a DB hiccup) must not read as "not
+    // authenticated" — that drops an already-signed-in dashboard user onto a
+    // credentials form they have no LMS password for. Retry a couple of times
+    // before treating it as a real failure.
+    const RETRY_DELAYS_MS = [800, 2000];
+
     // Always revalidate — login used to omit isTrainer, so a "fresh" cache can
     // hide Trainer View until /me runs.
-    fetch('/api/lms/auth/me')
-      .then(async (r) => {
-        if (r.status === 401 || r.status === 403) {
-          // The session is gone. Without this the cached employee keeps the
-          // dashboard on screen while every LMS call 401s ("Not authenticated").
-          clearLmsClientCache();
-          setEmployee(null);
-          const body = await r.json().catch(() => ({}));
-          // A signed-in app user whose login is not linked to an employee needs
-          // an administrator, so show the reason instead of a bare login form.
-          if (body.problem && body.problem !== 'no-session') {
-            setLoginNotice(String(body.error || ''));
-          }
-          return;
+    const checkMe = async (attempt = 0): Promise<void> => {
+      let r: Response;
+      try {
+        r = await fetch('/api/lms/auth/me');
+      } catch {
+        if (attempt < RETRY_DELAYS_MS.length) {
+          await new Promise((res) => setTimeout(res, RETRY_DELAYS_MS[attempt]));
+          if (!cancelled) return checkMe(attempt + 1);
         }
-        if (!r.ok) return;
-        const d = await r.json();
-        if (d.employee) {
-          setEmployee(d.employee);
-          setAuthSource(d.authSource === 'app' ? 'app' : 'lms');
-          writeLmsClientCache(lmsClientFields.employee, { employee: d.employee });
+        return; // offline — keep whatever the cache had
+      }
+      if (cancelled) return;
+
+      if (r.status === 401 || r.status === 403) {
+        // The session is gone. Without this the cached employee keeps the
+        // dashboard on screen while every LMS call 401s ("Not authenticated").
+        clearLmsClientCache();
+        setEmployee(null);
+        const body = await r.json().catch(() => ({}));
+        // A signed-in app user whose login is not linked to an employee needs
+        // an administrator, so show the reason instead of a bare login form.
+        if (body.problem && body.problem !== 'no-session') {
+          setLoginNotice(String(body.error || ''));
         }
-      })
-      .catch(() => { /* offline — keep whatever the cache had */ })
-      .finally(() => setChecking(false));
+        return;
+      }
+
+      if (!r.ok) {
+        if (attempt < RETRY_DELAYS_MS.length) {
+          await new Promise((res) => setTimeout(res, RETRY_DELAYS_MS[attempt]));
+          if (!cancelled) return checkMe(attempt + 1);
+        }
+        if (!cachedEmp) {
+          setLoginNotice('Could not reach the learning portal — check your connection and try again.');
+        }
+        return;
+      }
+
+      const d = await r.json();
+      if (d.employee) {
+        setEmployee(d.employee);
+        setAuthSource(d.authSource === 'app' ? 'app' : 'lms');
+        writeLmsClientCache(lmsClientFields.employee, { employee: d.employee });
+      }
+    };
+
+    checkMe().finally(() => { if (!cancelled) setChecking(false); });
+    return () => { cancelled = true; };
   }, []);
 
   if (checking) {

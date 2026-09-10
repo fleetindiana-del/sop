@@ -37,8 +37,21 @@ export function extractRefSopNoFromText(content: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Word routinely splits a single visible token across adjacent runs with no
+ * actual space between them (e.g. spell-check or a tracked edit leaves
+ * "QAGE0" and "2" as separate <w:t> runs that render as "QAGE02"). Blanket
+ * tag→space replacement would glue in a fake space and truncate codes like
+ * that mid-number, so only insert whitespace at real word boundaries
+ * (paragraph/cell ends, explicit breaks and tabs); every other tag is
+ * dropped with no separator, matching what a reader actually sees.
+ */
 function stripXmlToText(xml: string): string {
-  return xml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return xml
+    .replace(/<\/w:p>|<\/w:tc>|<w:br\b[^>]*\/?>|<w:tab\b[^>]*\/?>/g, " ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

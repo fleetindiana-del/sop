@@ -45,16 +45,28 @@ export async function expiredSopCodeSet(codes: string[]): Promise<Set<string>> {
       { identifier: { $in: codes } },
     ],
   })
-    .select('identifier sopBaseId expiryDate')
-    .lean<Array<{ identifier?: string; sopBaseId?: string; expiryDate?: Date }>>();
+    .select('identifier sopBaseId versionNum expiryDate')
+    .lean<Array<{ identifier?: string; sopBaseId?: string; versionNum?: number; expiryDate?: Date }>>();
+
+  // A base can carry several non-obsolete rows when an older version was never
+  // marked obsolete on re-upload (e.g. QAGE119-01/-02 alongside the current
+  // -03). Expiry must follow the current (highest-version) row only, same as
+  // the LMS dashboard (lib/employeeAssignments.ts) — otherwise a stale,
+  // already-superseded version's expiry wrongly locks the live document.
+  const latestByBase = new Map<string, { versionNum: number; expiryDate?: Date }>();
+  for (const row of rows) {
+    const base = String(row.sopBaseId || stripVersion(String(row.identifier || ''))).toUpperCase();
+    if (!base) continue;
+    const versionNum = Number(row.versionNum ?? -1);
+    const existing = latestByBase.get(base);
+    if (!existing || versionNum > existing.versionNum) {
+      latestByBase.set(base, { versionNum, expiryDate: row.expiryDate });
+    }
+  }
 
   const expired = new Set<string>();
-  for (const row of rows) {
-    if (!isSopDocumentExpired(row.expiryDate ?? null)) continue;
-    const id = stripVersion(String(row.identifier || ''));
-    const base = String(row.sopBaseId || id).toUpperCase();
-    if (id) expired.add(id);
-    if (base) expired.add(base);
+  for (const [base, latest] of latestByBase) {
+    if (isSopDocumentExpired(latest.expiryDate ?? null)) expired.add(base);
   }
   return expired;
 }
