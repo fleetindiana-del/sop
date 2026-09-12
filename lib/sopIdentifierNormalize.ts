@@ -164,6 +164,22 @@ export function parseRevisionFromSopIdentifier(id: string): number | null {
 }
 
 /**
+ * Same as {@link parseRevisionFromSopIdentifier} but preserves the original digits
+ * (e.g. QAGE01-06 → "06") for display, instead of the leading-zero-stripped number.
+ * Mirrors normalizeSopIdentifierKey's separator cleanup but stops short of the
+ * parseInt that drops leading zeros.
+ */
+export function parseRevisionStringFromSopIdentifier(id: string): string | null {
+  let raw = stripInvisible((id || '').trim().toUpperCase());
+  raw = normalizeSpaceAsHyphen(raw);
+  let u = raw.replace(/\s+/g, '');
+  u = toAsciiHyphens(u);
+  u = u.replace(/_/g, '-').replace(/-{2,}/g, '-');
+  const m = u.match(/-(\d+)$/);
+  return m ? m[1] : null;
+}
+
+/**
  * Logical document family: QAGE01-10 and QAGE01-11 both → QAGE:1 (letters + doc index, no revision).
  * Used to show one registry row per SOP with the highest revision only.
  */

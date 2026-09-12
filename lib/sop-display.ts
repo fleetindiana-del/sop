@@ -10,7 +10,7 @@ import {
   expandSopIdentifierVariants,
   formatSopCodeDisplay,
   normalizeSopIdentifierKey,
-  parseRevisionFromSopIdentifier,
+  parseRevisionStringFromSopIdentifier,
   sopBaseDisplayFromIdentifier,
 } from "@/lib/sopIdentifierNormalize";
 
@@ -49,15 +49,21 @@ export function displaySopBaseCode(identifier: string): string {
   return sopBaseDisplayFromIdentifier(trimmed) || displaySopCode(trimmed);
 }
 
+/** Zero-pad a purely-numeric revision to 2 digits (e.g. "6" → "06", "10" → "10"). Leaves non-integer values (e.g. "1.0") untouched. */
+function padRevision(raw: string): string {
+  if (!/^\d+$/.test(raw)) return raw;
+  return String(parseInt(raw, 10)).padStart(2, "0");
+}
+
 /**
- * Revision suffix of an SOP code for the registry's "Version" column (QAGE108-3 → "3").
+ * Revision suffix of an SOP code for the registry's "Version" column (QAGE108-3 → "03").
  * Falls back to the record's stored version when the identifier carries no `-NN` suffix.
  */
 export function displaySopRevision(identifier: string, fallbackVersion?: string): string {
-  const rev = parseRevisionFromSopIdentifier(identifier);
-  if (rev !== null) return String(rev);
+  const rev = parseRevisionStringFromSopIdentifier(identifier);
+  if (rev !== null) return padRevision(rev);
   const fallback = String(fallbackVersion || "").trim();
-  return fallback || "—";
+  return fallback ? padRevision(fallback) : "—";
 }
 
 /** SOP name with the leading SOP code stripped (e.g. "QCMI1-0 - Title" → "Title"). */
