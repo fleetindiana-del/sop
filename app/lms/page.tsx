@@ -308,7 +308,7 @@ function StatusIcon({
 }
 
 function SortHeader({
-  label, sortKey, sort, onSort, align = 'left', className = '',
+  label, sortKey, sort, onSort, align = 'left', className = '', title,
 }: {
   label: string;
   sortKey: SortKey;
@@ -316,11 +316,13 @@ function SortHeader({
   onSort: (key: SortKey) => void;
   align?: 'left' | 'right' | 'center';
   className?: string;
+  title?: string;
 }) {
   const active = sort.key === sortKey;
   return (
     <th
       onClick={() => onSort(sortKey)}
+      title={title}
       className={`cursor-pointer select-none px-1 py-1.5 text-[10px] font-semibold uppercase tracking-wide transition hover:text-gray-700 ${
         active ? 'text-gray-700' : 'text-gray-500'
       } ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'} ${className}`}
@@ -702,13 +704,13 @@ function TrainingTable({
                   />
                 ) : null}
               </th>
-              <SortHeader label="Code" sortKey="sopCode" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
-              <SortHeader label="Training" sortKey="sopName" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
-              <SortHeader label="Dept" sortKey="department" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
-              <SortHeader label="Type" sortKey="type" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="center" />
-              <SortHeader label="Status" sortKey="status" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
-              <SortHeader label="OK" sortKey="approved" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="center" />
-              <SortHeader label="Due" sortKey="due" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} />
+              <SortHeader label="SOP No." sortKey="sopCode" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} title="SOP number / code" />
+              <SortHeader label="SOP Name" sortKey="sopName" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} title="SOP / training name" />
+              <SortHeader label="Dept" sortKey="department" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} title="Department" />
+              <SortHeader label="Type" sortKey="type" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="center" title="Training type" />
+              <SortHeader label="Status" sortKey="status" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} title="Training status" />
+              <SortHeader label="OK" sortKey="approved" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="center" title="MCQ bank approved for LMS" />
+              <SortHeader label="Due" sortKey="due" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} title="Due month" />
               <th className="truncate px-1 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-gray-500" title="Scheduled exam date">
                 Sched
               </th>
@@ -717,24 +719,24 @@ function TrainingTable({
                   <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500" title="Total employees">
                     Tot
                   </th>
-                  <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-emerald-700" title="Completed">
+                  <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-emerald-700" title="Employees completed">
                     Done
                   </th>
-                  <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-red-700" title="Not taken">
+                  <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-red-700" title="Employees not taken / not scheduled">
                     Pend
                   </th>
-                  <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-sky-700" title="Scheduled later">
+                  <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-sky-700" title="Employees scheduled for a later date">
                     Later
                   </th>
-                  <th className="truncate px-1 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  <th className="truncate px-1 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-gray-500" title="Assigned employees">
                     Emps
                   </th>
                 </>
               ) : null}
               {!selection ? (
-                <SortHeader label="%" sortKey="progress" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="right" />
+                <SortHeader label="%" sortKey="progress" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="right" title="Completion percentage" />
               ) : null}
-              <th className="px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-gray-500">Act</th>
+              <th className="px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-gray-500" title="Actions">Act</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -781,8 +783,6 @@ function TrainingTable({
                 if (byStatus !== 0) return byStatus;
                 return a.employeeName.localeCompare(b.employeeName);
               });
-              const previewEmps = sortedEmps.slice(0, 1);
-              const moreCount = Math.max(0, sortedEmps.length - previewEmps.length);
               const todayIso = localDateOnlyIso();
               const empStats = (() => {
                 let completed = 0;
@@ -1057,41 +1057,9 @@ function TrainingTable({
                               assignment.sopCode,
                               displayTrainingName(assignment).english,
                             )}
-                            className="flex min-w-0 max-w-full items-center gap-1 text-left"
+                            className="truncate rounded-md border border-gray-300 bg-gray-50 px-1.5 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-100"
                           >
-                            {previewEmps.map((e) => {
-                              const done = e.status === 'completed';
-                              const when = String(e.scheduledDate || '').slice(0, 10);
-                              const later = !done && /^\d{4}-\d{2}-\d{2}$/.test(when) && when > todayIso;
-                              return (
-                                <span
-                                  key={e.employeeId}
-                                  title={
-                                    done
-                                      ? `${e.employeeName} — completed`
-                                      : later
-                                        ? `${e.employeeName} — later (${when})`
-                                        : e.status === 'overdue'
-                                          ? `${e.employeeName} — delayed`
-                                          : `${e.employeeName} — not taken`
-                                  }
-                                  className={`inline-block max-w-[6.5rem] truncate rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${
-                                    done
-                                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
-                                      : later
-                                        ? 'border-sky-300 bg-sky-50 text-sky-800'
-                                        : 'border-red-300 bg-red-50 text-red-800'
-                                  }`}
-                                >
-                                  {e.employeeName}
-                                </span>
-                              );
-                            })}
-                            {moreCount > 0 ? (
-                              <span className="shrink-0 rounded-md border border-gray-300 bg-gray-50 px-1.5 py-0.5 text-[11px] font-semibold text-gray-600">
-                                +{moreCount}
-                              </span>
-                            ) : null}
+                            {sortedEmps.length} Employee{sortedEmps.length === 1 ? '' : 's'}
                           </button>
                         )}
                       </td>
