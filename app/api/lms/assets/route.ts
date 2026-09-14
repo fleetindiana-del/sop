@@ -10,6 +10,7 @@ import {
   lmsServerTtl,
 } from '@/lib/lmsCache';
 import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
+import { displaySopRevision } from '@/lib/sop-display';
 import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTrainingIgnore';
 import { getMcqApprovedMapForCodes, familyKeyForLmsCode } from '@/lib/lmsMcqApproval';
 import { batchTrainerExamUnlocked } from '@/lib/lmsTrainerGate';
@@ -34,6 +35,8 @@ export interface SopAssetFlags {
   lmsApproved: boolean;
   /** True when the current SOP document expiry date is in the past. */
   sopExpired: boolean;
+  /** Current SOP revision, e.g. "06" — blank when the version is unknown. */
+  sopVersion: string;
   /**
    * True when the learner may start the exam: either they are a covering trainer,
    * or a department trainer has completed this SOP.
@@ -133,6 +136,7 @@ export async function GET() {
               || mcqApprovedMap.get(famKey) === true,
             sopExpired: expiredByCode.get(code.toUpperCase()) === true
               || expiredByCode.get(fam) === true,
+            sopVersion: content.sop?.identifier ? displaySopRevision(content.sop.identifier) : '',
             trainerUnlocked:
               trainerUnlockedMap.get(code) === true
               || trainerUnlockedMap.get(code.toUpperCase()) === true

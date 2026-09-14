@@ -36,7 +36,7 @@ const SOP_NO_PATTERN =
 const SUPERSEDES_PATTERN =
   /SUPERSEDES\s*:?\s*([A-Z]{2,}[A-Z0-9]*-\d+|[A-Z]{2,}-[A-Z]{2,}-\d+)/i;
 
-const ANNEXURE_LABEL_PATTERN = /(annex(ure)?|appendix)\s*[-–]?\s*([IVXLC\d]+)/i;
+const ANNEXURE_LABEL_PATTERN = /(annex(?:ure)?s?|appendix(?:es)?)\s*[-–]?\s*([IVXLC\d]+)/i;
 
 export function isAnnexureFileName(fileName: string): boolean {
   return ANNEXURE_NAME.test(fileName) && !SKIP_NAME.test(fileName);
@@ -92,7 +92,7 @@ function extractAnnexureLabel(fileName: string): string | undefined {
   const base = fileName.replace(/\.[^.]+$/, "");
   const match = base.match(ANNEXURE_LABEL_PATTERN);
   if (match) {
-    const roman = match[3]?.trim();
+    const roman = match[2]?.trim();
     const prefix = /annex/i.test(match[1]) ? "Annexure" : "Appendix";
     return roman ? `${prefix}-${roman}` : prefix;
   }
@@ -100,7 +100,11 @@ function extractAnnexureLabel(fileName: string): string | undefined {
   return undefined;
 }
 
-function parentFromPath(relativePath: string): string | undefined {
+/** Exported so callers can prefer this folder/path-derived parent code over a
+ *  fragile content-parsed one (e.g. when text extraction misreads the annexure's
+ *  own header — "QAGE49" as "QCGE49" — the upload folder name is the more
+ *  trustworthy signal since it's exactly how uploaders organize files). */
+export function parentFromPath(relativePath: string): string | undefined {
   const pathMeta = parseUploadPathMetadata(relativePath);
   if (pathMeta.identifierFromPath) {
     return normalizeSopIdentifierKey(pathMeta.identifierFromPath);

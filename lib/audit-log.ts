@@ -175,6 +175,16 @@ export function serializeAuditValue(value: unknown): unknown {
   return value;
 }
 
+/** Drop null/undefined entries — a field the entity never had set carries no audit
+ *  information and just bloats previousValues/updatedValues with placeholder nulls. */
+function stripNulls(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== null && value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
 function asPlain(source: unknown): Record<string, unknown> {
   if (!source || typeof source !== "object") return {};
   const doc = source as { toObject?: () => Record<string, unknown> };
@@ -201,7 +211,7 @@ export function snapshotSop(source: unknown): Record<string, unknown> {
   out.slidesEn = mediaCount(media.slides?.en);
   out.slidesGu = mediaCount(media.slides?.gu);
   out.thumbnail = media.thumbnail ? "yes" : null;
-  return out;
+  return stripNulls(out);
 }
 
 export function diffAuditValues(
@@ -224,8 +234,8 @@ export function diffAuditValues(
     const right = serializeAuditValue(after[key]);
     if (JSON.stringify(left) === JSON.stringify(right)) continue;
     fieldsChanged.push(key);
-    previousValues[key] = left;
-    updatedValues[key] = right;
+    if (left !== null) previousValues[key] = left;
+    if (right !== null) updatedValues[key] = right;
   }
 
   return { fieldsChanged, previousValues, updatedValues };
@@ -402,7 +412,7 @@ export function snapshotUser(source: unknown): Record<string, unknown> {
     }
     out[field] = serializeAuditValue(user[field]);
   }
-  return out;
+  return stripNulls(out);
 }
 
 export async function logUserAudit(params: {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { resolveLmsIdentity } from '@/lib/lmsIdentity';
+import { requireLmsTrainer } from '@/lib/lmsTrainerAuth';
 import {
   invalidateLmsAdminCaches,
   invalidateLmsServerPrefix,
@@ -47,9 +48,12 @@ export async function GET() {
 
 // POST /api/lms/ignore — ignore one SOP or an entire month for the department
 // Body: { month, year, sopCode?: string, scope?: 'sop' | 'month' }
+// Restricted to Trainers / SOP Admins / Super Admins — this hides training
+// for an entire department, not just the caller.
 export async function POST(req: NextRequest) {
-  const ctx = await requireEmployee();
-  if (!ctx) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  const auth = await requireLmsTrainer();
+  if (!auth.ok) return auth.response;
+  const { trainer } = auth;
 
   const body = await req.json().catch(() => ({}));
   const month = Number(body.month);
@@ -64,7 +68,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'sopCode is required' }, { status: 400 });
   }
 
-  const department = ctx.employee.department;
+  const department = trainer.department;
   await connectDB();
   await LmsTrainingIgnore.findOneAndUpdate(
     { department, year, month, sopCode: sopCode || null },
@@ -74,8 +78,8 @@ export async function POST(req: NextRequest) {
         year,
         month,
         sopCode: sopCode || null,
-        ignoredByEmployeeId: ctx.payload.sub,
-        ignoredByName: ctx.employee.name,
+        ignoredByEmployeeId: trainer.employeeId,
+        ignoredByName: trainer.name,
       },
     },
     { upsert: true, returnDocument: 'after' },
@@ -86,9 +90,11 @@ export async function POST(req: NextRequest) {
 }
 
 // DELETE /api/lms/ignore — restore a previously ignored SOP or month
+// Restricted to Trainers / SOP Admins / Super Admins, matching POST.
 export async function DELETE(req: NextRequest) {
-  const ctx = await requireEmployee();
-  if (!ctx) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  const auth = await requireLmsTrainer();
+  if (!auth.ok) return auth.response;
+  const { trainer } = auth;
 
   const body = await req.json().catch(() => ({}));
   const month = Number(body.month);
@@ -98,7 +104,7 @@ export async function DELETE(req: NextRequest) {
 
   await connectDB();
   await LmsTrainingIgnore.deleteOne({
-    department: new RegExp(`^${ctx.employee.department.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+    department: new RegExp(`^${trainer.department.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
     year,
     month,
     sopCode: sopCode || null,

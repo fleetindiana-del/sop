@@ -2055,10 +2055,11 @@ function groupSopLines(
 
 function formatShortDate(iso: string) {
   const parts = iso.slice(0, 10).split('-');
+  const year = parts[0];
   const month = Number(parts[1]);
   const day = Number(parts[2]);
   if (!month || !day || month < 1 || month > 12) return iso.slice(0, 10);
-  return `${day} ${MONTHS[month - 1]}`;
+  return `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
 }
 
 function SolidPill({
@@ -2974,7 +2975,10 @@ function AssetLangRow({
   slot: AssetLangSlot;
   assetLabel: string;
 }) {
-  const href = `/lms/journey/${encodeURIComponent(sopCode)}`;
+  const stepId = assetLabel === 'PDF'
+    ? (lang === 'EN' ? 'sopPdf' : 'sopPdfGu')
+    : (lang === 'EN' ? 'videoEn' : 'videoGu');
+  const href = `/lms/journey/${encodeURIComponent(sopCode)}?step=${stepId}`;
   const label = assetLabel === 'PDF' ? 'PDF' : 'video';
   return (
     <div className="flex items-center gap-0.5">

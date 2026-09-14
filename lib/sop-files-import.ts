@@ -1056,6 +1056,7 @@ export async function runFilesFolderImport(jobId: string): Promise<void> {
             fileName: file.fileName,
             relativePath: file.relativePath,
             parentIdentifier,
+            content: annexContent,
             annexureLabel: meta.annexureLabel,
             versionNum: parentHasRevision ? meta.versionNum : undefined,
             checksum: finalChecksum,

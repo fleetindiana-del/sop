@@ -14,7 +14,7 @@ const DIGIT_TO_ROMAN: Record<string, string> = {
 const ANNEXURES_SECTION =
   /\d+\.?\d*\s*ANNEXURES?\s*:?-?\s*([\s\S]*?)(?=\n\s*\d+\.0\s+(?!Annexure|Appendix)[A-Z]|\n\s*DISTRIBUTION\s+LIST|\n\s*APPROVAL\s+MATRIX|\n\s*REFERENCE\s+SOP|$)/i;
 
-const ANNEXURE_IN_SECTION = /(?:annex(?:ure)?|appendix)\s*[-–]?\s*([IVXLC]+|\d+)/gi;
+const ANNEXURE_IN_SECTION = /(?:annex(?:ure)?s?|appendix(?:es)?)\s*[-–]?\s*([IVXLC]+|\d+)/gi;
 
 export function normalizeAnnexureRoman(token: string): string {
   const t = token.trim().toUpperCase();
@@ -24,7 +24,7 @@ export function normalizeAnnexureRoman(token: string): string {
 
 export function annexureRomanFromLabel(label: string): string | undefined {
   if (!label?.trim()) return undefined;
-  const match = label.match(/(?:annex(?:ure)?|appendix)\s*[-–]?\s*([IVXLC]+|\d+)/i);
+  const match = label.match(/(?:annex(?:ure)?s?|appendix(?:es)?)\s*[-–]?\s*([IVXLC]+|\d+)/i);
   if (!match?.[1]) return undefined;
   return normalizeAnnexureRoman(match[1]);
 }

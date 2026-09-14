@@ -95,6 +95,10 @@ export async function linkAnnexureToParent(opts: {
   versionNum?: number;
   checksum?: string;
   skipIfChecksumMatches?: boolean;
+  /** Callers that already extracted text from this buffer (e.g. to detect the
+   *  parent SOP reference) should pass it here so we don't parse the same
+   *  docx/pdf a second time. */
+  content?: string;
 }): Promise<AnnexureLinkResult> {
   await connectDB();
 
@@ -137,7 +141,7 @@ export async function linkAnnexureToParent(opts: {
     }
   }
 
-  const content = await extractTextFromBuffer(opts.buffer, fileType);
+  const content = opts.content ?? (await extractTextFromBuffer(opts.buffer, fileType));
   const lang = languageFromContentScript(
     content,
     resolveUploadLanguage(opts.relativePath, parent?.language ?? "English"),
@@ -240,6 +244,10 @@ async function attachAnnexureDocToParent(
       previous: auditPrevious,
       comments,
     });
+    // Registry/training-matrix views cache the SOP list including sopDocuments —
+    // without this, a freshly linked annexure keeps showing as missing there
+    // until the cache's TTL expires on its own.
+    invalidateDashboardSopsCache();
   }
 }
 

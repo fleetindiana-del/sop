@@ -35,11 +35,12 @@ import { extractTextFromBuffer } from "@/lib/extractContent";
 import {
   extractSopContentMetadata,
   isAnnexureFileName,
+  parentFromPath,
   shouldSkipImportFileName,
 } from "@/lib/sop-content-metadata";
 import { parseRequiredAnnexuresFromContent } from "@/lib/sop-annexure-requirements";
 import { extractRefSopNoFromAnnexure } from "@/lib/annexure-parent-extract";
-import { linkAnnexureToParent, resolvePendingAnnexuresForSop } from "@/lib/sop-annexure";
+import { findAnnexureParentSop, linkAnnexureToParent, resolvePendingAnnexuresForSop } from "@/lib/sop-annexure";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { invalidateViewerUrlCache } from "@/lib/viewerHelper";
 import { invalidateDocxHtmlCache } from "@/lib/docxHtmlCache";
@@ -398,7 +399,28 @@ async function processAnnexureFileInput(input: SopFileInput): Promise<SopFileRes
       ? await extractRefSopNoFromAnnexure({ content, buffer })
       : undefined;
   const meta = extractSopContentMetadata({ content, fileName, relativePath });
-  const parentIdentifier = refParent ?? meta.parentIdentifier;
+  const contentParent = refParent ?? meta.parentIdentifier;
+  const pathParent = parentFromPath(relativePath);
+
+  // Content-derived parent codes come from parsing the annexure's own header/
+  // tables and can misread similar-looking letters (e.g. "QAGE49" extracted as
+  // "QCGE49"), silently parking the file under a code that doesn't exist. The
+  // upload folder name is the more reliable signal — it's exactly how
+  // uploaders organize SOP + annexure files — so when the content-derived
+  // code doesn't match any real SOP but the folder does, prefer the folder.
+  let parentIdentifier = contentParent;
+  if (
+    pathParent &&
+    normalizeSopIdentifierKey(pathParent) !== normalizeSopIdentifierKey(contentParent || "")
+  ) {
+    const contentParentExists = contentParent ? await findAnnexureParentSop(contentParent) : null;
+    if (!contentParentExists) {
+      const pathParentExists = await findAnnexureParentSop(pathParent);
+      if (pathParentExists) parentIdentifier = pathParent;
+    }
+  }
+  if (!parentIdentifier) parentIdentifier = pathParent;
+
   if (!parentIdentifier) {
     return {
       file: fileName,
@@ -410,13 +432,18 @@ async function processAnnexureFileInput(input: SopFileInput): Promise<SopFileRes
   }
 
   const parentHasRevision = /-\d+$/.test(parentIdentifier);
+  const versionNum =
+    parentIdentifier === meta.parentIdentifier
+      ? meta.versionNum
+      : sopVersionFields(parentIdentifier).versionNum;
   const linkResult = await linkAnnexureToParent({
     buffer,
     fileName,
     relativePath,
     parentIdentifier,
+    content,
     annexureLabel: meta.annexureLabel,
-    versionNum: parentHasRevision ? meta.versionNum : undefined,
+    versionNum: parentHasRevision ? versionNum : undefined,
   });
 
   if (linkResult.skipped) {

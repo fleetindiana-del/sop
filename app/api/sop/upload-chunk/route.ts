@@ -3,24 +3,40 @@ import { connectDB } from "@/lib/mongodb";
 import { processSopUpload } from "@/lib/sop-upload";
 import { requireAuth } from "@/lib/withAuth";
 import { getContentType } from "@/lib/extractContent";
+import { uploadToBunny, fetchBunnyStorageFile, deleteFromBunny } from "@/lib/bunnyStorage";
 import SopUploadChunk from "@/models/SopUploadChunk";
 
 export const maxDuration = 300;
 
 const MAX_CHUNK_BYTES = 4 * 1024 * 1024;
-const MAX_CHUNKS = 50;
+// 3MB chunks (see CHUNK_BYTES in lib/client-sop-upload.ts) × 200 = ~600MB per file —
+// large enough for annexures with embedded scans/drawings that used to hit the old
+// 50-chunk (~150MB) ceiling and fail with "Invalid chunk index" before a single byte
+// was stored.
+const MAX_CHUNKS = 200;
 
-/**
- * `.lean()` returns the raw BSON `Binary`, not a Buffer. `Buffer.from(binary)`
- * must NOT be used: `Binary.length` is a method, so Node reads it as an
- * array-like of length 0 and silently returns an empty buffer — which is how
- * every chunked (>3.2 MB) upload ended up stored as a 0-byte file.
- */
-function chunkToBuffer(data: unknown): Buffer {
-  if (Buffer.isBuffer(data)) return data;
-  const inner = (data as { buffer?: Uint8Array } | null | undefined)?.buffer;
-  if (inner) return Buffer.from(inner);
-  return Buffer.from(data as Uint8Array);
+/** Bunny Storage path for one in-flight chunk. Objects here are temporary: deleted once
+ *  the file is assembled, or left to be cleaned up manually if an upload is abandoned. */
+function bunnyChunkPath(uploadId: string, chunkIndex: number): string {
+  return `tmp-uploads/${uploadId}/${chunkIndex}`;
+}
+
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const index = next++;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 export async function POST(request: NextRequest) {
@@ -49,11 +65,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Chunk exceeds size limit" }, { status: 413 });
     }
 
-    await connectDB();
     const data = Buffer.from(await chunk.arrayBuffer());
+    const uploadedPath = await uploadToBunny(data, bunnyChunkPath(uploadId, chunkIndex));
+    if (!uploadedPath) {
+      return NextResponse.json({ error: "Failed to store chunk" }, { status: 502 });
+    }
+
+    await connectDB();
     await SopUploadChunk.findOneAndUpdate(
       { uploadId, chunkIndex },
-      { uploadId, chunkIndex, chunkCount, fileName, relativePath, data, createdAt: new Date() },
+      { uploadId, chunkIndex, chunkCount, fileName, relativePath, createdAt: new Date() },
       { upsert: true },
     );
 
@@ -69,15 +90,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const buffer = Buffer.concat(stored.map((row) => chunkToBuffer(row.data)));
+    const parts = await mapPool(stored, 8, (row) =>
+      fetchBunnyStorageFile(bunnyChunkPath(uploadId, row.chunkIndex)),
+    );
+    const missingIndex = parts.findIndex((part) => !part || !part.length);
+    if (missingIndex !== -1) {
+      return NextResponse.json(
+        { error: `Failed to retrieve chunk ${stored[missingIndex].chunkIndex} — please retry` },
+        { status: 502 },
+      );
+    }
+
+    const buffer = Buffer.concat(parts as Buffer[]);
+
+    await SopUploadChunk.deleteMany({ uploadId });
+    await mapPool(stored, 8, (row) => deleteFromBunny(bunnyChunkPath(uploadId, row.chunkIndex)));
+
     if (!buffer.length) {
-      await SopUploadChunk.deleteMany({ uploadId });
       return NextResponse.json(
         { error: "Assembled upload was empty — please retry" },
         { status: 500 },
       );
     }
-    await SopUploadChunk.deleteMany({ uploadId });
 
     const assembled = new File([new Uint8Array(buffer)], fileName, {
       type: getContentType(fileName),

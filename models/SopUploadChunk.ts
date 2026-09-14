@@ -1,12 +1,18 @@
 import mongoose, { Schema, type Model } from "mongoose";
 
+/**
+ * Tracks receipt of chunked-upload parts. The chunk bytes themselves live in
+ * Bunny Storage (see `bunnyChunkPath` in app/api/sop/upload-chunk/route.ts) —
+ * this doc used to also carry a `data: Buffer` field, but storing raw file
+ * bytes here filled the MongoDB cluster's storage quota (a single large
+ * annexure could buffer 100s of MB of chunks in Mongo before assembly).
+ */
 export interface ISopUploadChunk {
   uploadId: string;
   chunkIndex: number;
   chunkCount: number;
   fileName: string;
   relativePath: string;
-  data: Buffer;
   createdAt: Date;
 }
 
@@ -16,7 +22,6 @@ const SopUploadChunkSchema = new Schema<ISopUploadChunk>({
   chunkCount: { type: Number, required: true },
   fileName: { type: String, required: true },
   relativePath: { type: String, required: true },
-  data: { type: Buffer, required: true },
   createdAt: { type: Date, default: Date.now, expires: 3600 },
 });
 

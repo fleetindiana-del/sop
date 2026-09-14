@@ -122,21 +122,18 @@ function formatDueMonth(a: SopAssignment): string {
   return d.toLocaleString('en-US', { month: 'long' });
 }
 
-/** Short month for dense table cells (e.g. "Aug"). */
+/** Short month for dense table cells (e.g. "09/2026"). */
 function formatDueMonthShort(a: SopAssignment): string {
-  const d = new Date(a.year, a.month - 1, 1);
-  return d.toLocaleString('en-US', { month: 'short' });
+  return `${String(a.month).padStart(2, '0')}/${a.year}`;
 }
 
-/** Compact assigned date for table (e.g. "16 Aug" or "—"). */
+/** Compact assigned date for table (e.g. "16/08/2026" or "—"). */
 function formatAssignedShort(value: string): string {
   if (!value || value === '—') return '—';
   const iso = value.slice(0, 10);
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-    const d = new Date(`${iso}T12:00:00`);
-    if (!Number.isNaN(d.getTime())) {
-      return d.toLocaleString('en-US', { day: 'numeric', month: 'short' });
-    }
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
   }
   return value.length > 8 ? value.slice(0, 8) : value;
 }
@@ -665,6 +662,7 @@ function TrainingTable({
           <colgroup>
             <col className="w-7" />
             <col className="w-[4.75rem]" />
+            <col className="w-8" />
             <col className="w-[11.5rem]" />
             <col className="w-[4.5rem]" />
             <col className="w-10" />
@@ -705,6 +703,9 @@ function TrainingTable({
                 ) : null}
               </th>
               <SortHeader label="SOP No." sortKey="sopCode" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} title="SOP number / code" />
+              <th className="truncate px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500" title="Current SOP revision">
+                Ver
+              </th>
               <SortHeader label="SOP Name" sortKey="sopName" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} title="SOP / training name" />
               <SortHeader label="Dept" sortKey="department" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} title="Department" />
               <SortHeader label="Type" sortKey="type" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="center" title="Training type" />
@@ -901,6 +902,9 @@ function TrainingTable({
                   </td>
                   <td className="truncate px-1 py-1.5 font-mono text-xs font-bold text-gray-700" title={assignment.sopCode}>
                     {assignment.sopCode}
+                  </td>
+                  <td className="px-1 py-1.5 text-center text-[11px] font-semibold text-gray-500" title="Current SOP revision">
+                    {asset?.sopVersion || '—'}
                   </td>
                   <td className="max-w-0 px-1 py-1.5">
                     <TrainingNameCell assignment={assignment} />
@@ -1864,7 +1868,7 @@ function Dashboard({
                       : 'My Trainings'}
                 </h2>
                 <div className="flex flex-wrap items-center gap-2">
-                  {!trainerBulk && (
+                  {!trainerBulk && canOpenTrainerView && (
                     <button
                       type="button"
                       onClick={handleIgnoreMonth}
@@ -1979,7 +1983,7 @@ function Dashboard({
                   onOpenStep={handleOpenStep}
                   onCertificate={handleCertificate}
                   onPrefetch={prefetchJourney}
-                  onIgnoreSop={trainerBulk ? undefined : handleIgnoreSop}
+                  onIgnoreSop={trainerBulk || !canOpenTrainerView ? undefined : handleIgnoreSop}
                   ignoringKey={ignoringKey}
                   trainerExtras={trainerExtras}
                   isTrainer={employee.isTrainer === true}
