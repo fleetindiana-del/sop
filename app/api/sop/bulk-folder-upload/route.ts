@@ -4,7 +4,12 @@ import { requireAuth } from "@/lib/withAuth";
 
 export const maxDuration = 300;
 
-const SKIP_PATTERN = /cover\s*page|^index$/i;
+// Generic Word placeholder pages to skip — must be the WHOLE filename (ignoring
+// extension), not merely contain these words, or a real annexure whose title
+// happens to include "cover page" (e.g. "Annexure-II Particle Counter Cover
+// Page.docx") gets silently dropped. Keep in sync with SKIP_NAME in
+// lib/sop-content-metadata.ts.
+const SKIP_PATTERN = /^(cover\s*page|index)(\.[a-z0-9]+)?$/i;
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
@@ -32,10 +37,6 @@ export async function POST(request: NextRequest) {
       nextForm.append("files", file);
       nextForm.append("paths", path);
     }
-    // Every bulk batch defers the heavy version reconcile; the client runs it once
-    // after the final batch (see uploadSopBatch in BulkUploadModals).
-    nextForm.set("deferReconcile", "true");
-
     console.log(
       `[bulk-folder-upload] batch received: ${files.length} file(s), ${filtered.length} after skip-filter`,
     );

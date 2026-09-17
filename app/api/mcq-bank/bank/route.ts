@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth, forbidUnlessDepartmentAccess } from "@/lib/withAuth";
 import SOP from "@/models/SOP";
-import { sopFamilyGroupKey, resolveSopVersion, versionFromIdentifier } from "@/lib/sop-utils";
+import { sopFamilyGroupKey, sopFamilyIdentifierRegex, resolveSopVersion, versionFromIdentifier } from "@/lib/sop-utils";
 import { normalizeMcqDifficulty } from "@/lib/mcq-bank-write";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
 import { isBetterCanonicalMcqBank, mcqResolveDept } from "@/lib/mcq-bank-utils";
@@ -116,8 +116,14 @@ export async function GET(request: NextRequest) {
 
     // ── Sibling language banks (same SOP family) ──────────────────────────────
     // One bank per language: current Dashboard revision, else newest revision.
+    // Scoped to this SOP's family via an indexed sopIdentifier match instead of
+    // scanning every non-obsolete bank in the system.
+    const famRegex = sopFamilyIdentifierRegex(String(bank.sopIdentifier ?? ""));
     const candidates = await col
-      .find({ isObsolete: { $ne: true } }, { projection: { sopIdentifier: 1, language: 1, updatedAt: 1, totalQuestions: 1 } })
+      .find(
+        { sopIdentifier: famRegex, isObsolete: { $ne: true } },
+        { projection: { sopIdentifier: 1, language: 1, updatedAt: 1, totalQuestions: 1 } },
+      )
       .toArray();
 
     const siblingByLang = new Map<"EN" | "GU", string>();

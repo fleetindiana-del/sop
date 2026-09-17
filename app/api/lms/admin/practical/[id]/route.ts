@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
+import { requireLmsManager } from '@/lib/lmsTrainerAuth';
 import PracticalAssessment from '@/models/lms/PracticalAssessment';
 
 export const dynamic = 'force-dynamic';
@@ -11,8 +10,8 @@ type Params = { params: Promise<{ id: string }> };
 // PATCH /api/lms/admin/practical/[id]
 // Body: { action: 'approve' | 'reject', score?: number, remarks?: string }
 export async function PATCH(req: NextRequest, { params }: Params) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  const auth = await requireLmsManager();
+  if (!auth.ok) return auth.response;
 
   const { id } = await params;
 
@@ -32,7 +31,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
 
     assessment.status     = action === 'approve' ? 'approved' : 'rejected';
-    assessment.reviewedBy = session.user?.name || session.user?.email || 'Admin';
+    assessment.reviewedBy = auth.actorName || auth.session?.user?.email || 'Admin';
     assessment.reviewedAt = new Date();
     if (typeof score === 'number') assessment.score = score;
     if (remarks) assessment.remarks = remarks;

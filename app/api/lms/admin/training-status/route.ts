@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
+import { requireLmsManager } from '@/lib/lmsTrainerAuth';
 import { lmsCacheControl } from '@/lib/lmsCache';
 import Employee from '@/models/Employee';
 import LearningProgress from '@/models/lms/LearningProgress';
@@ -17,8 +16,8 @@ function empKey(department: string, name: string): string {
 
 // GET /api/lms/admin/training-status?department=QA
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  const auth = await requireLmsManager();
+  if (!auth.ok) return auth.response;
 
   const { searchParams } = req.nextUrl;
   const department = searchParams.get('department');

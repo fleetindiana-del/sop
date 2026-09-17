@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
+import { requireLmsManager } from '@/lib/lmsTrainerAuth';
 import {
   getOrBuildLmsCache,
   invalidateLmsServerKeys,
@@ -14,8 +13,8 @@ export const dynamic = 'force-dynamic';
 
 // GET /api/lms/admin/exam-settings
 export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  const auth = await requireLmsManager();
+  if (!auth.ok) return auth.response;
 
   try {
     const body = await getOrBuildLmsCache(
@@ -41,8 +40,8 @@ export async function GET() {
 
 // PATCH /api/lms/admin/exam-settings
 export async function PATCH(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  const auth = await requireLmsManager();
+  if (!auth.ok) return auth.response;
 
   try {
     await connectDB();

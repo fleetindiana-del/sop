@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Archive,
@@ -72,6 +72,15 @@ export function DashboardToolbar({
   } = useDashboardStore();
 
   const archiveActive = Boolean(filters.archiveView);
+
+  // These are plain buttons (not next/link), so they don't get automatic
+  // hover/viewport prefetch — warm the JS chunk + RSC payload as soon as the
+  // toolbar mounts so the click itself feels instant instead of triggering a
+  // fresh fetch of the whole target page.
+  useEffect(() => {
+    router.prefetch("/mcq-bank");
+    router.prefetch("/lms");
+  }, [router]);
 
   // Open the Prior Version Archive view: a read-only historical listing of superseded
   // SOP revisions. This is purely a view toggle — it never deletes or moves any files.

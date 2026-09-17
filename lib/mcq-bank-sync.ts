@@ -1,6 +1,7 @@
 import MCQBank from "@/models/MCQBank";
 import { sopFamilyIdentifierRegex } from "@/lib/sop-utils";
 import type { AggregatedMcqFamily } from "@/lib/mcq-bank-utils";
+import { invalidateMcqBankAggregateCache } from "@/lib/mcqBankAggregateCache";
 
 const OBSOLETE_MCQ_REASON = "Moved to Obsolete MCQs — no active SOP in registry";
 
@@ -13,6 +14,7 @@ export async function markMcqBanksObsoleteForIdentifier(
     { sopIdentifier: sopFamilyIdentifierRegex(identifier), isObsolete: { $ne: true } },
     { $set: { isObsolete: true, obsoleteAt: now, obsoleteReason: reason } },
   );
+  if (result.modifiedCount > 0) invalidateMcqBankAggregateCache();
   return result.modifiedCount;
 }
 
@@ -21,6 +23,7 @@ export async function reviveMcqBanksForIdentifier(identifier: string): Promise<n
     { sopIdentifier: sopFamilyIdentifierRegex(identifier), isObsolete: true },
     { $set: { isObsolete: false }, $unset: { obsoleteAt: "", obsoleteReason: "" } },
   );
+  if (result.modifiedCount > 0) invalidateMcqBankAggregateCache();
   return result.modifiedCount;
 }
 
@@ -46,6 +49,7 @@ export async function syncOrphanMcqBanks(
     }
   }
 
+  if (marked > 0) invalidateMcqBankAggregateCache();
   return { marked, identifiers };
 }
 

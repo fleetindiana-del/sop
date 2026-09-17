@@ -65,6 +65,9 @@ export type SopFileInput = {
   location?: string;
   generateMcq?: boolean;
   skipIfChecksumMatches?: boolean;
+  /** Precomputed once per batch by callers that already have it (e.g.
+   *  processSopUploadInner) to avoid re-querying it per file. */
+  knownDepartments?: string[];
 };
 
 export type SopFileResult = {
@@ -131,6 +134,7 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
     location,
     generateMcq = false,
     skipIfChecksumMatches = false,
+    knownDepartments: knownDepartmentsInput,
   } = input;
 
   const fileType = detectFileType(fileName);
@@ -166,7 +170,8 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
     version,
     pathMeta.versionFromPath,
   );
-  const knownDepartments = (await Department.distinct("name")) as string[];
+  const knownDepartments =
+    knownDepartmentsInput ?? ((await Department.distinct("name")) as string[]);
   const department = resolveDepartmentFromUpload({
     batchOverride: batchDepartment,
     contentDepartment: contentMeta.department,
@@ -502,7 +507,6 @@ async function processSopUploadInner(formData: FormData) {
   const versionInput = (formData.get("version") as string)?.trim();
   const location = (formData.get("location") as string)?.trim();
   const generateMcq = formData.get("generateMcq") === "true";
-  const deferReconcile = formData.get("deferReconcile") === "true";
   const files = formData.getAll("files") as File[];
   const paths = formData.getAll("paths").map((value) => String(value));
 
@@ -513,10 +517,10 @@ async function processSopUploadInner(formData: FormData) {
   const startedAt = Date.now();
   console.log(
     `[sop-upload] received ${files.length} file(s) — lang=${language}` +
-      `${batchDepartment ? `, dept=${batchDepartment}` : ""}${generateMcq ? ", mcq=on" : ""}` +
-      `${deferReconcile ? ", reconcile=deferred" : ""}`,
+      `${batchDepartment ? `, dept=${batchDepartment}` : ""}${generateMcq ? ", mcq=on" : ""}`,
   );
 
+  const knownDepartments = (await Department.distinct("name")) as string[];
   const results: SopFileResult[] = [];
   const mcqIdentifiers = new Set<string>();
   const touchedFamilies = new Set<string>();
@@ -564,6 +568,7 @@ async function processSopUploadInner(formData: FormData) {
             relativePath,
             department: batchDepartment,
             language,
+            knownDepartments,
             identifier: identifierInput,
             name: nameInput,
             version: versionInput,
@@ -624,13 +629,12 @@ async function processSopUploadInner(formData: FormData) {
   const successCount = results.filter((r) => r.success && !r.skipped).length;
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
   console.log(
-    `[sop-upload] batch done: ${successCount} ok, ${results.length - successCount} failed in ${elapsed}s` +
-      `${deferReconcile && successCount > 0 ? " (reconcile deferred to caller)" : ""}`,
+    `[sop-upload] batch done: ${successCount} ok, ${results.length - successCount} failed in ${elapsed}s`,
   );
 
-  if (successCount > 0 && !deferReconcile) {
+  if (successCount > 0 && touchedFamilies.size > 0) {
     try {
-      await reconcileSopVersions();
+      await reconcileSopVersions([...touchedFamilies]);
     } catch (e) {
       console.error("[sop-upload] post-upload reconcile error:", e);
     }

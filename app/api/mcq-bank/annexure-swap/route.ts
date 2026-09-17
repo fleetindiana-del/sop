@@ -17,6 +17,7 @@ import {
 import { isDuplicateMcqQuestion, isDuplicateMcqQuestionForGeneration } from "@/lib/similarity";
 import { sopFamilyIdentifierRegex } from "@/lib/sop-utils";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
+import { invalidateMcqBankAggregateCache } from "@/lib/mcqBankAggregateCache";
 import { requireAuth } from "@/lib/withAuth";
 
 /** Annexure swap runs a single LLM batch — keep under serverless/proxy limits. */
@@ -264,6 +265,7 @@ export async function POST(request: NextRequest) {
       .reduce((sum, b) => sum + (b.mcqs?.length ?? 0), 0);
     await SOP.updateMany({ identifier: famRegex, language }, { mcqCount: familyTotal });
     invalidateDashboardSopsCache();
+    invalidateMcqBankAggregateCache();
 
     return NextResponse.json({
       removed,

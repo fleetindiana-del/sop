@@ -12,6 +12,7 @@ import { sopIdentifierMatchFilter } from "@/lib/sopIdentifierNormalize";
 import { anthropicMcqApiAvailable, generateAnthropicMcqBatch } from "@/lib/anthropic-mcq";
 import { generateClaudeCliMcqBatch, getMcqClaudeModel } from "@/lib/claude-cli";
 import type { ParsedMcq } from "@/lib/mcq-json-parse";
+import { invalidateMcqBankAggregateCache } from "@/lib/mcqBankAggregateCache";
 
 // Always Claude for individual regeneration, preferring the direct Anthropic API
 // (faster) when ANTHROPIC_API_KEY is configured, same fallback order as the main
@@ -186,6 +187,7 @@ export async function POST(request: NextRequest) {
         },
       },
     );
+    invalidateMcqBankAggregateCache();
 
     return NextResponse.json({ success: true, questionIndex, mcq: newMcq });
   } catch (error) {

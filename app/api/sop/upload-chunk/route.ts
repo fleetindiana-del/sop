@@ -131,7 +131,6 @@ export async function POST(request: NextRequest) {
     }
     complete.append("files", assembled);
     complete.append("paths", relativePath);
-    complete.set("deferReconcile", "true");
 
     return processSopUpload(complete, request);
   } catch (error) {

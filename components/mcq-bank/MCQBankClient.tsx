@@ -1608,6 +1608,12 @@ export function MCQBankClient() {
   const { data: session } = useSession();
   const userIsAdmin = isAdmin((session?.user?.role ?? "viewer") as AppRole);
 
+  // The "Dashboard" back button below is a plain button (router.push), not a
+  // next/link, so it gets no automatic prefetch — warm it on mount instead.
+  useEffect(() => {
+    router.prefetch("/dashboard");
+  }, [router]);
+
   // Modal state
   // The bank to open, plus which language to land on. A family whose Gujarati set
   // lives as translations on the English masters opens that same English bank, so

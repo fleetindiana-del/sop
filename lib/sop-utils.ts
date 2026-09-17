@@ -290,18 +290,34 @@ function collectAnnexures(records: ISOP[]) {
   return annexures;
 }
 
-function collectRequiredAnnexures(records: ISOP[]): string[] {
+/**
+ * Case-by-case exemptions for a SOP whose parsed "required annexure" names a
+ * blank record-keeping format/logbook (filled by hand on the floor), not an
+ * uploadable reference document — so it should never show as a missing
+ * annexure. This is NOT a general detection rule change; add an entry only
+ * when a specific SOP's own annexure is confirmed to be this kind of form.
+ */
+const REQUIRED_ANNEXURE_EXEMPTIONS: Record<string, string[]> = {
+  // PRAA06-05 §6.1: "Annexure-I : Garment Washing and Sterilization Cycle
+  // Record" — a blank logbook filled during garment washing, not a document.
+  PRAA06: ["I"],
+};
+
+function collectRequiredAnnexures(records: ISOP[], baseId: string): string[] {
+  const exempt = new Set(REQUIRED_ANNEXURE_EXEMPTIONS[baseId.toUpperCase()] ?? []);
+  const filtered = (list?: string[]) => (list ?? []).filter((r) => !exempt.has(r));
+
   const englishDocx = records.find(
     (r) => r.fileType === "docx" && r.language === "English" && r.requiredAnnexures?.length,
   );
   if (englishDocx?.requiredAnnexures?.length) {
-    return sortAnnexureRomans(englishDocx.requiredAnnexures);
+    return sortAnnexureRomans(filtered(englishDocx.requiredAnnexures));
   }
   const anyDocx = records.find(
     (r) => r.fileType === "docx" && r.requiredAnnexures?.length,
   );
   return anyDocx?.requiredAnnexures?.length
-    ? sortAnnexureRomans(anyDocx.requiredAnnexures)
+    ? sortAnnexureRomans(filtered(anyDocx.requiredAnnexures))
     : [];
 }
 
@@ -714,7 +730,10 @@ export function groupSOPRecords(records: ISOP[]): RegistrySOP[] {
     const versionRecords = currentRecords.length ? currentRecords : group;
     const files = collectVersionFiles(versionRecords);
     const annexures = collectAnnexures(versionRecords);
-    const requiredAnnexures = collectRequiredAnnexures(versionRecords);
+    const requiredAnnexures = collectRequiredAnnexures(
+      versionRecords,
+      baseIdentifierFromIdentifier(primary.identifier),
+    );
     const fileSlots = currentVersionFileSlots(versionRecords);
     const language = resolveLanguage(versionRecords);
     const expiryDate = pickFamilyDate(currentRecords.length ? currentRecords : group, "expiryDate");

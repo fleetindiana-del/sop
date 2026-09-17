@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import SOP from "@/models/SOP";
+import MCQBank from "@/models/MCQBank";
 import { requireAuth } from "@/lib/withAuth";
 
 export const dynamic = "force-dynamic";
@@ -11,17 +12,19 @@ export async function POST() {
 
   await connectDB();
 
-  const before = await SOP.collection.indexes();
+  const results = [];
+  for (const Model of [SOP, MCQBank] as const) {
+    const before = await Model.collection.indexes();
+    await Model.syncIndexes();
+    const after = await Model.collection.indexes();
+    console.log(`[sync-indexes] ${Model.modelName} before:`, before.map((i) => i.name));
+    console.log(`[sync-indexes] ${Model.modelName} after:`, after.map((i) => i.name));
+    results.push({
+      model: Model.modelName,
+      before: before.map((i) => ({ name: i.name, key: i.key })),
+      after: after.map((i) => ({ name: i.name, key: i.key })),
+    });
+  }
 
-  await SOP.syncIndexes();
-
-  const after = await SOP.collection.indexes();
-
-  console.log("[sync-indexes] Indexes before:", before.map((i) => i.name));
-  console.log("[sync-indexes] Indexes after:", after.map((i) => i.name));
-
-  return NextResponse.json({
-    before: before.map((i) => ({ name: i.name, key: i.key })),
-    after: after.map((i) => ({ name: i.name, key: i.key })),
-  });
+  return NextResponse.json({ results });
 }

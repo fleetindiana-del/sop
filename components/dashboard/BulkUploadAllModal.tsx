@@ -102,7 +102,6 @@ export function BulkUploadAllModal({
       if (summary.success > 0) {
         clearFiles();
         showToast(sopUploadToastMessage(summary));
-        fetch("/api/admin/reconcile-sop-versions", { method: "POST" }).catch(() => undefined);
         onSuccess();
         const ids = [
           ...new Set(

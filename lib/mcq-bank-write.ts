@@ -4,6 +4,7 @@ import type { ISOP } from "@/models/SOP";
 import { enrichMcqRationale } from "@/lib/mcq-rationale";
 import { isDuplicateMcqQuestionForGeneration } from "@/lib/similarity";
 import { sopFamilyIdentifierRegex } from "@/lib/sop-utils";
+import { invalidateMcqBankAggregateCache } from "@/lib/mcqBankAggregateCache";
 
 // Shape the generator produces (kept structural to avoid a circular import with
 // lib/mcq-generation). Any object with these fields can be written to a bank.
@@ -222,6 +223,7 @@ export async function appendGeneratedToBank(
       aiModel,
       annexureUsage,
     });
+    invalidateMcqBankAggregateCache();
     return {
       bankId: String(created._id),
       inserted: toAdd.length,
@@ -243,6 +245,7 @@ export async function appendGeneratedToBank(
     // were generated with whatever this run folded in.
     if (annexureUsage) bank.annexureUsage = annexureUsage;
     await bank.save();
+    invalidateMcqBankAggregateCache();
   }
   const total = await activeBankMcqCount(sop.identifier, language);
   return {
@@ -267,6 +270,7 @@ export async function archiveBankForSop(
     { sopIdentifier: idRegex, language, isObsolete: { $ne: true } },
     { $set: { isObsolete: true, obsoleteAt: new Date(), obsoleteReason: SUPERSEDED_REASON } },
   );
+  if (result.modifiedCount > 0) invalidateMcqBankAggregateCache();
   return result.modifiedCount;
 }
 
@@ -321,6 +325,7 @@ export async function replaceBankForSop(
     difficultyDistribution: difficultyDistribution(toAdd),
     aiModel,
   });
+  invalidateMcqBankAggregateCache();
   return {
     bankId: String(created._id),
     inserted: toAdd.length,
@@ -345,5 +350,6 @@ export async function deleteBanksForFamily(
   else if (scope === "guj") filter.language = "Gujarati";
 
   const result = await MCQBank.deleteMany(filter);
+  if (result.deletedCount > 0) invalidateMcqBankAggregateCache();
   return result.deletedCount;
 }

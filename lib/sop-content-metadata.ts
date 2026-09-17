@@ -28,7 +28,11 @@ export type SopContentMetadata = {
 };
 
 const ANNEXURE_NAME = /annex(ure)?|appendix/i;
-const SKIP_NAME = /cover\s*page|^index$/i;
+// Generic Word placeholder pages to skip — must be the WHOLE filename (ignoring
+// extension), not merely contain these words, or a real annexure whose title
+// happens to include "cover page" (e.g. "Annexure-II Particle Counter Cover
+// Page.docx") gets silently dropped/misclassified.
+const SKIP_NAME = /^(cover\s*page|index)(\.[a-z0-9]+)?$/i;
 
 const SOP_NO_PATTERN =
   /(?:SOP\s*NO\.?|DOCUMENT\s*NO\.?|DOC\.?\s*NO\.?)\s*:?\s*([A-Z]{2,}[A-Z0-9]*-\d+|[A-Z]{2,}-[A-Z]{2,}-\d+)/i;

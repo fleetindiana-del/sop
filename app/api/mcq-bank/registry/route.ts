@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import mongoose from "mongoose";
-import { connectDB } from "@/lib/mongodb";
 import { requireAuth, filterByAssignedDepartments } from "@/lib/withAuth";
 import { getGroupedRegistryRows } from "@/lib/dashboardRegistrySource";
 import { compareSopCodes, sopFamilyGroupKey } from "@/lib/sop-utils";
@@ -14,43 +12,12 @@ import {
   findObsoleteMcqFamilies,
   mcqBankLangCode,
   mcqFamilyComplete,
-  guTranslatedProjection,
   mcqResolveDept,
   selectCanonicalBanksByLang,
 } from "@/lib/mcq-bank-utils";
+import { getMcqBankAggregateRows, type RawMcqBankRow as RawBank } from "@/lib/mcqBankAggregateCache";
 
 export const dynamic = "force-dynamic";
-
-type RawBank = {
-  _id: unknown;
-  sopIdentifier: string;
-  sopName?: string;
-  department?: string;
-  language: string;
-  isObsolete?: boolean;
-  totalQuestions: number;
-  checkedCount: number;
-  reviewedCount: number;
-  similarCount: number;
-  easyCount: number;
-  mediumCount: number;
-  hardCount: number;
-  /** Questions on this (English) bank that carry a Gujarati translation. */
-  guTranslatedCount: number;
-  guTranslatedChecked: number;
-  guTranslatedReviewed: number;
-  guTranslatedSimilar: number;
-  guTranslatedEasy: number;
-  guTranslatedMedium: number;
-  guTranslatedHard: number;
-  updatedAt?: Date;
-  annexureUsage?: {
-    linkedCount?: number;
-    includedCount?: number;
-    skippedCount?: number;
-    includedLabels?: string[];
-  };
-};
 
 type RegistryEntry = {
   id: string;
@@ -122,36 +89,6 @@ interface FamilyBank {
   annexuresIncluded: number;
   annexureLabels: string[];
 }
-
-const bankProject = {
-  sopIdentifier: 1,
-  sopName: 1,
-  department: 1,
-  language: 1,
-  isObsolete: 1,
-  updatedAt: 1,
-  totalQuestions: { $size: { $ifNull: ["$mcqs", []] } },
-  checkedCount: {
-    $size: { $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isChecked", true] } } },
-  },
-  reviewedCount: {
-    $size: { $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isReviewed", true] } } },
-  },
-  similarCount: {
-    $size: { $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isSimilar", true] } } },
-  },
-  easyCount: {
-    $size: { $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.difficulty", "Easy"] } } },
-  },
-  mediumCount: {
-    $size: { $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.difficulty", "Medium"] } } },
-  },
-  hardCount: {
-    $size: { $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.difficulty", "Hard"] } } },
-  },
-  ...guTranslatedProjection,
-  annexureUsage: 1,
-};
 
 function foldBanks(
   rawBanks: RawBank[],
@@ -304,10 +241,6 @@ function toEntry(
 }
 
 async function buildFullRegistry() {
-  await connectDB();
-  const db = mongoose.connection.db;
-  if (!db) throw new Error("Database not connected");
-
   const grouped = await getGroupedRegistryRows();
   const activeGrouped = grouped.filter((r) => !r.isObsolete);
   const activeFamilyMap = buildActiveSopFamilyMap(grouped);
@@ -316,13 +249,10 @@ async function buildFullRegistry() {
     const fam = sopFamilyGroupKey(row);
     if (!preferredIdentifierByFam.has(fam)) preferredIdentifierByFam.set(fam, row.identifier);
   }
-  const mcqBankCol = db.collection("mcqbanks");
 
-  const [activeBankRows, obsoleteMarkedRows, allBankRows] = await Promise.all([
-    mcqBankCol.aggregate([{ $match: { isObsolete: { $ne: true } } }, { $project: bankProject }]).toArray() as Promise<RawBank[]>,
-    mcqBankCol.aggregate([{ $match: { isObsolete: true } }, { $project: bankProject }]).toArray() as Promise<RawBank[]>,
-    mcqBankCol.aggregate([{ $project: bankProject }]).toArray() as Promise<RawBank[]>,
-  ]);
+  const allBankRows = await getMcqBankAggregateRows();
+  const activeBankRows = allBankRows.filter((b) => !b.isObsolete);
+  const obsoleteMarkedRows = allBankRows.filter((b) => b.isObsolete);
 
   const activeMcqFamilies = aggregateMcqBanksByFamily(activeBankRows, preferredIdentifierByFam);
   const orphanFamilies = findObsoleteMcqFamilies(activeFamilyMap, activeMcqFamilies);

@@ -686,8 +686,8 @@ export function TrainerLmsSchedulePanel({
       onOpenEmployees: openEmployees,
       scheduledTodayByCode,
       onOpenAttendance: openAttendance,
-      scheduleFilteredSops: displayUniqueSops,
-      scheduleFilterLabel: scheduleMain === 'all' ? 'All SOPs' : scheduleFilterLabel,
+      scheduleFilteredSops: scheduleMain === 'all' ? null : displayUniqueSops,
+      scheduleFilterLabel,
     });
   }, [
     onTrainerData, uniqueSops, catalogRecord, openEmployees, scheduledTodayByCode,

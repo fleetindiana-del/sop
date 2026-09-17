@@ -9,6 +9,7 @@ import {
   listSopsApplicableToDesignation,
   listSopsAssignedToEmployee,
   persistEmployeeSopAssignments,
+  persistEmployeeSopRemovals,
   expiredSopCodeSet,
 } from '@/lib/assignEmployeeSops';
 import type { Session } from 'next-auth';
@@ -145,6 +146,48 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Failed to assign SOPs' },
+      { status: 500 },
+    );
+  }
+}
+
+// DELETE — unassign one or more SOPs already assigned to an employee.
+export async function DELETE(req: NextRequest) {
+  const gate = await canAssignSops();
+  if (!gate.ok) return gate.response;
+
+  try {
+    const body = await req.json();
+    const employeeName = String(body?.employeeName || '').trim();
+    const department = String(body?.department || '').trim();
+    const trainerDepts = trainerDepartmentsFromGate(gate);
+    const dept = scopedDepartment(department, trainerDepts);
+    const sopCodes = Array.isArray(body?.sopCodes)
+      ? body.sopCodes.map((c: unknown) => String(c || '').trim()).filter(Boolean)
+      : [];
+    if (!employeeName || !dept || sopCodes.length === 0) {
+      return NextResponse.json(
+        { error: 'employeeName, department and sopCodes are required' },
+        { status: 400 },
+      );
+    }
+
+    const result = await persistEmployeeSopRemovals({ employeeName, department: dept, sopCodes });
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.body.error || 'Failed to unassign SOPs' },
+        { status: result.status },
+      );
+    }
+    return NextResponse.json({
+      removed: sopCodes.length,
+      employeeName,
+      department: dept,
+      ...result.body,
+    });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Failed to unassign SOPs' },
       { status: 500 },
     );
   }

@@ -10,6 +10,7 @@ import {
   requireAuth,
 } from "@/lib/withAuth";
 import { actorFromSession, logAuditEvent } from "@/lib/audit-log";
+import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { resolveTrainerDepartments } from "@/lib/employeeTrainer";
 import { deptMatchesTrainerScope } from "@/lib/lmsTrainerScope";
 import Employee from "@/models/Employee";
@@ -169,6 +170,7 @@ export async function PATCH(request: NextRequest) {
       Department.updateOne({ name: trimmedOld }, { $set: { name: trimmedNew } }),
       SOP.updateMany({ department: trimmedOld }, { $set: { department: trimmedNew } }),
     ]);
+    invalidateDashboardSopsCache();
 
     await logAuditEvent({
       actor: actorFromSession(auth.session, request),

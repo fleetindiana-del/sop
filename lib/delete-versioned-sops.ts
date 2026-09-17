@@ -6,6 +6,7 @@ import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { groupRecordsByBase } from "@/lib/reconcile-sop-versions";
 import { recordsForVersion, maxVersionInGroup, versionFromIdentifier } from "@/lib/sop-utils";
 import { logSopAudit, snapshotSop } from "@/lib/audit-log";
+import { SOP_LIST_EXCLUDE } from "@/lib/sop-list-projection";
 
 function resolveUploadPath(fileUrl: string): string | null {
   try {
@@ -43,7 +44,7 @@ function deleteFileIfExists(filePath: string) {
  */
 export async function deleteVersionedSopFamilies() {
   await connectDB();
-  const records = await SOP.find({});
+  const records = await SOP.find({}).select(SOP_LIST_EXCLUDE);
   const grouped = groupRecordsByBase(records);
 
   const deletedRecords: string[] = [];

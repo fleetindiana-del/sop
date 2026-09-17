@@ -15,7 +15,9 @@ import { deriveSopRecordName } from "@/lib/sop-utils";
 export async function backfillSopNames() {
   await connectDB();
 
-  const records = await SOP.find({});
+  // Needs `content` to derive names (see deriveSopRecordName below) — only the
+  // other two heavy caches are safe to exclude here.
+  const records = await SOP.find({}).select("-mcqClauseCache -complianceStructureCache");
   let updated = 0;
   let skipped = 0;
   const changes: Array<{

@@ -207,6 +207,7 @@ MCQBankSchema.index({ sopIdentifier: 1 });
 MCQBankSchema.index({ department: 1 });
 MCQBankSchema.index({ folderDepartment: 1 });
 MCQBankSchema.index({ folderDepartment: 1, folderSubcategory: 1 });
+MCQBankSchema.index({ isObsolete: 1 });
 
 if (mongoose.models.MCQBank) delete mongoose.models.MCQBank;
 const MCQBank: Model<IMCQBank> = mongoose.model<IMCQBank>("MCQBank", MCQBankSchema);

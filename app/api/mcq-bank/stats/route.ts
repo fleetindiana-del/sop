@@ -1,6 +1,4 @@
 import { NextResponse } from "next/server";
-import mongoose from "mongoose";
-import { connectDB } from "@/lib/mongodb";
 import User from "@/models/User";
 import { requireAuth, filterByAssignedDepartments, isDeptScopedRole } from "@/lib/withAuth";
 import { parseAssignedDepartments, departmentsMatch } from "@/lib/roles";
@@ -11,21 +9,16 @@ import {
   aggregateMcqBanksByFamily,
   buildActiveSopFamilyMap,
   findObsoleteMcqFamilies,
-  guTranslatedProjection,
   mcqFamilyComplete,
 } from "@/lib/mcq-bank-utils";
 import { reconcileMcqBankObsoleteFlags } from "@/lib/mcq-bank-sync";
+import { getMcqBankAggregateRows } from "@/lib/mcqBankAggregateCache";
 
 export async function GET() {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
   try {
-    await connectDB();
-    const db = mongoose.connection.db;
-    if (!db) throw new Error("Database not connected");
-
-    const mcqBankCol = db.collection("mcqbanks");
 
     // ── 1. Active SOP families — same source as the Main Dashboard ───────────
     const allGrouped = await getGroupedRegistryRows();
@@ -46,66 +39,10 @@ export async function GET() {
       if (!preferredIdentifierByFam.has(fam)) preferredIdentifierByFam.set(fam, row.identifier);
     }
 
-    // ── 2. Aggregate MCQBank data (non-obsolete banks only) ───────────────────
-    const bankAgg = await mcqBankCol.aggregate([
-      { $match: { isObsolete: { $ne: true } } },
-      {
-        $project: {
-          sopIdentifier: 1,
-          sopName: 1,
-          department: 1,
-          language: 1,
-          totalQuestions: { $size: { $ifNull: ["$mcqs", []] } },
-          checkedCount: {
-            $size: {
-              $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isChecked", true] } },
-            },
-          },
-          reviewedCount: {
-            $size: {
-              $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isReviewed", true] } },
-            },
-          },
-          similarCount: {
-            $size: {
-              $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isSimilar", true] } },
-            },
-          },
-          ...guTranslatedProjection,
-          updatedAt: 1,
-        },
-      },
-    ]).toArray();
-
-    const obsoleteBankAgg = await mcqBankCol.aggregate([
-      { $match: { isObsolete: true } },
-      {
-        $project: {
-          sopIdentifier: 1,
-          sopName: 1,
-          department: 1,
-          language: 1,
-          totalQuestions: { $size: { $ifNull: ["$mcqs", []] } },
-          checkedCount: {
-            $size: {
-              $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isChecked", true] } },
-            },
-          },
-          reviewedCount: {
-            $size: {
-              $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isReviewed", true] } },
-            },
-          },
-          similarCount: {
-            $size: {
-              $filter: { input: { $ifNull: ["$mcqs", []] }, as: "q", cond: { $eq: ["$$q.isSimilar", true] } },
-            },
-          },
-          ...guTranslatedProjection,
-          updatedAt: 1,
-        },
-      },
-    ]).toArray();
+    // ── 2. MCQBank data — shared cached aggregate, split active/obsolete ──────
+    const allBankRows = await getMcqBankAggregateRows();
+    const bankAgg = allBankRows.filter((b) => !b.isObsolete);
+    const obsoleteBankAgg = allBankRows.filter((b) => b.isObsolete);
 
     const bankByIdentifier = aggregateMcqBanksByFamily(bankAgg as never[], preferredIdentifierByFam);
     const markedObsoleteFamilies = aggregateMcqBanksByFamily(obsoleteBankAgg as never[]);

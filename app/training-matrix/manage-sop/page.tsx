@@ -606,9 +606,9 @@ function ManageSOPDashboard() {
     department: string;
   } | null>(null);
   const [assignEmpSearch, setAssignEmpSearch] = useState('');
-  const [assignEmpSelected, setAssignEmpSelected] = useState<Record<string, boolean>>({});
   const [assignEmpSaving, setAssignEmpSaving] = useState(false);
   const [assignApplicable, setAssignApplicable] = useState(true);
+  const [assignEmpToggling, setAssignEmpToggling] = useState<Record<string, boolean>>({});
 
   const stripCodeVersion = useCallback((code: string) => code.split('-').shift() || code, []);
 
@@ -1412,56 +1412,92 @@ function ManageSOPDashboard() {
     }
   }, []);
 
-  const assignEmpSops = useMemo(() => {
-    if (!assignEmp || !viewData) return [];
+  // Who this employee already has assigned — the same source
+  // (employeeAssignmentsMap → assignedSopCodes) the "Unassigned Employees"
+  // card and the main matrix checkboxes use, so it can never disagree with them.
+  const assignEmpAssignedCodes = useMemo(() => {
+    if (!assignEmp?.name || !assignEmp.department) return new Set<string>();
+    const roster = viewData?.employeesByDept?.[assignEmp.department] || [];
+    const live = roster.find((e) => e.name.trim().toLowerCase() === assignEmp.name.trim().toLowerCase());
+    return new Set((live?.assignedSopCodes || []).map((c) => c.toUpperCase()));
+  }, [assignEmp, viewData]);
+
+  // A department trainer automatically covers every SOP in their department —
+  // that coverage is derived from Employee.isTrainer, not individual
+  // TrainingMatrixRecord rows, so there is nothing per-SOP to toggle here.
+  const assignEmpIsTrainer = useMemo(() => {
+    if (!assignEmp?.name || !assignEmp.department) return false;
+    const roster = viewData?.employeesByDept?.[assignEmp.department] || [];
+    const live = roster.find((e) => e.name.trim().toLowerCase() === assignEmp.name.trim().toLowerCase());
+    return live?.isTrainer === true;
+  }, [assignEmp, viewData]);
+
+  // Department-relevant SOPs (same heuristic as before) plus, defensively, any
+  // SOP already assigned to this employee that heuristic would otherwise miss
+  // — so an assigned SOP can never be absent from the list (and thus never
+  // silently un-removable).
+  const assignEmpAllSops = useMemo(() => {
+    if (!assignEmp?.department || !viewData) return [];
     const dept = assignEmp.department;
-    const q = assignEmpSearch.trim().toLowerCase();
-    return viewData.sops.filter((sop) => {
+    const relevant = viewData.sops.filter((sop) => {
       const ds = sop.deptStats.find((d) => d.department === dept);
-      const relevant =
-        sop.primaryDepartment === dept ||
-        !!(ds && (ds.isScheduled || ds.isAssigned || ds.scheduledMonth || (ds.total || 0) > 0));
-      if (!relevant) return false;
-      if (!q) return true;
       return (
-        sop.sopCode.toLowerCase().includes(q) ||
-        sop.sopName.toLowerCase().includes(q) ||
-        (sop.displaySopCode || '').toLowerCase().includes(q)
+        sop.primaryDepartment === dept ||
+        !!(ds && (ds.isScheduled || ds.isAssigned || ds.scheduledMonth || (ds.total || 0) > 0)) ||
+        assignEmpAssignedCodes.has(sop.sopCode.toUpperCase())
       );
     });
-  }, [assignEmp, assignEmpSearch, viewData]);
+    return relevant
+      .map((sop) => {
+        const ds = sop.deptStats.find((d) => d.department === dept);
+        return {
+          sopCode: sop.sopCode,
+          displaySopCode: sop.displaySopCode,
+          sopName: sop.sopName,
+          months: ds?.scheduledMonth ? [ds.scheduledMonth] : [],
+        };
+      })
+      .sort((a, b) => compareSopCodes(a.sopCode, b.sopCode));
+  }, [assignEmp, viewData, assignEmpAssignedCodes]);
+
+  const assignEmpSops = useMemo(() => {
+    const q = assignEmpSearch.trim().toLowerCase();
+    if (!q) return assignEmpAllSops;
+    return assignEmpAllSops.filter(
+      (sop) =>
+        sop.sopCode.toLowerCase().includes(q) ||
+        sop.sopName.toLowerCase().includes(q),
+    );
+  }, [assignEmpAllSops, assignEmpSearch]);
 
   const openAssignEmployee = useCallback((emp: { name: string; designation: string; department: string }) => {
     setAssignEmp(emp);
     setAssignEmpSearch('');
     setAssignApplicable(true);
-    const selected: Record<string, boolean> = {};
-    const roster = viewData?.employeesByDept?.[emp.department] || [];
-    const live = roster.find((e) => e.name.trim().toLowerCase() === emp.name.trim().toLowerCase());
-    for (const code of live?.assignedSopCodes || []) {
-      selected[sopCacheKey(code)] = true;
-    }
-    setAssignEmpSelected(selected);
-  }, [viewData]);
+  }, []);
 
   const openAssignEmployeeFlow = useCallback(() => {
     const firstDept = (viewData?.departments || [])[0] || '';
     setAssignEmp({ name: '', designation: '', department: firstDept });
     setAssignEmpSearch('');
-    setAssignEmpSelected({});
     setAssignApplicable(true);
     setUnassignedEmpModalOpen(false);
   }, [viewData]);
 
+  // Individual SOPs are assigned/unassigned immediately by their row checkbox
+  // (toggleEmployeeSop). This button only fires the bulk "assign everything
+  // applicable to the designation" action.
   const saveAssignEmployee = async () => {
     if (!assignEmp || assignEmpSaving || applying) return;
     if (!assignEmp.name.trim() || !assignEmp.department.trim()) {
       setApplyMsg({ kind: 'err', text: 'Select a department and an employee.' });
       return;
     }
-    const selected = assignEmpSops.filter((sop) => assignEmpSelected[sopCacheKey(sop.sopCode)]);
-    if (!assignApplicable && selected.length === 0) {
-      setApplyMsg({ kind: 'err', text: 'Select at least one SOP, or tick assign-all for the designation.' });
+    if (!assignApplicable) {
+      setApplyMsg({
+        kind: 'err',
+        text: 'Tick "Automatically assign all SOPs applicable", or use the checkboxes below to assign SOPs one at a time.',
+      });
       return;
     }
     setAssignEmpSaving(true);
@@ -1474,24 +1510,14 @@ function ManageSOPDashboard() {
           employeeName: assignEmp.name,
           department: assignEmp.department,
           designation: assignEmp.designation,
-          assignApplicable,
-          sops: selected.map((sop) => {
-            const ds = sop.deptStats.find((d) => d.department === assignEmp.department);
-            const months = ds?.scheduledMonth ? [ds.scheduledMonth] : [];
-            return {
-              sopCode: sop.sopCode,
-              sopName: sop.sopName,
-              months,
-            };
-          }),
+          assignApplicable: true,
+          sops: [],
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Assign failed');
       await reloadManageSopView();
-      const count = Number(data?.assigned || selected.length);
-      setAssignEmp(null);
-      setUnassignedEmpModalOpen(false);
+      const count = Number(data?.assigned || 0);
       setApplyMsg({
         kind: 'ok',
         text: `Assigned ${count} SOP${count === 1 ? '' : 's'} to ${assignEmp.name}.`,
@@ -1505,6 +1531,64 @@ function ManageSOPDashboard() {
       setAssignEmpSaving(false);
     }
   };
+
+  // The row checkbox IS the assignment state: ticking it assigns that one SOP
+  // to the employee immediately, unticking it unassigns it immediately — no
+  // separate "Assign for training" step for individual rows. That button
+  // still exists for the "auto-assign all applicable" bulk action below.
+  const toggleEmployeeSop = useCallback(async (
+    sop: { sopCode: string; sopName: string; months: number[] },
+    nextChecked: boolean,
+  ) => {
+    if (!assignEmp) return;
+    const key = sop.sopCode.toUpperCase();
+    setAssignEmpToggling((prev) => ({ ...prev, [key]: true }));
+    setApplyMsg(null);
+    try {
+      if (nextChecked) {
+        const res = await fetch('/api/training-matrix/assign-employee-sops', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            employeeName: assignEmp.name,
+            department: assignEmp.department,
+            designation: assignEmp.designation,
+            assignApplicable: false,
+            sops: [{ sopCode: sop.sopCode, sopName: sop.sopName, months: sop.months }],
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || 'Assign failed');
+        await reloadManageSopView();
+        setApplyMsg({ kind: 'ok', text: `Assigned ${sop.sopCode} to ${assignEmp.name}.` });
+      } else {
+        const res = await fetch('/api/training-matrix/assign-employee-sops', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            employeeName: assignEmp.name,
+            department: assignEmp.department,
+            sopCodes: [sop.sopCode],
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || 'Unassign failed');
+        await reloadManageSopView();
+        setApplyMsg({ kind: 'ok', text: `Removed ${sop.sopCode} from ${assignEmp.name}.` });
+      }
+    } catch (err) {
+      setApplyMsg({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Failed to update assignment',
+      });
+    } finally {
+      setAssignEmpToggling((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
+  }, [assignEmp, reloadManageSopView]);
 
   // Pending per-employee ticks waiting for Update — shown on the button so a
   // click is confirmed as queued even before the row is saved.
@@ -2970,7 +3054,6 @@ function ManageSOPDashboard() {
                     onChange={(e) => {
                       const dept = e.target.value;
                       setAssignEmp({ name: '', designation: '', department: dept });
-                      setAssignEmpSelected({});
                     }}
                     className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
                   >
@@ -2994,11 +3077,6 @@ function ManageSOPDashboard() {
                         designation: live?.designation || '',
                         department: assignEmp.department,
                       });
-                      const selected: Record<string, boolean> = {};
-                      for (const code of live?.assignedSopCodes || []) {
-                        selected[sopCacheKey(code)] = true;
-                      }
-                      setAssignEmpSelected(selected);
                     }}
                     className="w-full border border-gray-300 rounded px-3 py-2 text-sm disabled:bg-gray-50"
                   >
@@ -3036,12 +3114,18 @@ function ManageSOPDashboard() {
                 />
               </div>
               <div className="text-xs text-gray-500">
-                Showing SOPs already scheduled or owned by {assignEmp.department ? deptAbbrLabel(assignEmp.department) : 'the selected department'}. Extra ticks are optional when auto-assign is on.
+                {assignEmpIsTrainer
+                  ? `${assignEmp.name} is the ${deptAbbrLabel(assignEmp.department)} department trainer — trainer coverage applies to every SOP automatically and can't be revoked per SOP here. Checkboxes below are shown for visibility only.`
+                  : `Showing SOPs already scheduled or owned by ${assignEmp.department ? deptAbbrLabel(assignEmp.department) : 'the selected department'}. Tick a box to assign that SOP, untick to unassign — each change saves immediately.`}
               </div>
             </div>
 
             <div className="flex-1 overflow-auto">
-              {assignEmpSops.length === 0 ? (
+              {!assignEmp.name ? (
+                <div className="px-5 py-10 text-center text-sm text-gray-500">
+                  Select an employee to see their SOPs.
+                </div>
+              ) : assignEmpSops.length === 0 ? (
                 <div className="px-5 py-10 text-center text-sm text-gray-500">
                   No SOPs found for {deptAbbrLabel(assignEmp.department)}.
                 </div>
@@ -3049,24 +3133,7 @@ function ManageSOPDashboard() {
                 <table className="w-full text-left text-sm">
                   <thead className="sticky top-0 bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-500">
                     <tr>
-                      <th className="px-5 py-2.5 w-10">
-                        <input
-                          type="checkbox"
-                          checked={
-                            assignEmpSops.length > 0 &&
-                            assignEmpSops.every((sop) => assignEmpSelected[sopCacheKey(sop.sopCode)])
-                          }
-                          onChange={(e) => {
-                            const next: Record<string, boolean> = { ...assignEmpSelected };
-                            for (const sop of assignEmpSops) {
-                              next[sopCacheKey(sop.sopCode)] = e.target.checked;
-                            }
-                            setAssignEmpSelected(next);
-                          }}
-                          className="w-4 h-4"
-                          aria-label="Select all SOPs"
-                        />
-                      </th>
+                      <th className="px-5 py-2.5 w-10" />
                       <th className="px-3 py-2.5">SOP Code</th>
                       <th className="px-3 py-2.5">SOP Name</th>
                       <th className="px-3 py-2.5 w-24">Month</th>
@@ -3075,18 +3142,28 @@ function ManageSOPDashboard() {
                   <tbody className="divide-y divide-gray-100">
                     {assignEmpSops.map((sop) => {
                       const key = sopCacheKey(sop.sopCode);
-                      const ds = sop.deptStats.find((d) => d.department === assignEmp.department);
-                      const monthNum = ds?.scheduledMonth || 0;
+                      const upperCode = sop.sopCode.toUpperCase();
+                      const isAssigned = assignEmpIsTrainer || assignEmpAssignedCodes.has(upperCode);
+                      const isToggling = !!assignEmpToggling[upperCode];
+                      const monthNum = sop.months?.[0] || 0;
                       return (
-                        <tr key={key} className="hover:bg-orange-50/40">
+                        <tr key={key} className={`hover:bg-orange-50/40 ${isAssigned ? 'bg-green-50/50' : ''}`}>
                           <td className="px-5 py-2">
                             <input
                               type="checkbox"
-                              checked={!!assignEmpSelected[key]}
-                              onChange={(e) =>
-                                setAssignEmpSelected((prev) => ({ ...prev, [key]: e.target.checked }))
+                              checked={isAssigned}
+                              disabled={isToggling || assignEmpIsTrainer}
+                              onChange={(e) => toggleEmployeeSop(sop, e.target.checked)}
+                              className="w-4 h-4 disabled:opacity-50"
+                              title={
+                                assignEmpIsTrainer
+                                  ? 'Covered as department trainer — not an individual assignment'
+                                  : isToggling
+                                    ? 'Updating…'
+                                    : isAssigned
+                                      ? 'Assigned — untick to unassign'
+                                      : 'Tick to assign'
                               }
-                              className="w-4 h-4"
                             />
                           </td>
                           <td className="px-3 py-2 font-mono font-bold text-blue-700 whitespace-nowrap">
@@ -3106,7 +3183,9 @@ function ManageSOPDashboard() {
 
             <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 rounded-b-lg flex items-center justify-between gap-3">
               <span className="text-xs text-gray-500">
-                {Object.values(assignEmpSelected).filter(Boolean).length} selected
+                {assignEmpIsTrainer
+                  ? `${assignEmpAllSops.length} of ${assignEmpAllSops.length} covered (department trainer)`
+                  : `${assignEmpAssignedCodes.size} of ${assignEmpAllSops.length} assigned`}
               </span>
               <div className="flex items-center gap-2 shrink-0">
                 <button
@@ -3115,15 +3194,20 @@ function ManageSOPDashboard() {
                   disabled={assignEmpSaving}
                   className="px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded hover:bg-white disabled:opacity-60"
                 >
-                  Cancel
+                  Close
                 </button>
                 <button
                   type="button"
                   onClick={saveAssignEmployee}
-                  disabled={assignEmpSaving || applying || !assignEmp.name || (!assignApplicable && assignEmpSops.length === 0)}
+                  disabled={assignEmpSaving || applying || !assignEmp.name || !assignApplicable || assignEmpIsTrainer}
                   className="px-3 py-1.5 bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-60 disabled:cursor-not-allowed text-sm font-medium"
+                  title={
+                    assignEmpIsTrainer
+                      ? 'Department trainers already cover every SOP automatically'
+                      : "Assigns every SOP applicable to this employee's designation in one go"
+                  }
                 >
-                  {assignEmpSaving ? 'Saving…' : 'Assign for training'}
+                  {assignEmpSaving ? 'Assigning…' : 'Assign all applicable'}
                 </button>
               </div>
             </div>

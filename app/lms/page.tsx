@@ -1422,6 +1422,27 @@ function Dashboard({
 
   useEffect(() => { load(); }, [load]);
 
+  // Keep a long-open tab from going stale indefinitely — `load()`'s own
+  // LMS_CLIENT_FRESH_MS check already no-ops a redundant call, so this just
+  // adds triggers to call it more often: on tab refocus, and a background
+  // poll as a safety net for tabs left open and untouched.
+  useEffect(() => {
+    const POLL_MS = 3 * 60_000;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') load();
+    }, POLL_MS);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      clearInterval(interval);
+    };
+  }, [load]);
+
   const handleSignOut = async () => {
     await fetch('/api/lms/auth/logout', { method: 'POST' });
     clearLmsClientCache();

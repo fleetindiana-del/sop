@@ -5,6 +5,7 @@ import {
   maxVersionInGroup,
   recordsForVersion,
   sopFamilyGroupKey,
+  sopFamilyIdentifierRegex,
   sopVersionFields,
 } from "@/lib/sop-utils";
 import type { ISOP } from "@/models/SOP";
@@ -20,19 +21,32 @@ export function groupRecordsByBase(records: ISOP[]) {
   return grouped;
 }
 
-/** Backfill version fields and strip contaminated file links from prior-version records. */
-export async function reconcileSopVersions() {
+/**
+ * Backfill version fields and strip contaminated file links from prior-version records.
+ *
+ * @param scopeIdentifiers When given, only the SOP families matching these identifiers
+ * are scanned/reconciled instead of the entire collection — every per-upload call should
+ * pass the identifiers that batch actually touched, so this stays cheap as the SOP
+ * collection grows. Omit (full scan) only for an explicit whole-DB "fix everything" run.
+ */
+export async function reconcileSopVersions(scopeIdentifiers?: string[]) {
   await connectDB();
   const startedAt = Date.now();
+  const filter = scopeIdentifiers?.length
+    ? { $or: scopeIdentifiers.map((id) => ({ identifier: sopFamilyIdentifierRegex(id) })) }
+    : {};
   // Exclude the heavy `content` field (full extracted SOP text — ~56MB across the collection).
   // Reconcile only needs identifier/version/sopDocuments; transferring `content` throttles a
   // free-tier (M0) cluster to minutes. `.lean()` returns plain objects, so writes go through a
   // single bulkWrite instead of one round-trip per record.
-  const records = (await SOP.find({})
+  const records = (await SOP.find(filter)
     .select("identifier version sopBaseId versionNum sopDocuments")
     .lean()) as unknown as ISOP[];
   const grouped = groupRecordsByBase(records);
-  console.log(`[reconcile-versions] scanning ${records.length} record(s) in ${grouped.size} families…`);
+  console.log(
+    `[reconcile-versions] scanning ${records.length} record(s) in ${grouped.size} families ` +
+      `(scope: ${scopeIdentifiers?.length ?? "all"})…`,
+  );
 
   let cleaned = 0;
   const ops: Parameters<typeof SOP.bulkWrite>[0] = [];

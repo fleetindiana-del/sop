@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
+import { requireLmsManager } from '@/lib/lmsTrainerAuth';
 import { generateUniqueLmsUsername, generateAutoPassword } from '@/lib/lms-credentials';
 import Employee from '@/models/Employee';
 
@@ -14,11 +13,11 @@ export const dynamic = 'force-dynamic';
 // username ("First.Last") and an auto password ("First@NNNN"), then return the
 // plaintext credentials. The password is stored only as a bcrypt hash, so this
 // response is the ONE time the admin can see/share it.
+// Trainer / SOP Admin / Super Admin only — this returns plaintext LMS
+// passwords for every employee that has none set.
 export async function POST() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requireLmsManager();
+  if (!auth.ok) return auth.response;
 
   try {
     await connectDB();

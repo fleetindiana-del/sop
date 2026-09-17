@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import type { Session } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
 import { getDashboardDepartments } from '@/lib/dashboardDepartments';
@@ -101,6 +102,37 @@ export async function requireLmsTrainer(): Promise<
       trainerDepartments,
       allDepartments: isAppAdmin || undefined,
     },
+  };
+}
+
+/**
+ * Require Trainer / SOP Admin / Super Admin for LMS management endpoints
+ * (exam settings, credentials, practical assessments, employee-training
+ * views, …) that must stay reachable even for a Super Admin whose dashboard
+ * login has no linked Employee record — `requireLmsTrainer` alone rejects
+ * that case since it always requires an LMS employee identity.
+ *
+ * Admitted: a dashboard session with role admin / sop_admin / trainer, OR
+ * anyone `requireLmsTrainer` already admits (trainer-flagged employee, or an
+ * admin whose LMS identity IS linked to an employee).
+ */
+export async function requireLmsManager(): Promise<
+  | { ok: true; session: Session | null; actorName: string | null }
+  | { ok: false; response: NextResponse }
+> {
+  const session = await getServerSession(authOptions);
+  if (session?.user?.role && (isAdmin(session.user.role) || session.user.role === 'trainer')) {
+    return { ok: true, session, actorName: session.user.name ?? null };
+  }
+
+  const trainer = await requireLmsTrainer();
+  if (trainer.ok) return { ok: true, session, actorName: trainer.trainer.name };
+
+  return {
+    ok: false,
+    response: session
+      ? NextResponse.json({ error: 'Trainer access required' }, { status: 403 })
+      : NextResponse.json({ error: 'Not authenticated' }, { status: 401 }),
   };
 }
 

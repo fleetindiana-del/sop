@@ -256,3 +256,36 @@ export async function persistEmployeeSopAssignments(opts: {
     body: { ...body, assigned: sops.length, skippedExpired: incoming.length - sops.length },
   };
 }
+
+export async function persistEmployeeSopRemovals(opts: {
+  employeeName: string;
+  department: string;
+  sopCodes: string[];
+}): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
+  const codes = [
+    ...new Set((opts.sopCodes || []).map((c) => String(c || '').trim()).filter(Boolean)),
+  ];
+  if (!opts.employeeName?.trim() || !opts.department?.trim() || codes.length === 0) {
+    return {
+      ok: false,
+      status: 400,
+      body: { error: 'Employee, department and SOP codes are required' },
+    };
+  }
+
+  const req = new NextRequest('http://localhost/api/training-matrix/manage-sop-view', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      employeeSopRemovals: [{
+        employeeName: opts.employeeName.trim(),
+        department: opts.department.trim(),
+        sops: codes.map((sopCode) => ({ sopCode })),
+      }],
+    }),
+  });
+
+  const res = await postManageSopView(req);
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  return { ok: res.ok, status: res.status, body: { ...body, removed: codes.length } };
+}

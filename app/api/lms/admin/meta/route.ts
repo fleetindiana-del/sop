@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
+import { requireLmsManager } from '@/lib/lmsTrainerAuth';
 import {
   getOrBuildLmsCache,
   lmsCacheControl,
@@ -29,8 +28,8 @@ function normalizeSopCode(raw: string): string {
 // GET /api/lms/admin/meta
 // Optional ?sopCode= — when set, returns only employees assigned to that SOP family.
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  const auth = await requireLmsManager();
+  if (!auth.ok) return auth.response;
 
   const sopCode = normalizeSopCode(req.nextUrl.searchParams.get('sopCode') || '');
 

@@ -3,6 +3,7 @@ import { connectDB } from "@/lib/mongodb";
 import { requireAuth } from "@/lib/withAuth";
 import SOP from "@/models/SOP";
 import { extractTablesFromDOCX } from "@/lib/docxTableParser";
+import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 
 /** Upload department DOCX files with SOP compliance dates (Effective / Review). */
 export async function POST(request: NextRequest) {
@@ -87,6 +88,8 @@ export async function POST(request: NextRequest) {
         totalErrors++;
       }
     }
+
+    if (totalUpdated > 0) invalidateDashboardSopsCache();
 
     return NextResponse.json({
       success: true,

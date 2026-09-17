@@ -8,6 +8,7 @@ import {
 } from "@/lib/bunny";
 import { getContentType } from "@/lib/extractContent";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
+import { SOP_LIST_EXCLUDE } from "@/lib/sop-list-projection";
 import { requireAuth } from "@/lib/withAuth";
 import { isBunnyConfigured } from "@/lib/validateEnv";
 
@@ -21,7 +22,7 @@ export async function POST() {
 
   try {
     await connectDB();
-    const sops = await SOP.find({});
+    const sops = await SOP.find({}).select(SOP_LIST_EXCLUDE);
     let migrated = 0;
     let failed = 0;
     let skipped = 0;
