@@ -19,7 +19,11 @@ import {
   sopVersionFields,
   versionFromIdentifier,
 } from "@/lib/sop-utils";
-import { normalizeSopIdentifierKey, sopIdentifierMatchFilter } from "@/lib/sopIdentifierNormalize";
+import {
+  expandSopIdentifierVariants,
+  normalizeSopIdentifierKey,
+  sopIdentifierMatchFilter,
+} from "@/lib/sopIdentifierNormalize";
 import { reconcileSopVersions } from "@/lib/reconcile-sop-versions";
 import { resolveUploadLanguage } from "@/lib/sop-filename";
 import {
@@ -264,13 +268,15 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
     checksum,
   };
 
+  // Newest first, so a family with duplicate records for this slot updates the
+  // one the registry/viewer already treat as current.
   let existing = await SOP.findOne({
     sopBaseId,
     versionNum,
     language: lang,
     fileType,
     isObsolete: { $ne: true },
-  });
+  }).sort({ uploadedAt: -1 });
 
   if (!existing) {
     existing = await SOP.findOne({
@@ -278,7 +284,7 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
       language: lang,
       fileType,
       isObsolete: { $ne: true },
-    });
+    }).sort({ uploadedAt: -1 });
   }
 
   if (existing && fileType === "docx" && contentScriptMismatch(existing.content, lang)) {
@@ -312,11 +318,16 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
     // Replacing the main DOCX/PDF must not detach annexures or training media
     // that were already linked to this record. Only replace the main document
     // entry represented by this SOP record.
+    // Legacy video/slide entries carry no documentKind, so drop only main
+    // DOCX/PDF entries rather than keeping only explicitly tagged ones.
     sopDocuments: [
       docEntry,
-      ...((existing?.sopDocuments ?? []).filter(
-        (document) => document.documentKind === "annexure" || document.documentKind === "media",
-      )),
+      ...((existing?.sopDocuments ?? []).filter((document) => {
+        if (document.documentKind === "annexure" || document.documentKind === "media") return true;
+        if (document.documentKind === "main") return false;
+        const type = document.fileType?.toLowerCase();
+        return type !== "docx" && type !== "pdf";
+      })),
     ],
     ...(fileType === "docx" && lang === "English"
       ? { requiredAnnexures: parseRequiredAnnexuresFromContent(content) }
@@ -621,7 +632,9 @@ async function processSopUploadInner(formData: FormData) {
   invalidateDashboardSopsCache();
 
   if (touchedIdentifiers.size > 0) {
-    const ids = [...touchedIdentifiers];
+    // Cache keys use the identifier as the client sent it (e.g. PRED19-04), while
+    // results carry the normalized key (PRED19-4) — bust every spelling.
+    const ids = [...touchedIdentifiers].flatMap((id) => [id, ...expandSopIdentifierVariants(id)]);
     invalidateViewerUrlCache(ids);
     invalidateDocxHtmlCache(ids);
   }

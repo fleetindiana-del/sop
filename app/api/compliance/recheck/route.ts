@@ -6,6 +6,7 @@ import ComplianceReport from "@/models/ComplianceReport";
 import { requireAuth } from "@/lib/withAuth";
 import { detectFileType, saveUploadedBuffer } from "@/lib/upload";
 import { extractTextFromBuffer } from "@/lib/extractContent";
+import { resolveSopDatesFromContent, sopDatesToDbFields, sopHeaderDatesValid } from "@/lib/sop-dates";
 import { processGuidelinePDF } from "@/lib/ocrProcessor";
 import { generateComplianceJson } from "@/lib/llm";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
@@ -675,6 +676,18 @@ export async function POST(request: NextRequest) {
         if (uploadedUrl) {
           sop.fileUrl = uploadedUrl;
           sop.fileType = fileType;
+        }
+        // The re-checked file replaces the SOP's master content — its header
+        // (EFF. DATE / REVIEW DT.) must be re-read the same way a normal SOP
+        // upload does, otherwise the Expiry column keeps showing whatever the
+        // ORIGINAL upload computed even after the header date is corrected.
+        if (fileType === "docx") {
+          sop.headerDatesValid = sopHeaderDatesValid(mainRevisedText, sop.language === "Gujarati" ? "Gujarati" : "English");
+          const dateFields = sopDatesToDbFields(resolveSopDatesFromContent(mainRevisedText));
+          if (dateFields.effectiveDate) sop.effectiveDate = dateFields.effectiveDate;
+          if (dateFields.expiryDate) sop.expiryDate = dateFields.expiryDate;
+          if (dateFields.nextReviewDate) sop.nextReviewDate = dateFields.nextReviewDate;
+          if (dateFields.validityPeriod) sop.validityPeriod = dateFields.validityPeriod;
         }
         await sop.save();
         sopUpdated = true;

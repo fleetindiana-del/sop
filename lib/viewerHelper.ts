@@ -163,6 +163,7 @@ export async function resolvePublicDocUrl(
 
       const allSops = await SOP.find(sopIdentifierMatchFilter(identifier))
         .select('fileUrl language name originalFileName folderPath')
+        .sort({ uploadedAt: -1 })
         .lean();
 
       const wantGujarati = language === 'Gujarati';

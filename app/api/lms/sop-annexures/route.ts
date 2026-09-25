@@ -3,6 +3,7 @@ import { connectDB } from '@/lib/mongodb';
 import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import { sopIdentifierMatchFilter } from '@/lib/sopIdentifierNormalize';
 import { signViewerToken } from '@/lib/viewerToken';
+import { latestAnnexurePerSlot } from '@/lib/sop-annexure-requirements';
 import SOP from '@/models/SOP';
 
 export const dynamic = 'force-dynamic';
@@ -52,23 +53,28 @@ export async function GET(request: NextRequest) {
   const seen = new Set<string>();
   const annexures: { label: string; fileName: string; fileType: 'pdf' | 'docx'; token: string }[] = [];
 
-  for (const row of rows) {
-    for (const doc of row.sopDocuments || []) {
-      if (doc.documentKind !== 'annexure' || !doc.filePath?.trim()) continue;
-      const key = doc.checksum || doc.filePath;
-      if (seen.has(key)) continue;
-      const docLang = String(doc.language || '').trim().toLowerCase();
-      if (docLang === 'gujarati' && !wantGuj) continue;
-      if (docLang && docLang !== 'gujarati' && wantGuj) continue;
-      seen.add(key);
-      const fileType: 'pdf' | 'docx' = /\.pdf($|\?)/i.test(doc.filePath) ? 'pdf' : 'docx';
-      annexures.push({
-        label: doc.annexureLabel?.trim() || '',
-        fileName: doc.fileName?.trim() || 'Annexure',
-        fileType,
-        token: signViewerToken({ path: doc.filePath.trim() }),
-      });
-    }
+  // Only the newest file per annexure slot — a re-uploaded annexure supersedes the old one.
+  const linked = latestAnnexurePerSlot(
+    rows.flatMap((row) =>
+      (row.sopDocuments || []).filter((doc) => doc.documentKind === 'annexure' && doc.filePath?.trim()),
+    ),
+  );
+
+  for (const doc of linked) {
+    if (!doc.filePath?.trim()) continue;
+    const key = doc.checksum || doc.filePath;
+    if (seen.has(key)) continue;
+    const docLang = String(doc.language || '').trim().toLowerCase();
+    if (docLang === 'gujarati' && !wantGuj) continue;
+    if (docLang && docLang !== 'gujarati' && wantGuj) continue;
+    seen.add(key);
+    const fileType: 'pdf' | 'docx' = /\.pdf($|\?)/i.test(doc.filePath) ? 'pdf' : 'docx';
+    annexures.push({
+      label: doc.annexureLabel?.trim() || '',
+      fileName: doc.fileName?.trim() || 'Annexure',
+      fileType,
+      token: signViewerToken({ path: doc.filePath.trim() }),
+    });
   }
 
   annexures.sort((a, b) => romanToInt(a.label) - romanToInt(b.label));

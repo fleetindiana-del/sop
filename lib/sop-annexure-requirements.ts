@@ -60,6 +60,41 @@ export function parseRequiredAnnexuresFromContent(content: string): string[] {
   return sortAnnexureRomans(found);
 }
 
+type AnnexureSlotDoc = {
+  annexureLabel?: string;
+  fileName?: string;
+  filePath?: string;
+  language?: string;
+};
+
+/**
+ * Identity of the annexure "slot" a file fills on its parent SOP: language +
+ * annexure number (from the label, else the filename). Re-uploading
+ * Annexure-I must replace the previous Annexure-I file, not sit beside it.
+ * Files with no recognisable number fall back to their filename.
+ */
+export function annexureSlotKey(doc: AnnexureSlotDoc): string {
+  const lang = String(doc.language || "English").trim().toLowerCase() === "gujarati" ? "gu" : "en";
+  const roman =
+    annexureRomanFromLabel(doc.annexureLabel || "") ?? annexureRomanFromLabel(doc.fileName || "");
+  if (roman) return `${lang}|${roman}`;
+  const name = (doc.fileName || doc.filePath?.split(/[?#]/)[0].split("/").pop() || "").trim().toLowerCase();
+  return `${lang}|file:${name}`;
+}
+
+/**
+ * Keep only the most recently linked file per annexure slot. `docs` must be in
+ * link order (sopDocuments is append-only), so the last entry per slot wins.
+ * Covers records that already hold both an old and a re-uploaded annexure.
+ */
+export function latestAnnexurePerSlot<T extends AnnexureSlotDoc>(docs: T[]): T[] {
+  const latest = new Map<string, T>();
+  for (const doc of docs) {
+    latest.set(annexureSlotKey(doc), doc);
+  }
+  return [...latest.values()];
+}
+
 export function collectPresentAnnexureRomans(
   annexures: { label: string; fileName?: string }[],
 ): Set<string> {

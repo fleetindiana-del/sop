@@ -14,6 +14,7 @@ import { languageFromContentScript } from "@/lib/sop-name-resolution";
 import { extractTextFromBuffer } from "@/lib/extractContent";
 import { logSopAudit, snapshotSop } from "@/lib/audit-log";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
+import { annexureSlotKey } from "@/lib/sop-annexure-requirements";
 
 export type AnnexureLinkResult = {
   success: boolean;
@@ -231,9 +232,24 @@ async function attachAnnexureDocToParent(
   comments: string,
 ) {
   const auditPrevious = snapshotSop(parent);
+  // A re-uploaded annexure replaces the file already filling its slot (same
+  // annexure number + language) instead of being appended next to it.
+  const slot = annexureSlotKey(docEntry);
+  const replaced = (parent.sopDocuments ?? []).filter(
+    (d) => d.documentKind === "annexure" && annexureSlotKey(d) === slot,
+  );
   const updatedParent = await SOP.findByIdAndUpdate(
     parent._id,
-    { $push: { sopDocuments: docEntry } },
+    replaced.length
+      ? {
+          $set: {
+            sopDocuments: [
+              ...(parent.sopDocuments ?? []).filter((d) => !replaced.includes(d)),
+              docEntry,
+            ],
+          },
+        }
+      : { $push: { sopDocuments: docEntry } },
     { returnDocument: "after" },
   ).lean();
 
@@ -242,7 +258,9 @@ async function attachAnnexureDocToParent(
       action: "updated",
       sop: updatedParent,
       previous: auditPrevious,
-      comments,
+      comments: replaced.length
+        ? `${comments} (replaced ${replaced.map((d) => d.fileName).join(", ")})`
+        : comments,
     });
     // Registry/training-matrix views cache the SOP list including sopDocuments —
     // without this, a freshly linked annexure keeps showing as missing there

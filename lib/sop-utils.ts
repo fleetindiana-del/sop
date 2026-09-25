@@ -16,7 +16,11 @@ import type {
   RegistrySOP,
   SOPFilters,
 } from "@/lib/types";
-import { collectPresentAnnexureRomans, sortAnnexureRomans } from "@/lib/sop-annexure-requirements";
+import {
+  collectPresentAnnexureRomans,
+  latestAnnexurePerSlot,
+  sortAnnexureRomans,
+} from "@/lib/sop-annexure-requirements";
 import {
   cleanSopDisplayName,
   hasGujaratiScript,
@@ -217,6 +221,15 @@ function currentVersionLangDateComplete(
   return Boolean(resolveVersionDateForValidation(pdf, docxDate));
 }
 
+function uploadedAtMs(record: Pick<ISOP, "uploadedAt">): number {
+  const t = record.uploadedAt ? new Date(record.uploadedAt).getTime() : 0;
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function byUploadedAtAsc(a: Pick<ISOP, "uploadedAt">, b: Pick<ISOP, "uploadedAt">): number {
+  return uploadedAtMs(a) - uploadedAtMs(b);
+}
+
 function pickFamilyDate(
   records: ISOP[],
   field: "expiryDate" | "effectiveDate" | "reviewDate",
@@ -229,7 +242,8 @@ function pickFamilyDate(
       if (r[field]) s += 1;
       return s;
     };
-    return score(b) - score(a);
+    // Equal rank → the most recently uploaded record's dates win.
+    return score(b) - score(a) || uploadedAtMs(b) - uploadedAtMs(a);
   });
   return ranked.find((r) => r[field])?.[field];
 }
@@ -273,18 +287,21 @@ function collectAnnexures(records: ISOP[]) {
   const annexures: { label: string; filePath: string; fileName?: string }[] = [];
   const seen = new Set<string>();
 
-  for (const record of records) {
-    for (const doc of record.sopDocuments ?? []) {
-      if (doc.documentKind !== "annexure" || !doc.filePath) continue;
-      const key = doc.checksum || doc.filePath;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      annexures.push({
-        label: doc.annexureLabel || doc.fileName || "Annexure",
-        filePath: doc.filePath,
-        fileName: doc.fileName,
-      });
-    }
+  // Only the newest file per annexure slot — a re-uploaded Annexure-I supersedes the old one.
+  const linked = latestAnnexurePerSlot(
+    records.flatMap((record) => (record.sopDocuments ?? []).filter((doc) => doc.documentKind === "annexure" && doc.filePath)),
+  );
+
+  for (const doc of linked) {
+    if (!doc.filePath) continue;
+    const key = doc.checksum || doc.filePath;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    annexures.push({
+      label: doc.annexureLabel || doc.fileName || "Annexure",
+      filePath: doc.filePath,
+      fileName: doc.fileName,
+    });
   }
 
   return annexures;
@@ -326,12 +343,14 @@ function collectVersionFiles(records: ISOP[]) {
   const pdf: { en?: string; gu?: string } = {};
   const docxDateError: { en?: boolean; gu?: boolean } = {};
 
-  for (const record of records) {
+  // Oldest → newest, so when two records fill the same language/type slot
+  // (e.g. QAMI03-18 and QAMI3-18) the latest upload's file is the one shown.
+  for (const record of [...records].sort(byUploadedAtAsc)) {
     const key = langKey(record.language);
     if (record.fileUrl) {
       if (record.fileType === "docx") {
         docx[key] = record.fileUrl;
-        if (record.headerDatesValid === false) docxDateError[key] = true;
+        docxDateError[key] = record.headerDatesValid === false;
       }
       if (record.fileType === "pdf") pdf[key] = record.fileUrl;
     }

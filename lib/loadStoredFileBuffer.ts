@@ -61,6 +61,7 @@ export async function resolveFileUrlFromSopIdentifier(
   const wantGuj = language === 'Gujarati';
   const all = await SOP.find(sopIdentifierMatchFilter(identifier))
     .select('fileUrl language name originalFileName folderPath')
+    .sort({ uploadedAt: -1 })
     .lean();
   const target = wantGuj
     ? all.find((s) => looksGujarati(s))
@@ -316,13 +317,23 @@ async function findFirstReachablePathForIdentifiers(
   };
   for (const id of ids) {
     const libs = await SOPLibrary.find(sopIdentifierMatchFilter(id, 'identifier'))
-      .select('sopDocuments language')
+      .select('sopDocuments language fileUrl fileType')
+      .sort({ uploadedAt: -1 })
       .lean();
     /** Pass 1: only docs whose own language matches. Pass 2: any doc (legacy rows with no per-doc language). */
     for (const strictLang of [true, false]) {
       for (const row of orderLibraryRowsByLanguage(libs, wantGuj)) {
+        const rowFileUrl = (row as { fileUrl?: string }).fileUrl?.trim();
+        const rowKind = rowFileUrl
+          ? fileKindFromStoredPath(rowFileUrl, (row as { fileType?: string }).fileType)
+          : null;
         for (const d of row.sopDocuments || []) {
-          const p = (d as { filePath?: string; fileType?: string }).filePath?.trim();
+          const entry = d as { filePath?: string; fileType?: string; documentKind?: string };
+          /** The row's fileUrl is the file of record (re-uploads and rechecks rewrite it); its
+           *  main-document entry can lag behind and still point at the previous upload. */
+          const isMainEntry = entry.documentKind !== 'annexure' && entry.documentKind !== 'media';
+          const entryKind = entry.filePath ? fileKindFromStoredPath(entry.filePath, entry.fileType) : null;
+          const p = (isMainEntry && rowFileUrl && rowKind === entryKind ? rowFileUrl : entry.filePath)?.trim();
           if (!p || isAnnexurePath(p)) continue;
           if (fileKindFromStoredPath(p, (d as { fileType?: string }).fileType) !== wantKind) continue;
           if (strictLang && !docMatchesLanguage(d)) continue;
@@ -341,6 +352,7 @@ async function findFirstReachablePathForIdentifiers(
 
     const sops = await SOP.find(sopIdentifierMatchFilter(id))
       .select('fileUrl fileType language name originalFileName folderPath')
+      .sort({ uploadedAt: -1 })
       .lean();
     const nonAnnexureSops = sops.filter((s) => {
       const n = ((s as any).name || '') + ((s as any).originalFileName || '');
