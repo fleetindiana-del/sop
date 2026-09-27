@@ -28,6 +28,14 @@ export interface SopBreakdown {
   months: number[];
   hasExam: boolean;
   components: Record<ComponentKey, ComponentStatus>;
+  /** Formal exam attempts on record (absent when never attempted). */
+  exam?: {
+    attempts: number;
+    lastScore: number;
+    bestScore: number;
+    passed: boolean;
+    passMark?: number;
+  };
 }
 
 export interface MonthBreakdown {
@@ -351,6 +359,7 @@ function componentProgress(s: SopBreakdown): {
   let summary: string;
   if (total === 0) summary = 'No training materials available for this SOP yet';
   else if (s.status === 'completed' || pendingLabels.length === 0) summary = 'All available materials completed';
+  else if (s.exam && !s.exam.passed) summary = examAttemptSummary(s.exam);
   else if (done === 0) summary = `Not started — pending ${pendingLabels.join(', ')}`;
   else summary = `In progress (${done}/${total}) — still needs ${pendingLabels.join(', ')}`;
 
@@ -365,7 +374,30 @@ const SOP_STATUS_META: Record<SopStatus, { label: string; chip: string }> = {
 const SOP_STATUS_RANK: Record<SopStatus, number> = { not_completed: 0, completed: 1 };
 const COMP_STATUS_RANK: Record<ComponentStatus, number> = { na: 0, not_completed: 1, completed: 2 };
 
-function ComponentMini({ status, title }: { status: ComponentStatus; title: string }) {
+function examAttemptSummary(exam: NonNullable<SopBreakdown['exam']>): string {
+  const tries = `${exam.attempts} attempt${exam.attempts === 1 ? '' : 's'}`;
+  const best = exam.bestScore !== exam.lastScore ? `, best ${exam.bestScore}%` : '';
+  const mark = exam.passMark ? ` — trainers need ${exam.passMark}% to pass` : '';
+  return `Exam attempted, not passed yet (${tries}, last ${exam.lastScore}%${best})${mark}`;
+}
+
+function ComponentMini({
+  status, title, exam,
+}: {
+  status: ComponentStatus;
+  title: string;
+  exam?: SopBreakdown['exam'];
+}) {
+  if (status === 'not_completed' && exam && !exam.passed) {
+    return (
+      <span
+        title={`${title}: ${examAttemptSummary(exam)}`}
+        className="inline-flex rounded bg-amber-50 px-1 py-px text-[10px] font-bold tabular-nums text-amber-700 ring-1 ring-inset ring-amber-200"
+      >
+        {exam.lastScore}%
+      </span>
+    );
+  }
   if (status === 'na') {
     return <span className="text-[10px] text-gray-300" title={`${title}: N/A`}>—</span>;
   }
@@ -650,7 +682,11 @@ function DrillDownModal({ drill, onClose }: { drill: DrillState; onClose: () => 
                       </td>
                       {COMPONENT_META.map(({ key, label }) => (
                         <td key={key} className="px-1.5 py-2 text-center align-middle">
-                          <ComponentMini status={s.components[key]} title={label} />
+                          <ComponentMini
+                            status={s.components[key]}
+                            title={label}
+                            exam={key === 'mcq' ? s.exam : undefined}
+                          />
                         </td>
                       ))}
                       {prog && (

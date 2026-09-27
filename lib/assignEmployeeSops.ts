@@ -1,16 +1,21 @@
 import { NextRequest } from 'next/server';
+import mongoose from 'mongoose';
 import { connectDB } from '@/lib/mongodb';
 import MatrixSOPAssignment from '@/models/MatrixSOPAssignment';
 import TrainingMatrixRecord from '@/models/TrainingMatrixRecord';
+import Employee from '@/models/Employee';
 import {
   employeeAssignmentMapKey,
   getEmployeeAssignmentsMap,
+  invalidateEmployeeAssignmentsCache,
+  trainingExclusionKey,
 } from '@/lib/employeeAssignments';
 import { designationSetsOverlap } from '@/lib/designationMatch';
 import {
   getTrainingMatrixDepartments,
 } from '@/lib/trainingMatrixDepartments.server';
 import {
+  canonTrainingMatrixDepartment,
   resolveTrainingMatrixDepartment,
 } from '@/lib/trainingMatrixDepartments';
 import { POST as postManageSopView } from '@/app/api/training-matrix/manage-sop-view/route';
@@ -22,6 +27,8 @@ export type ApplicableSop = {
   sopName: string;
   months: number[];
   expired?: boolean;
+  /** Where an assigned SOP comes from (only set by `includeDerived` listings). */
+  source?: 'matrix' | 'trainer-coverage' | 'trainer-schedule' | 'designation-applicability';
 };
 
 function stripVersion(code: string): string {
@@ -187,15 +194,26 @@ export async function listSopsApplicableToDesignation(
   );
 }
 
+/**
+ * SOPs assigned to one employee. By default only individual matrix
+ * assignments; with `includeDerived` also trainer department coverage and
+ * designation-derived SOPs (everything the person actually trains on), each
+ * tagged with where it comes from.
+ */
 export async function listSopsAssignedToEmployee(
   department: string,
   employeeName: string,
+  opts?: { includeDerived?: boolean },
 ): Promise<ApplicableSop[]> {
   const dept = String(department || '').trim();
   const name = String(employeeName || '').trim();
   if (!dept || !name) return [];
 
-  const map = await getEmployeeAssignmentsMap({ departments: [dept] });
+  // Trainer coverage spans every department they train, so the scoped map
+  // would miss SOPs from their other departments.
+  const map = await getEmployeeAssignmentsMap(
+    opts?.includeDerived ? undefined : { departments: [dept] },
+  );
   const rows =
     map.get(employeeAssignmentMapKey(dept, name)) ||
     map.get(`${dept}||${name}`.trim().toLowerCase()) ||
@@ -203,12 +221,57 @@ export async function listSopsAssignedToEmployee(
 
   const byCode = new Map<string, ApplicableSop>();
   for (const a of rows) {
-    if (a.trainingType !== 'training' || a.derivedFrom) continue;
+    if (a.trainingType !== 'training') continue;
+    if (a.derivedFrom && !opts?.includeDerived) continue;
     mergeSop(byCode, a.sopCode, a.sopName || a.sopCode, a.month ? [a.month] : []);
+    if (opts?.includeDerived) {
+      const entry = byCode.get(stripVersion(a.sopCode));
+      if (entry && !entry.source) entry.source = a.derivedFrom || 'matrix';
+    }
   }
   return annotateExpiry(
     [...byCode.values()].sort((a, b) => compareSopCodes(a.sopCode, b.sopCode)),
   );
+}
+
+/**
+ * Add (`exclude: true`) or clear SOP codes in the employee's
+ * `excludedTrainingSops`. Removing a SOP must also suppress the synthesized
+ * assignments (trainer coverage, designation applicability) — otherwise it
+ * reappears on the next load because there is no per-person record to delete.
+ */
+async function updateTrainingExclusions(opts: {
+  employeeName: string;
+  department: string;
+  sopCodes: string[];
+  exclude: boolean;
+}): Promise<void> {
+  const keys = [...new Set(opts.sopCodes.map(trainingExclusionKey).filter(Boolean))];
+  const name = opts.employeeName.trim();
+  if (keys.length === 0 || !name) return;
+
+  await connectDB();
+  const matches = await Employee.find({
+    name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+  })
+    .select('_id department')
+    .lean<Array<{ _id: mongoose.Types.ObjectId; department?: string }>>();
+  const wantDept = canonTrainingMatrixDepartment(opts.department) || opts.department.trim();
+  const inDept = matches.filter(
+    (e) =>
+      (canonTrainingMatrixDepartment(String(e.department || '')) || String(e.department || '').trim())
+        .toLowerCase() === wantDept.toLowerCase(),
+  );
+  const targets = inDept.length > 0 ? inDept : matches.length === 1 ? matches : [];
+  if (targets.length === 0) return;
+
+  await Employee.updateMany(
+    { _id: { $in: targets.map((t) => t._id) } },
+    opts.exclude
+      ? { $addToSet: { excludedTrainingSops: { $each: keys } } }
+      : { $pull: { excludedTrainingSops: { $in: keys } } },
+  );
+  invalidateEmployeeAssignmentsCache();
 }
 
 export async function persistEmployeeSopAssignments(opts: {
@@ -230,6 +293,14 @@ export async function persistEmployeeSopAssignments(opts: {
       body: { error: 'Expired SOPs cannot be assigned until the document is renewed.' },
     };
   }
+
+  // Re-assigning undoes any earlier manual removal of the same SOP.
+  await updateTrainingExclusions({
+    employeeName: opts.employeeName,
+    department: opts.department,
+    sopCodes: sops.map((s) => s.sopCode),
+    exclude: false,
+  });
 
   const req = new NextRequest('http://localhost/api/training-matrix/manage-sop-view', {
     method: 'POST',
@@ -272,6 +343,15 @@ export async function persistEmployeeSopRemovals(opts: {
       body: { error: 'Employee, department and SOP codes are required' },
     };
   }
+
+  // Recorded before the matrix removal so the rebuilt assignment map no longer
+  // re-derives these SOPs from trainer coverage / designation applicability.
+  await updateTrainingExclusions({
+    employeeName: opts.employeeName,
+    department: opts.department,
+    sopCodes: codes,
+    exclude: true,
+  });
 
   const req = new NextRequest('http://localhost/api/training-matrix/manage-sop-view', {
     method: 'POST',

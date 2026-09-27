@@ -141,6 +141,15 @@ function stripVersion(code: string): string {
   return String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
 }
 
+/** Key stored in `Employee.excludedTrainingSops` for a SOP code. */
+export function trainingExclusionKey(code: string): string {
+  return stripVersion(code);
+}
+
+function trainingExclusionSet(codes?: string[] | null): Set<string> {
+  return new Set((codes || []).map(trainingExclusionKey).filter(Boolean));
+}
+
 function monthNameToNum(name: string): number | null {
   const idx = MONTH_NAMES.findIndex(
     (m) => m && m.toLowerCase() === String(name || '').trim().toLowerCase(),
@@ -639,12 +648,13 @@ async function computeEmployeeAssignmentsMap(
   // All of those SOPs are merged under the trainer's HOME department key so
   // consumers that look up empKey(homeDept, name) see the combined total.
   const trainers = await Employee.find({ isActive: true, isTrainer: true })
-    .select('name department trainerDepartments isTrainer')
+    .select('name department trainerDepartments isTrainer excludedTrainingSops')
     .lean<Array<{
       name: string;
       department: string;
       trainerDepartments?: string[];
       isTrainer?: boolean;
+      excludedTrainingSops?: string[];
     }>>();
 
   for (const trainer of trainers) {
@@ -660,6 +670,8 @@ async function computeEmployeeAssignmentsMap(
 
     const existing = getAliasedAssignments(map, homeDept, name) || [];
     const existingCodes = new Set(existing.map((a) => assignmentKey(a)));
+    // SOPs an admin removed from this trainer in Manage SOP stay out of coverage.
+    const excluded = trainingExclusionSet(trainer.excludedTrainingSops);
 
     for (const dept of trainerDepts) {
       // Prefer exact snapshot key; also try case-insensitive match.
@@ -677,7 +689,7 @@ async function computeEmployeeAssignmentsMap(
       for (const [rawKey, monthName] of Object.entries(deptSnap.snapshot.sopMonthMap)) {
         if (!isMatrixAssignableCode(rawKey)) continue;
         const base = stripVersion(rawKey);
-        if (existingCodes.has(base)) continue;
+        if (existingCodes.has(base) || excluded.has(base)) continue;
         const primary = primaryScheduleFromMonthVal(monthName);
         if (!primary) continue;
         const assignment: EmployeeSopAssignment = {
@@ -768,8 +780,13 @@ async function mergeDesignationMatrixAssignments(
         designationApplicability?: string[];
       }>>(),
     Employee.find({ isActive: true, isTrainer: { $ne: true }, ...deptFilter })
-      .select('name department designation')
-      .lean<Array<{ name?: string; department?: string; designation?: string }>>(),
+      .select('name department designation excludedTrainingSops')
+      .lean<Array<{
+        name?: string;
+        department?: string;
+        designation?: string;
+        excludedTrainingSops?: string[];
+      }>>(),
   ]);
 
   if (rows.length === 0 || employees.length === 0) return;
@@ -832,13 +849,14 @@ async function mergeDesignationMatrixAssignments(
 
       const existing = getAliasedAssignments(map, empDept, name) || [];
       const existingBases = new Set(existing.map((a) => stripVersion(a.sopCode)));
+      const excluded = trainingExclusionSet(emp.excludedTrainingSops);
       let changed = false;
 
       for (const row of deptRows) {
         if (!designationSetsOverlap(row.designationApplicability || [], desig)) continue;
         const code = String(row.sopCode || '').trim();
         const base = stripVersion(code);
-        if (!base || existingBases.has(base)) continue;
+        if (!base || existingBases.has(base) || excluded.has(base)) continue;
         // This SOP already has per-person assignments. Only those people count
         // as Tot/Done/Pend — do not pending-count the rest of the designation.
         if (individuallyAssignedBases.has(base)) continue;

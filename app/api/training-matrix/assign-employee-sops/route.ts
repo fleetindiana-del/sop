@@ -54,6 +54,8 @@ export async function GET(req: NextRequest) {
   const department = req.nextUrl.searchParams.get('department') || '';
   const designation = req.nextUrl.searchParams.get('designation') || '';
   const employeeName = req.nextUrl.searchParams.get('employeeName') || '';
+  // includeDerived=1 → also trainer coverage / designation-derived SOPs.
+  const includeDerived = req.nextUrl.searchParams.get('includeDerived') === '1';
   const trainerDepts = trainerDepartmentsFromGate(gate);
   const dept = scopedDepartment(department, trainerDepts);
   if (!dept) {
@@ -62,7 +64,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const sops = employeeName.trim()
-      ? await listSopsAssignedToEmployee(dept, employeeName)
+      ? await listSopsAssignedToEmployee(dept, employeeName, { includeDerived })
       : await listSopsApplicableToDesignation(dept, designation);
     return NextResponse.json({ department: dept, designation, employeeName, sops });
   } catch (err) {

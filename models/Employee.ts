@@ -26,6 +26,13 @@ export interface IEmployee extends Document {
    * Only meaningful when isTrainer is true. Empty → fall back to `department`.
    */
   trainerDepartments: string[];
+  /**
+   * SOP base codes (version stripped, uppercase) an admin removed from this
+   * person's training in Manage SOP. Suppresses the synthesized assignments —
+   * trainer department coverage and designation applicability — which have no
+   * per-person record to delete. Re-assigning the SOP clears the entry.
+   */
+  excludedTrainingSops: string[];
   isActive: boolean;
   /** Soft-removed from Employee Master (trash). Hidden from the live/left rosters. */
   isDeleted?: boolean;
@@ -56,6 +63,7 @@ const EmployeeSchema = new Schema<IEmployee>(
       default: [],
       index: true,
     },
+    excludedTrainingSops: { type: [String], default: [] },
     isActive:    { type: Boolean, default: true, index: true },
     isDeleted:   { type: Boolean, default: false, index: true },
     deletedAt:   { type: Date },
@@ -82,6 +90,9 @@ function getEmployeeModel() {
       existing.schema.add({
         trainerDepartments: { type: [String], default: [], index: true },
       });
+    }
+    if (!existing.schema.path('excludedTrainingSops')) {
+      existing.schema.add({ excludedTrainingSops: { type: [String], default: [] } });
     }
     if (!existing.schema.path('designationUpdatedAt')) {
       existing.schema.add({

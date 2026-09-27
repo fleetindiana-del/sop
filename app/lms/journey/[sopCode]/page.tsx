@@ -2082,7 +2082,14 @@ export default function JourneyPage() {
       }),
     );
 
-    const newPct = await updateProgress(stepId, { completed: passed, passed, score, attempts: newAttempts });
+    // The exam result must reach the server — retry transient failures. Safe to
+    // repeat: the server upserts attemptHistory by attempt number.
+    const quizPayload = { completed: passed, passed, score, attempts: newAttempts };
+    let newPct = await updateProgress(stepId, quizPayload);
+    for (let retry = 0; newPct === null && retry < 2; retry++) {
+      await new Promise((r) => setTimeout(r, 1500 * (retry + 1)));
+      newPct = await updateProgress(stepId, quizPayload);
+    }
 
     // Certificate + celebration after a passing attempt (server verifies / completes progress).
     if (passed) {

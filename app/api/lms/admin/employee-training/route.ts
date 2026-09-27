@@ -107,6 +107,54 @@ export interface SopBreakdown {
   /** SOP has an MCQ assessment / exam. */
   hasExam: boolean;
   components: Record<ComponentKey, ComponentStatus>;
+  /**
+   * Formal exam attempts on record. Present once the learner has submitted at
+   * least one attempt, so an attempted-but-not-passed exam is distinguishable
+   * from one never taken (both leave the MCQ component `not_completed`).
+   */
+  exam?: ExamAttemptSummary;
+}
+
+export interface ExamAttemptSummary {
+  attempts: number;
+  lastScore: number;
+  bestScore: number;
+  passed: boolean;
+  /** Pass mark that applies regardless of SOP settings (trainers must score 100%). */
+  passMark?: number;
+}
+
+function examAttemptSummary(
+  steps: Record<string, unknown> | undefined,
+  isTrainer: boolean,
+): ExamAttemptSummary | undefined {
+  let attempts = 0;
+  let lastScore = 0;
+  let lastAt = 0;
+  let bestScore = 0;
+  let passed = false;
+  for (const key of COMPONENT_GROUPS.mcq) {
+    const q = steps?.[key] as {
+      passed?: boolean;
+      completed?: boolean;
+      score?: number;
+      attempts?: number;
+      attemptHistory?: Array<{ score?: number; at?: Date | string }>;
+    } | undefined;
+    if (!q || !(Number(q.attempts) > 0)) continue;
+    attempts += Number(q.attempts);
+    if (q.passed === true || q.completed === true) passed = true;
+    const history = Array.isArray(q.attemptHistory) ? q.attemptHistory : [];
+    for (const h of history) bestScore = Math.max(bestScore, Number(h.score) || 0);
+    bestScore = Math.max(bestScore, Number(q.score) || 0);
+    const at = history.length ? new Date(history[history.length - 1].at ?? 0).getTime() || 0 : 0;
+    if (at >= lastAt) {
+      lastAt = at;
+      lastScore = Number(q.score) || 0;
+    }
+  }
+  if (attempts === 0) return undefined;
+  return { attempts, lastScore, bestScore, passed, ...(isTrainer ? { passMark: 100 } : {}) };
 }
 
 export interface EmployeeTrainingRecord {
@@ -404,6 +452,7 @@ export async function GET(req: NextRequest) {
               scheduleStatus,
               hasExam: availableSet.has('quiz') || availableSet.has('quizGu'),
               components,
+              exam: examAttemptSummary(steps, Boolean(emp.isTrainer)),
             }];
           });
 

@@ -14,6 +14,7 @@ import {
   buildMonthlyBreakdown,
   type EmployeeGridRow,
   type MonthBreakdown,
+  type SopBreakdown as GridSopBreakdown,
 } from '@/components/employees/EmployeeTrainingGrid';
 import {
   SopTrainingGrid,
@@ -49,6 +50,7 @@ interface SopBreakdown {
   scheduleStatus?: 'ignored' | 'upcoming' | 'due' | 'overdue' | 'missed';
   hasExam: boolean;
   components: Record<ComponentKey, ComponentStatus>;
+  exam?: GridSopBreakdown['exam'];
 }
 
 interface SopTrainingRow extends SopGridRow {
