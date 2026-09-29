@@ -106,6 +106,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         merged.passed = true;
       }
 
+      // Missed questions carry over to the next attempt (retest) until passed.
+      if ((step === 'quiz' || step === 'quizGu') && 'pendingRetestIds' in stepData) {
+        const ids = Array.isArray(stepData.pendingRetestIds) ? stepData.pendingRetestIds : [];
+        merged.pendingRetestIds = merged.passed === true
+          ? []
+          : ids.filter((id): id is string => typeof id === 'string' && id.length > 0).slice(0, 200);
+      }
+
       // Append / upsert per-attempt score history for formal exam submits.
       if (
         (step === 'quiz' || step === 'quizGu') &&

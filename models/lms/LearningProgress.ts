@@ -23,6 +23,8 @@ export interface IQuizStepProgress {
   attempts: number;
   /** Score for each formal attempt, in order. */
   attemptHistory: IQuizAttemptRecord[];
+  /** Question ids missed in the latest failed attempt; the next attempt retests only these. */
+  pendingRetestIds: string[];
 }
 
 export interface ILearningProgress extends Document {
@@ -87,6 +89,7 @@ const LearningProgressSchema = new Schema<ILearningProgress>(
           score:     { type: Number,  default: 0 },
           attempts:  { type: Number,  default: 0 },
           attemptHistory: { type: [quizAttemptSchema], default: [] },
+          pendingRetestIds: { type: [String], default: [] },
         },
         default: () => ({}),
       },

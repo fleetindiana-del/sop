@@ -769,7 +769,7 @@ function QuizStep({
   sopCode: string;
   sopName?: string;
   step: JourneyStep;
-  onComplete: (score: number, passed: boolean, newAttempts: number) => void;
+  onComplete: (score: number, passed: boolean, newAttempts: number, missedIds: string[]) => void;
   onExit: () => void;
 }) {
   const [localAttempts, setLocalAttempts] = useState(step.attempts ?? 0);
@@ -862,6 +862,7 @@ function QuizStep({
         sopExpired?: boolean;
         attendanceRequired?: boolean;
         bilingual?: boolean;
+        retest?: boolean;
       };
 
       if (!res.ok) {
@@ -877,6 +878,19 @@ function QuizStep({
               : 'Unable to load the exam.'),
         );
         setPhase('review');
+        return;
+      }
+
+      // Missed questions from an earlier failed attempt (saved server-side) —
+      // resume the retest instead of starting a full exam or demo.
+      if (data.retest === true && data.questions?.length) {
+        const retestQs = prepareQuestions(data.questions, data.settings?.shuffleOptions ?? false);
+        setSettings(data.settings ?? null);
+        setQuizMode('exam');
+        setBilingual(data.bilingual === true);
+        setIsRetest(true);
+        setQuestions(retestQs);
+        setPhase('intro');
         return;
       }
 
@@ -1020,7 +1034,7 @@ function QuizStep({
     const required = isRetest ? 100 : (settings?.passingScore ?? 80);
     const passed = pct >= required;
     setExamAttempts((n) => n + 1);
-    onComplete(pct, passed, newAttempts);
+    onComplete(pct, passed, newAttempts, passed ? [] : wrong.map((q) => q._id));
   }, [questions, answers, localAttempts, isRetest, settings, onComplete, quizMode]);
 
   // Keep ref in sync so timer can auto-submit
@@ -1240,7 +1254,9 @@ function QuizStep({
             {!isDemo && (
               <li className="flex items-start gap-2">
                 <Award className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                {settings?.isTrainer
+                {isRetest
+                  ? `This retest covers only the ${questions.length} question${questions.length !== 1 ? 's' : ''} you missed last time. Answer all of them correctly (100%) to pass.`
+                  : settings?.isTrainer
                   ? 'As a trainer you must score 100% on up to 100 questions (a random sample when the bank is larger). Attempts are unlimited until you pass.'
                   : `You must score at least ${introPassing}% to complete this training.`}
               </li>
@@ -2064,6 +2080,7 @@ export default function JourneyPage() {
     score: number,
     passed: boolean,
     newAttempts: number,
+    missedIds: string[],
   ) => {
     // Never un-complete: if they already passed and a retake fails, keep completed=true
     setLocalSteps((prev) =>
@@ -2084,7 +2101,9 @@ export default function JourneyPage() {
 
     // The exam result must reach the server — retry transient failures. Safe to
     // repeat: the server upserts attemptHistory by attempt number.
-    const quizPayload = { completed: passed, passed, score, attempts: newAttempts };
+    const quizPayload = {
+      completed: passed, passed, score, attempts: newAttempts, pendingRetestIds: missedIds,
+    };
     let newPct = await updateProgress(stepId, quizPayload);
     for (let retry = 0; newPct === null && retry < 2; retry++) {
       await new Promise((r) => setTimeout(r, 1500 * (retry + 1)));
@@ -2274,8 +2293,8 @@ export default function JourneyPage() {
                 sopCode={sopCode}
                 sopName={data?.sop?.name || ''}
                 step={activeStep}
-                onComplete={(score, passed, newAttempts) =>
-                  handleQuizComplete(activeStep.id, score, passed, newAttempts)
+                onComplete={(score, passed, newAttempts, missedIds) =>
+                  handleQuizComplete(activeStep.id, score, passed, newAttempts, missedIds)
                 }
                 onExit={() => router.push('/lms')}
               />

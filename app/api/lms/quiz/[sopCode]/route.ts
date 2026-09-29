@@ -5,6 +5,7 @@ import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import MCQBank from '@/models/MCQBank';
 import Employee from '@/models/Employee';
 import SOP from '@/models/SOP';
+import LearningProgress from '@/models/lms/LearningProgress';
 import {
   resolveExamSettingsForSop,
   sampleTrainerExamQuestions,
@@ -12,6 +13,7 @@ import {
   TRAINER_EXAM_QUESTION_COUNT,
 } from '@/lib/lms-exam-settings';
 import { baseIdentifierFromIdentifier, sopFamilyIdentifierRegex } from '@/lib/sop-utils';
+import { selectCanonicalBanksByLang } from '@/lib/mcq-bank-utils';
 import type { ShuffleMode } from '@/models/lms/SopExamSettings';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +25,8 @@ type RawMcq = {
   /** Stable master-question id. Identical across languages — the EN and GU
    *  versions of one MCQ carry the same id. */
   mcqId?: string;
+  /** Position inside its bank — stable fallback id for MCQs without an mcqId. */
+  mcqIndex?: number;
   question: string;
   options: string[];
   correctAnswer: string;
@@ -60,7 +64,7 @@ function toAbcdQuestions(raw: RawMcq[]) {
         }
       : undefined;
     return {
-      _id: `${String(q.bankId)}_${q.mcqId ?? i}`,
+      _id: `${String(q.bankId)}_${q.mcqId ?? `i${q.mcqIndex ?? i}`}`,
       question: q.question,
       optionA: opts[0] ?? '',
       optionB: opts[1] ?? '',
@@ -107,19 +111,29 @@ async function fetchQuestions(
   const translated = source === 'translation';
   const tPath = `mcqs.translations.${lang}`;
 
+  // A family can still hold an active bank for a prior revision (QAGE82-06 next to
+  // QAGE82-7). Exam only the current revision's bank — never a mix of versions.
+  const candidates = await MCQBank.find({
+    sopIdentifier: { $regex: familyRegex },
+    isObsolete: { $ne: true },
+    // Translations hang off the English master bank, so that is what we read
+    // even when the learner asked for Gujarati.
+    ...(translated
+      ? { $or: [{ language: 'English' }, { language: { $exists: false } }] }
+      : { language }),
+  })
+    .select('_id sopIdentifier language totalQuestions updatedAt')
+    .lean<Array<{ _id: mongoose.Types.ObjectId; sopIdentifier: string; language?: string; totalQuestions?: number; updatedAt?: Date }>>();
+  const [canonical] = selectCanonicalBanksByLang(candidates);
+  if (!canonical) return [];
+  const canonicalId = String(canonical.sopIdentifier).trim().toUpperCase();
+  const bankIds = candidates
+    .filter((b) => String(b.sopIdentifier).trim().toUpperCase() === canonicalId)
+    .map((b) => b._id);
+
   const pipeline: mongoose.PipelineStage[] = [
-    {
-      $match: {
-        sopIdentifier: { $regex: familyRegex },
-        isObsolete: { $ne: true },
-        // Translations hang off the English master bank, so that is what we read
-        // even when the learner asked for Gujarati.
-        ...(translated
-          ? { $or: [{ language: 'English' }, { language: { $exists: false } }] }
-          : { language }),
-      },
-    },
-    { $unwind: '$mcqs' },
+    { $match: { _id: { $in: bankIds } } },
+    { $unwind: { path: '$mcqs', includeArrayIndex: 'mcqIndex' } },
     {
       $match: {
         'mcqs.isSimilar': { $ne: true },
@@ -149,6 +163,7 @@ async function fetchQuestions(
       _id: 0,
       bankId: '$_id',
       mcqId: '$mcqs.mcqId',
+      mcqIndex: 1,
       question: translated ? `$${tPath}.question` : '$mcqs.question',
       options: translated ? `$${tPath}.options` : '$mcqs.options',
       correctAnswer: translated ? `$${tPath}.correctAnswer` : '$mcqs.correctAnswer',
@@ -187,7 +202,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const { sopCode } = await params;
-  const mode = req.nextUrl.searchParams.get('mode') === 'trial' ? 'trial' : 'exam';
+  let mode: 'trial' | 'exam' = req.nextUrl.searchParams.get('mode') === 'trial' ? 'trial' : 'exam';
   const language = req.nextUrl.searchParams.get('lang') === 'gu' ? 'Gujarati' : 'English';
 
   try {
@@ -203,6 +218,17 @@ export async function GET(req: NextRequest, { params }: Params) {
       designation: employee?.designation ?? '',
       isTrainer: employee?.isTrainer === true,
     });
+
+    // A failed attempt leaves its missed questions pending: the next attempt (even
+    // after a reload or on another day) retests only those, and needs 100%.
+    const progress = await LearningProgress.findOne({ employeeId: payload.sub, sopCode })
+      .select('steps.quiz steps.quizGu')
+      .lean<{ steps?: Record<string, { passed?: boolean; pendingRetestIds?: string[] } | undefined> }>();
+    const quizSteps = [progress?.steps?.quiz, progress?.steps?.quizGu];
+    const retestIds = quizSteps.some((q) => q?.passed === true)
+      ? new Set<string>()
+      : new Set(quizSteps.flatMap((q) => q?.pendingRetestIds ?? []));
+    if (retestIds.size > 0) mode = 'exam';
 
     const family = (baseIdentifierFromIdentifier(sopCode) || sopCode).toUpperCase();
     const sopDoc = await SOP.findOne({
@@ -292,7 +318,9 @@ export async function GET(req: NextRequest, { params }: Params) {
       ? resolved.trialQuestionCount
       : resolved.examQuestionCount;
 
-    const useAllExamQuestions = mode === 'exam' && resolved.allExamQuestions;
+    const isRetest = retestIds.size > 0;
+    // Retests need the full pool so the saved missed questions can be found in it.
+    const useAllExamQuestions = mode === 'exam' && (resolved.allExamQuestions || isRetest);
 
     const learnerSettings = toLearnerQuizSettings(resolved);
 
@@ -333,19 +361,28 @@ export async function GET(req: NextRequest, { params }: Params) {
     } else {
       raw = await fetchQuestions(sopCode, language, wanted, resolved.shuffleMode, useAllExamQuestions, 'master');
     }
-    const served = useAllExamQuestions
-      ? sampleTrainerExamQuestions(raw, TRAINER_EXAM_QUESTION_COUNT)
-      : raw;
-    const questions = toAbcdQuestions(served);
+    const pool = toAbcdQuestions(raw);
+    const retestQuestions = isRetest ? pool.filter((q) => retestIds.has(q._id)) : [];
+    // Missed questions no longer in the bank (e.g. regenerated) → normal full attempt.
+    const retest = retestQuestions.length > 0;
+    const questions = retest
+      ? retestQuestions
+      : resolved.allExamQuestions && mode === 'exam'
+        ? sampleTrainerExamQuestions(pool, TRAINER_EXAM_QUESTION_COUNT)
+        : useAllExamQuestions
+          ? pool.slice(0, count)
+          : pool;
 
     // Reflect the real set size so the learner UI / timer pacing stay accurate.
     if (useAllExamQuestions) {
       learnerSettings.examQuestionCount = questions.length;
     }
+    if (retest) learnerSettings.passingScore = 100;
 
     return NextResponse.json({
       questions,
       mode,
+      retest,
       settings: learnerSettings,
       language: bilingual ? 'both' : source === 'master' ? 'en' : 'gu',
       // The UI renders both renderings of every question when this is set.
