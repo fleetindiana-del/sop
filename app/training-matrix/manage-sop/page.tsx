@@ -153,7 +153,7 @@ function sopCacheKey(code: string): string {
   return String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
 }
 
-type AssignedSopSource = 'matrix' | 'trainer-coverage' | 'trainer-schedule' | 'designation-applicability';
+type AssignedSopSource = 'matrix' | 'trainer-coverage' | 'trainer-schedule' | 'designation-applicability' | 'qa-for-qc';
 
 type AssignedSopRow = {
   sopCode: string;
@@ -168,6 +168,7 @@ const ASSIGNED_SOURCE_LABEL: Record<AssignedSopSource, string> = {
   'trainer-coverage': 'Trainer coverage',
   'trainer-schedule': 'Trainer-scheduled exam',
   'designation-applicability': 'Designation',
+  'qa-for-qc': 'QA matrix (QC)',
 };
 
 function cleanSopName(raw: string): string {

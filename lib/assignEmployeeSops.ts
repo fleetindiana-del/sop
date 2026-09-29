@@ -28,7 +28,7 @@ export type ApplicableSop = {
   months: number[];
   expired?: boolean;
   /** Where an assigned SOP comes from (only set by `includeDerived` listings). */
-  source?: 'matrix' | 'trainer-coverage' | 'trainer-schedule' | 'designation-applicability';
+  source?: 'matrix' | 'trainer-coverage' | 'trainer-schedule' | 'designation-applicability' | 'qa-for-qc';
 };
 
 function stripVersion(code: string): string {

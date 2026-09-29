@@ -79,9 +79,11 @@ export interface EmployeeSopAssignment {
    * staff who were never individually ticked. Absent on a real matrix
    * assignment, even when a trainer later retargets its month. Manage SOP's
    * per-employee Training Check filters these out — they are not individual
-   * matrix assignments and cannot be un-ticked there.
+   * matrix assignments and cannot be un-ticked there. `qa-for-qc` marks a QA
+   * matrix SOP extended to a QC employee for training (see
+   * `mergeQaSopsForQcEmployees`).
    */
-  derivedFrom?: 'trainer-coverage' | 'trainer-schedule' | 'designation-applicability';
+  derivedFrom?: 'trainer-coverage' | 'trainer-schedule' | 'designation-applicability' | 'qa-for-qc';
 }
 
 function empKey(department: string, name: string): string {
@@ -376,7 +378,8 @@ function assignmentCacheStore(): Map<string, AssignmentsCache> {
 function assignmentScopeKey(departments?: string[]): string {
   // v2: designation-level Matrix SOP rows no longer inflate LMS pending
   // counts for staff who were never individually assigned the SOP.
-  const prefix = 'v2:';
+  // v3: QA matrix SOPs extended to QC employees.
+  const prefix = 'v3:';
   if (!departments?.length) return `${prefix}all`;
   const parts = [...new Set(
     departments
@@ -717,6 +720,7 @@ async function computeEmployeeAssignmentsMap(
     }
   }
 
+  await mergeQaSopsForQcEmployees(map, lookup, isMatrixAssignableCode, departments, latestByDept);
   await mergeInductionAssignments(map, lookup, departments);
   await attachExamDates(map);
   // Runs last: a trainer-scheduled exam is authoritative over the matrix date.
@@ -892,6 +896,123 @@ async function mergeDesignationMatrixAssignments(
 }
 
 /**
+ * Training-only: QC staff also train on the QA matrix SOPs whose designation
+ * applicability matches theirs. Added on top of their own QC SOPs (never
+ * replacing them) and scheduled by the QA matrix month. Tagged `qa-for-qc`,
+ * so Manage SOP's per-person matrix grid and the SOP dashboard are unaffected.
+ */
+async function mergeQaSopsForQcEmployees(
+  map: Map<string, EmployeeSopAssignment[]>,
+  lookup: SopLookup,
+  isMatrixAssignableCode: (raw: string) => boolean,
+  departments: string[] | undefined,
+  latestByDept: Map<string, { year: number; snapshot: { sopMonthMap?: Record<string, string> } }>,
+): Promise<void> {
+  if (
+    departments?.length &&
+    !departments.some((d) => canonTrainingMatrixDepartment(d) === 'QC')
+  ) {
+    return;
+  }
+
+  const [qaRows, qcEmployees] = await Promise.all([
+    MatrixSOPAssignment.find({
+      isActive: { $ne: false },
+      deletedAt: { $in: [null, undefined] },
+      ...departmentMatchFilter(['QA']),
+    })
+      .select('department sopCode sopName effectiveMonth effectiveYear designationApplicability')
+      .lean<Array<{
+        department?: string;
+        sopCode?: string;
+        sopName?: string;
+        effectiveMonth?: number;
+        effectiveYear?: number;
+        designationApplicability?: string[];
+      }>>(),
+    Employee.find({ isActive: true, ...departmentMatchFilter(['QC']) })
+      .select('name department designation excludedTrainingSops')
+      .lean<Array<{
+        name?: string;
+        department?: string;
+        designation?: string;
+        excludedTrainingSops?: string[];
+      }>>(),
+  ]);
+
+  const rows = qaRows.filter(
+    (r) =>
+      (r.designationApplicability || []).some(Boolean) &&
+      isMatrixAssignableCode(String(r.sopCode || '').trim()),
+  );
+  if (rows.length === 0 || qcEmployees.length === 0) return;
+
+  // QA matrix month for each SOP (latest QA Excel snapshot).
+  let qaSnap: { year: number; snapshot: { sopMonthMap?: Record<string, string> } } | undefined;
+  for (const [dept, snap] of latestByDept) {
+    if (canonTrainingMatrixDepartment(dept) === 'QA') {
+      qaSnap = snap;
+      break;
+    }
+  }
+  const qaSchedule = new Map<string, { month: number; monthName: string; year: number }>();
+  for (const [rawKey, monthVal] of Object.entries(qaSnap?.snapshot.sopMonthMap || {})) {
+    const base = stripVersion(rawKey);
+    const primary = primaryScheduleFromMonthVal(monthVal);
+    if (!base || !primary || qaSchedule.has(base)) continue;
+    qaSchedule.set(base, { ...primary, year: qaSnap!.year });
+  }
+
+  for (const emp of qcEmployees) {
+    const name = String(emp.name || '').trim();
+    const empDept = String(emp.department || '').trim();
+    const desig = String(emp.designation || '').trim();
+    if (!name || !empDept || !desig) continue;
+
+    const existing = getAliasedAssignments(map, empDept, name) || [];
+    const existingBases = new Set(existing.map((a) => stripVersion(a.sopCode)));
+    const excluded = trainingExclusionSet(emp.excludedTrainingSops);
+    let changed = false;
+
+    for (const row of rows) {
+      if (!designationSetsOverlap(row.designationApplicability || [], desig)) continue;
+      const code = String(row.sopCode || '').trim();
+      const base = stripVersion(code);
+      if (!base || existingBases.has(base) || excluded.has(base)) continue;
+      const monthRaw = Number(row.effectiveMonth);
+      const sched = qaSchedule.get(base) || {
+        month: Number.isInteger(monthRaw) && monthRaw >= 1 && monthRaw <= 12 ? monthRaw : 1,
+        monthName: '',
+        year: Number(row.effectiveYear) || new Date().getFullYear(),
+      };
+      const assignment: EmployeeSopAssignment = {
+        sopCode: code,
+        sopName: String(row.sopName || '').trim() || undefined,
+        month: sched.month,
+        monthName: sched.monthName || MONTH_NAMES[sched.month] || `Month ${sched.month}`,
+        year: sched.year,
+        trainingType: 'training',
+        sopDepartment: row.department,
+        derivedFrom: 'qa-for-qc',
+      };
+      enrichAssignment(assignment, 'QA', lookup);
+      existing.push(assignment);
+      existingBases.add(base);
+      changed = true;
+    }
+
+    if (changed) {
+      existing.sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        if (a.month !== b.month) return a.month - b.month;
+        return compareSopCodes(a.sopCode, b.sopCode);
+      });
+      setAliasedAssignments(map, empDept, name, existing);
+    }
+  }
+}
+
+/**
  * Fold trainer-scheduled exams into the assignment map so they appear in the
  * employee's LMS even when the SOP is not on their training-matrix row. An
  * existing assignment for the same SOP is retargeted to the trainer's month and
@@ -1033,7 +1154,12 @@ async function attachExamDates(
         employeeName,
       );
       const dKey = deptScheduleKey(code, department, a.year, a.month);
-      const examDate = overrideByKey.get(oKey) || deptByKey.get(dKey);
+      // QA SOPs extended to QC staff follow the QA department's exam date.
+      const qaKey = a.derivedFrom === 'qa-for-qc'
+        ? deptScheduleKey(code, normalizeDept('QA'), a.year, a.month)
+        : '';
+      const examDate =
+        overrideByKey.get(oKey) || deptByKey.get(dKey) || (qaKey && deptByKey.get(qaKey)) || undefined;
       if (examDate) a.examDate = examDate;
     }
   }
