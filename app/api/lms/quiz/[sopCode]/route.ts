@@ -95,7 +95,7 @@ type QuestionSource = 'master' | 'translation' | 'legacy';
 
 async function fetchQuestions(
   sopCode: string,
-  language: string,
+  language: 'English' | 'Gujarati',
   count: number,
   shuffleMode: ShuffleMode,
   all = false,
