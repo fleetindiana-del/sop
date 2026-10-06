@@ -433,8 +433,9 @@ function ResourceButtons({
         return (
           <button
             key={d.kind}
-            onClick={() => { if (!locked) onSelect(d); }}
-            disabled={locked}
+            // Locked stays tappable so the reason shows on phones (no hover tooltip there).
+            onClick={() => { if (locked) window.alert(title); else onSelect(d); }}
+            aria-disabled={locked}
             title={title}
             className={`inline-flex items-center gap-0.5 rounded border font-semibold transition ${
               compact ? 'px-1 py-0.5 text-[9px] leading-none' : 'px-1.5 py-0.5 text-[10px]'

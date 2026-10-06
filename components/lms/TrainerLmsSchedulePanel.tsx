@@ -760,9 +760,9 @@ export function TrainerLmsSchedulePanel({
         body: JSON.stringify({
           action: bulkMode,
           sopCodes: [...selectedSopCodes],
+          // Server files it under the date's month, so a delayed SOP moves to
+          // the month it is actually held instead of staying in the viewed month.
           date: bulkDate,
-          month: monthFilter === 'all' ? undefined : monthFilter,
-          year,
         }),
       });
       const json = await res.json().catch(() => ({}));

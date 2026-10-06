@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 import mongoose from 'mongoose';
 import { connectDB } from '@/lib/mongodb';
 import { resolveLmsIdentity } from '@/lib/lmsIdentity';
@@ -38,7 +39,29 @@ type RawMcq = {
   altOptions?: string[] | null;
 };
 
+/**
+ * Stable per-question id — retests match saved missed questions by it. Older MCQs
+ * have no mcqId, so fall back to a fingerprint of the question text: unlike the
+ * position in the bank it survives other questions being added, removed or reordered.
+ */
+function stableQuestionId(q: RawMcq, i: number, seen: Set<string>): string {
+  const bank = String(q.bankId);
+  if (q.mcqId) return `${bank}_${q.mcqId}`;
+  const text = String(q.question || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  let id = `${bank}_q${createHash('sha1').update(text).digest('hex').slice(0, 16)}`;
+  // Identical text twice in one bank: disambiguate so answers never collide.
+  if (seen.has(id)) id = `${id}_${q.mcqIndex ?? i}`;
+  seen.add(id);
+  return id;
+}
+
+/** Position-based id issued before stableQuestionId — still honoured for saved retests. */
+function legacyIndexId(q: RawMcq): string | null {
+  return !q.mcqId && typeof q.mcqIndex === 'number' ? `${String(q.bankId)}_i${q.mcqIndex}` : null;
+}
+
 function toAbcdQuestions(raw: RawMcq[]) {
+  const seen = new Set<string>();
   return raw.map((q, i) => {
     const opts: string[] = Array.isArray(q.options) ? q.options : [];
     let letter: 'A' | 'B' | 'C' | 'D' = 'A';
@@ -64,7 +87,7 @@ function toAbcdQuestions(raw: RawMcq[]) {
         }
       : undefined;
     return {
-      _id: `${String(q.bankId)}_${q.mcqId ?? `i${q.mcqIndex ?? i}`}`,
+      _id: stableQuestionId(q, i, seen),
       question: q.question,
       optionA: opts[0] ?? '',
       optionB: opts[1] ?? '',
@@ -362,7 +385,12 @@ export async function GET(req: NextRequest, { params }: Params) {
       raw = await fetchQuestions(sopCode, language, wanted, resolved.shuffleMode, useAllExamQuestions, 'master');
     }
     const pool = toAbcdQuestions(raw);
-    const retestQuestions = isRetest ? pool.filter((q) => retestIds.has(q._id)) : [];
+    const retestQuestions = isRetest
+      ? pool.filter((q, i) => {
+          const legacy = legacyIndexId(raw[i]);
+          return retestIds.has(q._id) || (legacy !== null && retestIds.has(legacy));
+        })
+      : [];
     // Missed questions no longer in the bank (e.g. regenerated) → normal full attempt.
     const retest = retestQuestions.length > 0;
     const questions = retest
