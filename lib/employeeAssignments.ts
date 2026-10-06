@@ -414,6 +414,10 @@ export function invalidateEmployeeAssignmentsCache(): void {
   invalidateLmsServerPrefix('lms:admin:');
   invalidateLmsServerPrefix('lms:trainer:');
   invalidateLmsServerPrefix('lms:me:');
+  // Assets carry the per-SOP exam unlock flags (and the row's action buttons).
+  // Leaving them cached made a fresh assignment or exam date show in the list
+  // with no / stale "Start Test" until the 60s TTL lapsed.
+  invalidateLmsServerPrefix('lms:assets:');
 }
 
 export function getEmployeeAssignmentsMap(
