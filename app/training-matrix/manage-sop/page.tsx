@@ -450,6 +450,8 @@ function ManageSOPDashboard() {
   const EMPTY_EMP_BY_DEPT: Record<string, Array<{ name: string; designation: string; assignedSopCodes?: string[] }>> = useMemo(() => ({}), []);
   const [overrides, setOverrides] = useState<PerSop>({});
   const [inductionOverrides, setInductionOverrides] = useState<PerSop>({});
+  // Last saved induction ticks — Apply sends only SOPs that differ from this.
+  const [appliedInduction, setAppliedInduction] = useState<PerSop>({});
   const [monthCells, setMonthCells] = useState<PerSop>({});
   // employeeOverrides[sopCode]["dept|employee name"] -> per-person training tick.
   // The employee view needs its own buffer: writing employee ticks into
@@ -546,6 +548,24 @@ function ManageSOPDashboard() {
       for (const fullName of allDesigs) inner[desigKey(dept, fullName)] = value;
       return { ...prev, [sopCode]: inner };
     });
+  }, []);
+
+  // Induction ticks are persisted separately from training ticks; seed the
+  // checkboxes from the saved state (local edits made meanwhile win).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/induction-training-matrix/designation-ticks', { cache: 'no-store' });
+        if (!res.ok) return;
+        const json = await res.json();
+        const saved: PerSop = json?.ticks && typeof json.ticks === 'object' ? json.ticks : {};
+        if (cancelled) return;
+        setAppliedInduction(saved);
+        setInductionOverrides((prev) => ({ ...saved, ...prev }));
+      } catch { /* non-fatal — checkboxes start empty */ }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   // Explicit-value setter: the caller passes the new value. We always store it so
@@ -856,6 +876,45 @@ function ManageSOPDashboard() {
     if (!viewData) return;
     setApplyMsg(null);
 
+    // Induction ticks save on their own endpoint (the training payload below
+    // has no induction field). Send each changed SOP's full state; keys that
+    // were saved before but are gone now go out as false so they are removed.
+    let inductionNote = '';
+    const inductionChanged = [...new Set([...Object.keys(inductionOverrides), ...Object.keys(appliedInduction)])]
+      .filter((k) => JSON.stringify(inductionOverrides[k] || {}) !== JSON.stringify(appliedInduction[k] || {}));
+    if (inductionChanged.length > 0) {
+      const ticks: PerSop = {};
+      for (const k of inductionChanged) {
+        const inner = { ...(inductionOverrides[k] || {}) };
+        for (const key of Object.keys(appliedInduction[k] || {})) if (!(key in inner)) inner[key] = false;
+        ticks[k] = inner;
+      }
+      try {
+        const res = await fetch('/api/induction-training-matrix/designation-ticks', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticks }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || 'Saving induction ticks failed');
+        setAppliedInduction((prev) => {
+          const next = { ...prev };
+          for (const k of inductionChanged) next[k] = inductionOverrides[k] || {};
+          return next;
+        });
+        inductionNote = `Induction training saved for ${inductionChanged.length} SOP${inductionChanged.length === 1 ? '' : 's'}.`;
+        try {
+          localStorage.removeItem('induction_training_matrix_overview_cache_v5');
+          sessionStorage.removeItem('lms-portal-cache-v8');
+        } catch { /* storage unavailable — non-fatal */ }
+        // Recompute the induction matrix now so it shows the new assignments on next open.
+        void fetch('/api/induction-training-matrix/overview?refresh=1', { cache: 'no-store' }).catch(() => {});
+      } catch (err) {
+        setApplyMsg({ kind: 'err', text: err instanceof Error ? err.message : 'Saving induction ticks failed' });
+        return;
+      }
+    }
+
     const designationsByDept = viewData.designationsByDept || {};
     const manualDesignations = viewData.manualDesignations || {};
     const manualAllocations = viewData.manualAllocations || {};
@@ -898,7 +957,7 @@ function ManageSOPDashboard() {
       employeeSopAssignments.length > 0 || employeeSopRemovals.length > 0;
 
     if (sopCodesToProcess.size === 0 && !hasEmployeeEdits) {
-      setApplyMsg({ kind: 'ok', text: 'No changes to apply.' });
+      setApplyMsg({ kind: 'ok', text: inductionNote || 'No changes to apply.' });
       return;
     }
 
@@ -1034,7 +1093,7 @@ function ManageSOPDashboard() {
     if (entries.length === 0 && removals.length === 0 && !hasEmployeeEdits) {
       setAppliedOverrides({ ...overridesArg });
       setAppliedMonthCells({ ...monthCellsArg });
-      setApplyMsg({ kind: 'ok', text: 'No changes to apply.' });
+      setApplyMsg({ kind: 'ok', text: inductionNote || 'No changes to apply.' });
       return;
     }
 
@@ -1057,6 +1116,7 @@ function ManageSOPDashboard() {
       setApplyMsg({
         kind: warnings.length > 0 ? 'err' : 'ok',
         text:
+          (inductionNote ? `${inductionNote} ` : '') +
           `Updated training records: ${data.inserted || 0} added${data.updated ? `, ${data.updated} updated` : ''}${data.removed ? `, ${data.removed} removed` : ''}${data.unchanged ? `; ${data.unchanged} already existed` : ''}${data.inserted === 0 && !data.updated && !data.removed && !data.unchanged ? ' — no matching employees or records found' : ''}.` +
           // Surface the per-entry warnings (e.g. ticked a designation with no employees in
           // that department) so a partial/no-op save isn't a silent revert of the ticks.

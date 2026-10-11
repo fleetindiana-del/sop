@@ -37,6 +37,7 @@ import {
 } from '@/lib/trainingMatrixDepartments';
 import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
 import { designationSetsOverlap } from '@/lib/designationMatch';
+import { inductionRowApplies, listInductionDesignationRows } from '@/lib/inductionDesignationAssignments';
 
 const MONTH_NAMES = [
   '',
@@ -1181,7 +1182,7 @@ async function mergeInductionAssignments(
     ...deptFilter,
   })
     .select('name department designation dateOfJoining')
-    .lean<Array<{ name: string; department: string; designation: string }>>();
+    .lean<Array<{ name: string; department: string; designation: string; dateOfJoining?: Date }>>();
 
   if (flagged.length === 0) return;
 
@@ -1237,6 +1238,45 @@ async function mergeInductionAssignments(
       trainingType: 'induction',
       status: r.status,
     });
+  }
+
+  // Manage SOP induction ticks (department × designation). Induction starts at
+  // joining, so a ticked SOP lands in the later of the tick month and the DOJ month.
+  const designationRows = await listInductionDesignationRows();
+  if (designationRows.length > 0) {
+    for (const emp of flagged) {
+      const doj = emp.dateOfJoining ? new Date(emp.dateOfJoining) : null;
+      const dojValid = doj && !Number.isNaN(doj.getTime());
+      for (const row of designationRows) {
+        if (!inductionRowApplies(row, emp)) continue;
+        // Already assigned as regular training: one row per SOP, so mark that
+        // row as induction and keep its schedule rather than dropping the tick.
+        const already = (getAliasedAssignments(map, emp.department, emp.name) || [])
+          .find((a) => stripVersion(a.sopCode) === row.sopCode);
+        if (already) {
+          already.trainingType = 'induction';
+          continue;
+        }
+        let { effectiveYear: year, effectiveMonth: month } = row;
+        if (dojValid) {
+          const dy = doj.getFullYear();
+          const dm = doj.getMonth() + 1;
+          if (dy > year || (dy === year && dm > month)) {
+            year = dy;
+            month = dm;
+          }
+        }
+        add(emp.department, emp.name, {
+          sopCode: row.sopCode,
+          sopName: row.sopName || undefined,
+          sopDepartment: row.department,
+          month,
+          monthName: MONTH_NAMES[month] || `Month ${month}`,
+          year,
+          trainingType: 'induction',
+        });
+      }
+    }
   }
 
   // Fallback: dept induction matrix SOPs for flagged employees with no per-employee records yet.

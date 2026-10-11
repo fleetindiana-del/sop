@@ -23,6 +23,12 @@ import { findLatestUploadsByDepartment } from '@/lib/latestMatrixUploads';
 import { getInductionTrainingMatrixCacheEntry, setInductionTrainingMatrixCached } from '@/lib/inductionTrainingMatrixCache';
 import { resolveEngGujFilePaths } from '@/lib/pathLanguageDetection';
 import { getEmployeeMasterIndex, currentDesignation } from '@/lib/employeeMaster';
+import Employee from '@/models/Employee';
+import {
+  inductionRowApplies,
+  listInductionDesignationRows,
+  type InductionDesignationRow,
+} from '@/lib/inductionDesignationAssignments';
 
 export const dynamic = 'force-dynamic';
 
@@ -301,7 +307,7 @@ async function computeOverviewPayload(forceFresh: boolean) {
     //   2. MCQ stats from `mcqbanks` (one doc per SOP + language)
     //   3. Trainers + induction upload snapshots
     const cachedRegistry = getServerGroupedCache();
-    const [sopRecords, mcqAgg, trainerDocs, uploads, masterIndex] = await Promise.all([
+    const [sopRecords, mcqAgg, trainerDocs, uploads, masterIndex, inductionRows, inductionEmployees] = await Promise.all([
       cachedRegistry ? Promise.resolve(null) : SOP.find({}).select(SOP_LIST_EXCLUDE).lean(),
       MCQBank.aggregate([
         { $match: { isObsolete: { $ne: true } } },
@@ -327,7 +333,16 @@ async function computeOverviewPayload(forceFresh: boolean) {
         snapshot: { $exists: true, $ne: null },
       }),
       getEmployeeMasterIndex(),
+      listInductionDesignationRows(),
+      Employee.find({ isActive: true, inductionTrainingRequired: true })
+        .select('name department designation')
+        .lean<Array<{ name?: string; department?: string; designation?: string }>>(),
     ]);
+    const inductionRowsByDept = new Map<string, InductionDesignationRow[]>();
+    for (const r of inductionRows) {
+      const dept = canonDept(r.department);
+      inductionRowsByDept.set(dept, [...(inductionRowsByDept.get(dept) || []), r]);
+    }
 
     // 1. Same SOP source as the Dashboard: collapse versions into one row per family.
     let registry = cachedRegistry;
@@ -566,6 +581,44 @@ async function computeOverviewPayload(forceFresh: boolean) {
         uploadedAt: up.uploadedAt ? new Date(up.uploadedAt).toISOString() : null,
         fileName: up.fileName,
         excelCodes, employees, monthCounts: snap.monthCounts || {}, sopMonthMap,
+      });
+    }
+
+    // Departments without an upload: build the same shape from the induction
+    // ticks saved on Manage SOP, with the employees flagged for induction.
+    const MONTH_LABELS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    for (const [dept, rows] of inductionRowsByDept) {
+      if (excelByDept.has(dept)) continue;
+      const deptRows = rows.filter((r) => isMatrixAssignableCode(r.sopCode));
+      if (deptRows.length === 0) continue;
+      const excelCodes = new Set<string>();
+      const sopMonthMap: Record<string, string> = {};
+      for (const r of deptRows) {
+        excelCodes.add(r.sopCode);
+        sopMonthMap[r.sopCode] = MONTH_LABELS[r.effectiveMonth - 1] || 'January';
+      }
+      const employees = inductionEmployees
+        .filter((e) => canonDept(String(e.department || '')) === dept)
+        .map((e) => {
+          const training: Record<string, boolean> = {};
+          for (const r of deptRows) training[r.sopCode] = inductionRowApplies(r, e);
+          return {
+            name: String(e.name || ''),
+            designation: currentDesignation(masterIndex, dept, String(e.name || ''), String(e.designation || '')),
+            department: dept,
+            training,
+          };
+        })
+        .filter((e) => e.name && Object.values(e.training).some(Boolean));
+      excelByDept.set(dept, {
+        uploaded: true,
+        fileUrl: null,
+        uploadedAt: null,
+        fileName: 'Manage SOP (induction)',
+        excelCodes,
+        employees,
+        monthCounts: {},
+        sopMonthMap,
       });
     }
 
