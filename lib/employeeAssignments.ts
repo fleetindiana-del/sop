@@ -9,7 +9,7 @@ import TrainingExamSchedule from '@/models/TrainingExamSchedule';
 import ScheduledExam from '@/models/lms/ScheduledExam';
 import { getGroupedRegistryRows } from '@/lib/dashboardRegistrySource';
 import { normalizeDepartment } from '@/lib/department-colors';
-import { baseIdentifierFromIdentifier, compareSopCodes } from '@/lib/sop-utils';
+import { baseIdentifierFromIdentifier, compareSopCodes, versionFromIdentifier } from '@/lib/sop-utils';
 import {
   buildExcelToDbBaseLookup,
   expandSopIdentifierVariants,
@@ -380,7 +380,8 @@ function assignmentScopeKey(departments?: string[]): string {
   // v2: designation-level Matrix SOP rows no longer inflate LMS pending
   // counts for staff who were never individually assigned the SOP.
   // v3: QA matrix SOPs extended to QC employees.
-  const prefix = 'v3:';
+  // v4: one assignment per SOP family (latest revision).
+  const prefix = 'v4:';
   if (!departments?.length) return `${prefix}all`;
   const parts = [...new Set(
     departments
@@ -730,8 +731,62 @@ async function computeEmployeeAssignmentsMap(
   await attachExamDates(map);
   // Runs last: a trainer-scheduled exam is authoritative over the matrix date.
   await mergeTrainerScheduledExams(map, lookup);
+  collapseSopVersionDuplicates(map);
 
   return map;
+}
+
+/** SOP family key: version suffix and doc-number zero padding ignored (QAGE04-05 → QAGE4). */
+function sopFamilyKey(code: string): string {
+  return stripVersion(code).replace(/^([A-Z]+)0+(\d+)/, '$1$2');
+}
+
+/** Bare codes resolve to the current revision, so they outrank any explicit suffix. */
+function codeRevisionRank(code: string): number {
+  const v = versionFromIdentifier(code);
+  return v == null ? Number.POSITIVE_INFINITY : parseInt(v, 10) || 0;
+}
+
+/**
+ * The matrix can tick several revisions of one SOP (QAGE84 and QAGE84-05).
+ * Keep one training per SOP family — the latest revision — so learners and
+ * trainer counts never see the same SOP twice. A trainer-scheduled date wins;
+ * otherwise the earliest scheduled month is kept.
+ */
+function collapseSopVersionDuplicates(map: Map<string, EmployeeSopAssignment[]>): void {
+  const done = new Set<EmployeeSopAssignment[]>();
+  for (const list of map.values()) {
+    if (done.has(list)) continue;
+    done.add(list);
+    const byFamily = new Map<string, EmployeeSopAssignment>();
+    for (const a of list) {
+      const fam = sopFamilyKey(a.sopCode);
+      const prev = byFamily.get(fam);
+      if (!prev) {
+        byFamily.set(fam, a);
+        continue;
+      }
+      const [keep, drop] =
+        codeRevisionRank(a.sopCode) > codeRevisionRank(prev.sopCode) ? [a, prev] : [prev, a];
+      const sched = keep.scheduledByTrainer
+        ? keep
+        : drop.scheduledByTrainer
+          ? drop
+          : isEarlier(drop, keep) ? drop : keep;
+      byFamily.set(fam, {
+        ...keep,
+        month: sched.month,
+        monthName: sched.monthName,
+        year: sched.year,
+        examDate: sched.examDate ?? keep.examDate ?? drop.examDate,
+        scheduledByTrainer: keep.scheduledByTrainer || drop.scheduledByTrainer || undefined,
+        scheduledBy: keep.scheduledBy ?? drop.scheduledBy,
+        // A real matrix assignment for any revision makes the merged row real.
+        derivedFrom: keep.derivedFrom && drop.derivedFrom ? keep.derivedFrom : undefined,
+      });
+    }
+    if (byFamily.size !== list.length) list.splice(0, list.length, ...byFamily.values());
+  }
 }
 
 function snapshotKeysForDepartment(

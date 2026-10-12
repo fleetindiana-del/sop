@@ -149,13 +149,8 @@ export async function POST(req: NextRequest) {
 
       for (const sopCode of sopCodes) {
         const exam = examByCode.get(sopCode);
-        const deptOk = exam
-          ? deptMatchesTrainerScope(exam.department, trainerDepts)
-          : true;
-        if (exam && !deptOk) {
-          skipped.push(`${sopCode} (not in your departments)`);
-          continue;
-        }
+        // Scope by the trainee's department (checked per employee below), not the
+        // SOP's owning department — QA SOPs are trained to Microbiology staff, etc.
         if (expiredCodes.has(sopCode) || expiredCodes.has(sopCode.toUpperCase())) {
           skipped.push(`${sopCode} (expired — locked)`);
           continue;

@@ -1359,9 +1359,13 @@ function Dashboard({
   const router = useRouter();
   // Present only for the main-application login; LMS-only learners have none.
   const { data: appSession } = useSession();
-  const isPrivileged = isPrivilegedRole(appSession?.user?.role);
-  const isAppAdmin = Boolean(appSession?.user?.role && isAdmin(appSession.user.role));
-  const isAppTrainer = appSession?.user?.role === 'trainer';
+  // After an LMS-password sign-in the app session can belong to someone else
+  // (an admin who signed a learner in on their browser), so its role must not
+  // grant the learner trainer / admin controls.
+  const appRole = authSource === 'app' ? appSession?.user?.role : undefined;
+  const isPrivileged = isPrivilegedRole(appRole);
+  const isAppAdmin = Boolean(appRole && isAdmin(appRole));
+  const isAppTrainer = appRole === 'trainer';
   const canOpenTrainerView = employee.isTrainer === true || isAppAdmin || isAppTrainer;
   const [assignments, setAssignments] = useState<SopAssignment[]>([]);
   const [progressMap, setProgressMap] = useState<Map<string, ProgressRecord>>(new Map());
@@ -2100,10 +2104,11 @@ export default function LmsPage() {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    const cached = readLmsClientCache<{ employee: Employee }>(lmsClientFields.employee);
+    const cached = readLmsClientCache<{ employee: Employee; authSource?: AuthSource }>(lmsClientFields.employee);
     const cachedEmp = cached?.value?.employee;
     if (cachedEmp) {
       setEmployee(cachedEmp);
+      if (cached?.value?.authSource === 'app') setAuthSource('app');
       setChecking(false);
     }
 
@@ -2158,7 +2163,10 @@ export default function LmsPage() {
       if (d.employee) {
         setEmployee(d.employee);
         setAuthSource(d.authSource === 'app' ? 'app' : 'lms');
-        writeLmsClientCache(lmsClientFields.employee, { employee: d.employee });
+        writeLmsClientCache(lmsClientFields.employee, {
+          employee: d.employee,
+          authSource: d.authSource === 'app' ? 'app' : 'lms',
+        });
       }
     };
 

@@ -8,7 +8,7 @@ import {
 } from '@/lib/lmsCache';
 import SOP from '@/models/SOP';
 import MCQBank from '@/models/MCQBank';
-import { sopFamilyIdentifierRegex } from '@/lib/sop-utils';
+import { sopFamilyIdentifierRegex, versionFromIdentifier } from '@/lib/sop-utils';
 
 function toArray(val: string | string[] | undefined | null): string[] {
   if (!val) return [];
@@ -158,14 +158,23 @@ function mcqCountForCode(
   bankDocs: BankCountRow[],
   language: 'English' | 'Gujarati',
 ): number {
+  return canonicalBankForCode(code, bankDocs, language)?.usableQuestions || 0;
+}
+
+/** Latest-revision bank with questions (else latest at all) — the one the quiz serves. */
+function canonicalBankForCode(
+  code: string,
+  bankDocs: BankCountRow[],
+  language: 'English' | 'Gujarati',
+): BankCountRow | undefined {
   const re = sopFamilyIdentifierRegex(code);
-  let total = 0;
-  for (const bank of bankDocs) {
-    const bankLang = bank.language || 'English';
-    if (bankLang !== language) continue;
-    if (re.test(String(bank.sopIdentifier || ''))) total += bank.usableQuestions || 0;
-  }
-  return total;
+  const family = bankDocs.filter(
+    (b) => (b.language || 'English') === language && re.test(String(b.sopIdentifier || '')),
+  );
+  const nonEmpty = family.filter((b) => (b.usableQuestions || 0) > 0);
+  const rev = (b: BankCountRow) =>
+    parseInt(versionFromIdentifier(String(b.sopIdentifier || '')) ?? '', 10) || 0;
+  return (nonEmpty.length ? nonEmpty : family).sort((a, b) => rev(b) - rev(a))[0];
 }
 
 /**
@@ -174,12 +183,7 @@ function mcqCountForCode(
  * family has none, its legacy standalone Gujarati bank.
  */
 function gujaratiCountForCode(code: string, bankDocs: BankCountRow[]): number {
-  const re = sopFamilyIdentifierRegex(code);
-  let translated = 0;
-  for (const bank of bankDocs) {
-    if ((bank.language || 'English') !== 'English') continue;
-    if (re.test(String(bank.sopIdentifier || ''))) translated += bank.translatedGu || 0;
-  }
+  const translated = canonicalBankForCode(code, bankDocs, 'English')?.translatedGu || 0;
   if (translated > 0) return translated;
   return mcqCountForCode(code, bankDocs, 'Gujarati');
 }

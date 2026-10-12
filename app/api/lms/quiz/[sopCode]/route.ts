@@ -147,7 +147,9 @@ async function fetchQuestions(
   })
     .select('_id sopIdentifier language totalQuestions updatedAt')
     .lean<Array<{ _id: mongoose.Types.ObjectId; sopIdentifier: string; language?: string; totalQuestions?: number; updatedAt?: Date }>>();
-  const [canonical] = selectCanonicalBanksByLang(candidates);
+  // Latest revision with questions — an empty new-revision bank falls back to the prior one.
+  const withQuestions = candidates.filter((b) => (b.totalQuestions ?? 0) > 0);
+  const [canonical] = selectCanonicalBanksByLang(withQuestions.length ? withQuestions : candidates);
   if (!canonical) return [];
   const canonicalId = String(canonical.sopIdentifier).trim().toUpperCase();
   const bankIds = candidates

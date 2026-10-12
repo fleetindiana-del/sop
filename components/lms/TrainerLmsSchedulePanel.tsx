@@ -771,7 +771,7 @@ export function TrainerLmsSchedulePanel({
       setBulkMsg(
         `Assigned date ${json.date} to ${json.scheduled ?? 0} employee(s)`
         + (json.sessions != null ? ` · ${json.sessions} attendance session(s)` : '')
-        + (json.skipped?.length ? ` · ${json.skipped.length} skipped` : ''),
+        + (json.skipped?.length ? ` · ${json.skipped.length} skipped: ${json.skipped.join(', ')}` : ''),
       );
       setBulkMode('idle');
       setSelectedSopCodes(new Set());
