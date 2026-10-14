@@ -31,6 +31,7 @@ import {
 import { nameFromFilename } from "@/lib/sop-filename";
 import {
   normalizeSopIdentifierKey,
+  normalizeUnicodeHyphens,
   parseRevisionFromSopIdentifier,
   sopFamilyCodesMatch,
   sopFamilyKeyFromIdentifier,
@@ -452,9 +453,16 @@ export function asMediaArray(value?: string | string[]): string[] {
   return Array.isArray(value) ? value.filter(Boolean) : value ? [value] : [];
 }
 
+/** Same stored asset regardless of cache-buster query / fragment — one file counts once. */
+function mediaAssetKey(url: string): string {
+  return url.trim().replace(/[?#].*$/, "").toLowerCase();
+}
+
 function pushMediaUrl(bucket: { en: string[]; gu: string[] }, key: "en" | "gu", ...urls: string[]) {
   for (const url of urls) {
-    if (!url || bucket[key].includes(url)) continue;
+    if (!url) continue;
+    const assetKey = mediaAssetKey(url);
+    if (bucket[key].some((existing) => mediaAssetKey(existing) === assetKey)) continue;
     bucket[key].push(url);
   }
 }
@@ -593,10 +601,28 @@ export async function applyRegistryUpdate(group: ISOP[], payload: EditSOPPayload
       const fileDocs = buildFileDocuments(payload).filter(
         (doc) => doc.language === lang && doc.fileType === record.fileType,
       );
-      const mediaDocs = buildMediaDocuments(payload);
+      // The payload carries the full media list shown in the editor, so existing
+      // video/slide entries are rebuilt from it (a removed file stops counting) —
+      // keeping each kept file's original name/checksum for upload de-duplication.
+      const existingMedia = new Map(
+        (record.sopDocuments ?? [])
+          .filter((doc) => isMediaDocument(doc) && doc.filePath)
+          .map((doc) => [doc.filePath as string, doc]),
+      );
+      const mediaDocs = buildMediaDocuments(payload).map((doc) => {
+        const prev = existingMedia.get(doc.filePath as string);
+        if (!prev) return doc;
+        return {
+          ...doc,
+          fileName: prev.fileName || doc.fileName,
+          ...(prev.checksum ? { checksum: prev.checksum } : {}),
+          ...(prev.documentKind ? { documentKind: prev.documentKind } : {}),
+        };
+      });
       const preservedDocs = (record.sopDocuments ?? []).filter((doc) => {
+        if (doc.documentKind === "annexure") return true;
         const type = doc.fileType?.toLowerCase();
-        return type !== "docx" && type !== "pdf";
+        return type !== "docx" && type !== "pdf" && !isMediaDocument(doc);
       });
       const sopDocuments = [...preservedDocs, ...fileDocs, ...mediaDocs];
 
@@ -644,6 +670,11 @@ function buildFileDocuments(payload: EditSOPPayload) {
     }
   });
   return docs;
+}
+
+function isMediaDocument(doc: { fileType?: string }) {
+  const type = doc.fileType?.toLowerCase();
+  return type === "video" || type === "slide";
 }
 
 function buildMediaDocuments(payload: EditSOPPayload) {
@@ -1719,12 +1750,25 @@ export function pickBestSopIdentifierFromText(text: string): string | undefined 
   return candidates[0];
 }
 
+/**
+ * Loosen separator variants in a filename so the code parsers can see the SOP no.:
+ * QAGE08_07 / QAGE08–07 (en dash) / QAGE 08-07 → QAGE08-07.
+ */
+function normalizeFilenameSopSeparators(base: string): string {
+  return normalizeUnicodeHyphens(base)
+    .replace(/\b([A-Z]{2,6})\s+(\d{1,3}\s*-)/gi, "$1$2")
+    .replace(/([A-Z]{2,6}\d{1,3})\s*[_\s]\s*(\d{1,3})(?=$|[^0-9])/gi, "$1-$2")
+    .replace(/(\d)\s*-\s*(\d)/g, "$1-$2");
+}
+
 export function extractIdentifierFromFilename(filename: string): string {
   const base = filename.replace(/\.[^.]+$/, "");
-  const fromSegment = extractSopCodeFromSegment(base);
-  if (fromSegment) return fromSegment;
-  const best = pickBestSopIdentifierFromText(base);
-  if (best) return best;
+  for (const text of [base, normalizeFilenameSopSeparators(base)]) {
+    const fromSegment = extractSopCodeFromSegment(text);
+    if (fromSegment) return fromSegment;
+    const best = pickBestSopIdentifierFromText(text);
+    if (best) return best;
+  }
   return "";
 }
 

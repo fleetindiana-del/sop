@@ -17,6 +17,8 @@ import { isDashboardDepartmentName } from '@/lib/dashboardDepartments';
 
 export type McqLangSlot = {
   questionCount: number;
+  /** Questions checked (approved) in the MCQ Bank. */
+  approvedCount: number;
   lmsApproved: boolean;
 };
 
@@ -47,6 +49,10 @@ export type TrainerMcqCatalogEntry = {
   questionCount: number;
   /** True when every question in every bank is checked. */
   lmsApproved: boolean;
+  /** All questions across canonical banks (approval denominator). */
+  mcqTotal: number;
+  /** Checked (approved) questions across canonical banks. */
+  mcqApprovedCount: number;
   examQuestionCount?: number;
   passingScore?: number;
 };
@@ -73,6 +79,7 @@ type FamilyLangStats = {
 function slotFromStats(totalQ: number, checkedQ: number): McqLangSlot {
   return {
     questionCount: totalQ,
+    approvedCount: Math.min(checkedQ, totalQ),
     lmsApproved: isMcqFamilyFullyApproved(totalQ, checkedQ),
   };
 }
@@ -228,6 +235,8 @@ export async function buildTrainerMcqCatalogMap(): Promise<Map<string, TrainerMc
       lmsApproved: stats
         ? isMcqFamilyFullyApproved(stats.totalQ, stats.checkedQ)
         : false,
+      mcqTotal: stats?.totalQ ?? 0,
+      mcqApprovedCount: Math.min(stats?.checkedQ ?? 0, stats?.totalQ ?? 0),
     });
   }
 

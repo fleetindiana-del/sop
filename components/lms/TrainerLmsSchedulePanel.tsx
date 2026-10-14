@@ -48,7 +48,7 @@ export interface TrainerBulkBridge {
   /** Select or clear all SOPs currently listed for bulk mode. */
   onToggleAll: (sopCodes: string[], select: boolean) => void;
   uniqueSops: TrainerUniqueSop[];
-  examCatalog: Record<string, { questionCount: number; lmsApproved: boolean }>;
+  examCatalog: Record<string, { questionCount: number; lmsApproved: boolean; mcqTotal: number; mcqApprovedCount: number }>;
   month: number | 'all';
   year: number;
   onOpenEmployees: (sopCode: string, sopName: string) => void;
@@ -57,7 +57,7 @@ export interface TrainerBulkBridge {
 /** Always-on trainer dept SOP metadata for the My Trainings table columns. */
 export interface TrainerTableData {
   uniqueSops: TrainerUniqueSop[];
-  examCatalog: Record<string, { questionCount: number; lmsApproved: boolean }>;
+  examCatalog: Record<string, { questionCount: number; lmsApproved: boolean; mcqTotal: number; mcqApprovedCount: number }>;
   onOpenEmployees: (sopCode: string, sopName: string) => void;
   /** SOPs with at least one employee exam scheduled for today. */
   scheduledTodayByCode: Record<string, boolean>;
@@ -167,6 +167,8 @@ interface ExamCatalogEntry {
   sopCode: string;
   questionCount: number;
   lmsApproved: boolean;
+  mcqTotal: number;
+  mcqApprovedCount: number;
   department?: string;
 }
 
@@ -349,6 +351,8 @@ export function TrainerLmsSchedulePanel({
             sopCode: code,
             questionCount: Number(e.questionCount) || 0,
             lmsApproved: e.lmsApproved === true,
+            mcqTotal: Number(e.mcqTotal) || 0,
+            mcqApprovedCount: Number(e.mcqApprovedCount) || 0,
           });
         }
         setExamCatalog(map);
@@ -670,9 +674,14 @@ export function TrainerLmsSchedulePanel({
   }, [monthLabel]);
 
   const catalogRecord = useMemo(() => {
-    const out: Record<string, { questionCount: number; lmsApproved: boolean }> = {};
+    const out: Record<string, { questionCount: number; lmsApproved: boolean; mcqTotal: number; mcqApprovedCount: number }> = {};
     for (const [code, e] of examCatalog) {
-      out[code] = { questionCount: e.questionCount, lmsApproved: e.lmsApproved };
+      out[code] = {
+        questionCount: e.questionCount,
+        lmsApproved: e.lmsApproved,
+        mcqTotal: e.mcqTotal,
+        mcqApprovedCount: e.mcqApprovedCount,
+      };
     }
     return out;
   }, [examCatalog]);

@@ -284,6 +284,22 @@ export async function GET(req: NextRequest, { params }: Params) {
       }
     }
 
+    // Exams (and their demo) release only once every MCQ for the SOP is approved
+    // in the MCQ Bank — never serve unapproved questions.
+    const { getSopMcqApprovalStats, mcqNotApprovedMessage } = await import('@/lib/lmsMcqApproval');
+    const mcqStats = await getSopMcqApprovalStats(sopCode);
+    if (!mcqStats.approved) {
+      return NextResponse.json(
+        {
+          error: mcqNotApprovedMessage(mcqStats),
+          settings: toLearnerQuizSettings(resolved),
+          mcqNotApproved: true,
+          mcqApproval: mcqStats,
+        },
+        { status: 403 },
+      );
+    }
+
     if (mode === 'exam') {
       const { getTrainerExamEligibility } = await import('@/lib/lmsTrainerGate');
       const gate = await getTrainerExamEligibility({

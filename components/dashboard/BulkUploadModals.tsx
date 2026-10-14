@@ -654,8 +654,14 @@ export function BulkVideosSlidesModal({
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [results, setResults] = useState<UploadResult[]>([]);
+  /** Files the server could not match confidently, kept so the user can confirm an SOP. */
+  const [unconfirmedFiles, setUnconfirmedFiles] = useState<Map<string, File>>(new Map());
+  const [confirmingFile, setConfirmingFile] = useState<string | null>(null);
 
   const totalCount = files.length + videos.length + slides.length + thumbnail.length;
+  const pendingConfirmations = results.filter(
+    (r) => r.needsConfirmation && unconfirmedFiles.has(r.file),
+  );
 
   const reset = () => {
     clearFiles();
@@ -663,6 +669,7 @@ export function BulkVideosSlidesModal({
     setSlides([]);
     setThumbnail([]);
     setResults([]);
+    setUnconfirmedFiles(new Map());
     setUploadProgress(null);
   };
 
@@ -721,14 +728,35 @@ export function BulkVideosSlidesModal({
         setUploadProgress({ completed, total: totalCount });
       }
 
-      setResults(allResults);
       const count = allResults.filter((r) => r.success).length;
-      if (count > 0) {
+      const needConfirm = allResults.filter((r) => r.needsConfirmation);
+      if (needConfirm.length) {
+        // Keep the modal open so the user can pick the right SOP for each unmatched file.
+        const byName = new Map(
+          [...files, ...videos, ...slides, ...thumbnail].map((f) => [f.name, f] as const),
+        );
+        const unconfirmed = new Map<string, File>();
+        for (const r of needConfirm) {
+          const file = byName.get(r.file);
+          if (file) unconfirmed.set(r.file, file);
+        }
+        clearFiles();
+        setVideos([]);
+        setSlides([]);
+        setThumbnail([]);
+        setUnconfirmedFiles(unconfirmed);
+        setResults(allResults);
+        if (count > 0) onSuccess();
+        showToast(
+          `Uploaded ${count} file(s) — ${needConfirm.length} need SOP confirmation below`,
+        );
+      } else if (count > 0) {
         showToast(`Uploaded ${count} media file(s) successfully`);
         reset();
         onSuccess();
         handleClose();
       } else {
+        setResults(allResults);
         showToast("No files uploaded — ensure filenames contain SOP codes");
       }
     } catch (err) {
@@ -736,6 +764,46 @@ export function BulkVideosSlidesModal({
     } finally {
       setUploading(false);
       setUploadProgress(null);
+    }
+  };
+
+  const confirmTarget = async (result: UploadResult, identifier: string | null) => {
+    const file = unconfirmedFiles.get(result.file);
+    if (!file || confirmingFile) return;
+    const dropPending = () =>
+      setUnconfirmedFiles((prev) => {
+        const next = new Map(prev);
+        next.delete(result.file);
+        return next;
+      });
+    if (!identifier) {
+      dropPending();
+      return;
+    }
+    setConfirmingFile(result.file);
+    try {
+      const formData = new FormData();
+      formData.append("identifier", identifier);
+      const field =
+        result.kind === "thumbnail" ? "thumbnail" : result.kind === "slide" ? "slides" : "videos";
+      formData.append(field, file);
+      const res = await fetch("/api/sop/media-upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Upload failed");
+      const next = ((data.results ?? []) as UploadResult[]).find((r) => r.file === result.file);
+      if (!next) throw new Error("Upload failed");
+      setResults((prev) => prev.map((r) => (r === result ? next : r)));
+      if (next.success) {
+        dropPending();
+        onSuccess();
+        showToast(`Attached ${result.file} to ${next.identifier ?? identifier}`);
+      } else {
+        showToast(next.error ?? "Upload failed");
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setConfirmingFile(null);
     }
   };
 
@@ -758,6 +826,11 @@ export function BulkVideosSlidesModal({
         <p>
           Filenames must include the SOP code (e.g. <strong>BSGE01-05-brief.mp4</strong>) to
           auto-link media to the correct SOP.
+        </p>
+        <p>
+          Naming variants (QAGE8-7, QAGE08_07) match the registry SOP (QAGE08-07). Media attaches
+          to the SOP&apos;s current version; if a file names a newer version or several SOPs, you
+          are asked to confirm before anything is attached.
         </p>
         <p>
           Drop a folder of videos/slides, or pick files individually below. Multiple videos per
@@ -830,6 +903,47 @@ export function BulkVideosSlidesModal({
           disabled={uploading}
         />
       </div>
+
+      {pendingConfirmations.length > 0 ? (
+        <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-2">
+          <p className="text-[10px] font-semibold text-amber-900">
+            Confirm the SOP for {pendingConfirmations.length} file
+            {pendingConfirmations.length === 1 ? "" : "s"} — nothing is attached until you choose.
+          </p>
+          {pendingConfirmations.map((r) => (
+            <div key={r.file} className="rounded border border-amber-200 bg-white p-2 text-[10px]">
+              <p className="font-semibold text-slate-800">{r.file}</p>
+              <p className="mt-0.5 text-[9px] leading-snug text-amber-800">{r.error}</p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {(r.candidates ?? []).map((c) => (
+                  <button
+                    key={c.identifier}
+                    type="button"
+                    disabled={Boolean(confirmingFile)}
+                    onClick={() => confirmTarget(r, c.identifier)}
+                    className="rounded border border-violet-300 bg-violet-50 px-2 py-1 text-left font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50"
+                    title={c.department}
+                  >
+                    {confirmingFile === r.file ? "Uploading…" : `Attach to ${c.identifier}`}
+                    <span className="block text-[9px] font-normal text-violet-700">
+                      v{c.version}
+                      {c.name ? ` · ${c.name}` : ""}
+                    </span>
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  disabled={Boolean(confirmingFile)}
+                  onClick={() => confirmTarget(r, null)}
+                  className="rounded border border-slate-200 px-2 py-1 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <BulkUploadResults results={results} />
     </BulkUploadShell>

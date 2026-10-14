@@ -98,6 +98,22 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
       // Merge step data
       const current = (progress.steps as Record<string, unknown>)[step] as Record<string, unknown> || {};
+
+      // Exam results can only be recorded once every MCQ for the SOP is approved —
+      // mirrors the quiz API gate so a client cannot post a pass directly.
+      const recordsExamResult = (step === 'quiz' || step === 'quizGu')
+        && (stepData.passed === true || stepData.completed === true || typeof stepData.score === 'number')
+        && current.passed !== true && current.completed !== true;
+      if (recordsExamResult) {
+        const { getSopMcqApprovalStats, mcqNotApprovedMessage } = await import('@/lib/lmsMcqApproval');
+        const mcqStats = await getSopMcqApprovalStats(sopCode);
+        if (!mcqStats.approved) {
+          return NextResponse.json(
+            { error: mcqNotApprovedMessage(mcqStats), mcqNotApproved: true, mcqApproval: mcqStats },
+            { status: 403 },
+          );
+        }
+      }
       const merged = { ...current, ...stepData };
 
       // Quiz: once a user has passed, never allow a failed retake to un-complete their training

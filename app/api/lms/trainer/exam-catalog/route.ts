@@ -50,6 +50,8 @@ export async function GET() {
           videoGuj: entry.videoGuj,
           questionCount: entry.questionCount,
           lmsApproved: entry.lmsApproved,
+          mcqTotal: entry.mcqTotal,
+          mcqApprovedCount: entry.mcqApprovedCount,
           examQuestionCount: settings?.effective.examQuestionCount,
           passingScore: settings?.effective.passingScore,
         };

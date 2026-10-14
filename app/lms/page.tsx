@@ -555,7 +555,7 @@ function TrainingTable({
     onOpenEmployees: (sopCode: string, sopName: string) => void;
     scheduledTodayByCode?: Record<string, boolean>;
     onOpenAttendance?: (sopCode: string, sopName: string) => void;
-    mcqByCode?: Record<string, { questionCount: number; lmsApproved: boolean }>;
+    mcqByCode?: Record<string, { questionCount: number; lmsApproved: boolean; mcqTotal?: number; mcqApprovedCount?: number }>;
   };
   /** Designated trainers may start the exam without attendance or a sitting date. */
   isTrainer?: boolean;
@@ -760,6 +760,11 @@ function TrainingTable({
                 ? mcqMeta.lmsApproved
                 : asset?.lmsApproved !== false && mcqCreated;
               const notApproved = !mcqApproved;
+              // Fail open until approval data loads; the quiz API enforces it regardless.
+              const mcqLocked = mcqCreated && (mcqMeta ? !mcqMeta.lmsApproved : asset?.lmsApproved === false);
+              const mcqLockReason = mcqMeta?.mcqTotal
+                ? `Exam locked — ${mcqMeta.mcqTotal - (mcqMeta.mcqApprovedCount ?? 0)} of ${mcqMeta.mcqTotal} MCQs pending approval in the MCQ Bank (${mcqMeta.mcqApprovedCount ?? 0} approved)`
+                : 'Exam locked — not all MCQs are approved in the MCQ Bank yet';
               const trainerExempt = isTrainer === true;
               const trainerLocked = !trainerExempt && asset?.trainerUnlocked === false;
               const hasExamDate = /^\d{4}-\d{2}-\d{2}$/.test(
@@ -839,11 +844,14 @@ function TrainingTable({
                 if (scheduledExamDisplay === assignedAtDisplay) return `Assigned ${assignedAtDisplay} — not yet scheduled`;
                 return `Exam scheduled ${scheduledExamDisplay}`;
               })();
-              // Exams lock when the SOP is expired, the department trainer has not
-              // completed it, no sitting date is assigned, or attendance is missing.
-              const examLocked = docExpired || trainerLocked || attendanceLocked;
+              // Exams lock when the SOP is expired, its MCQs are not all approved, the
+              // department trainer has not completed it, no sitting date is assigned,
+              // or attendance is missing.
+              const examLocked = docExpired || mcqLocked || trainerLocked || attendanceLocked;
               const lockReason = docExpired
                 ? 'SOP expired — renew the document before taking the exam'
+                : mcqLocked
+                  ? mcqLockReason
                 : trainerLocked
                   ? 'Exam unlocks after your department trainer completes training for this SOP'
                   : attendanceLocked
@@ -978,7 +986,9 @@ function TrainingTable({
                         href={`/mcq-bank?search=${encodeURIComponent(assignment.sopCode)}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        title="Not approved — open MCQ bank"
+                        title={mcqMeta?.mcqTotal
+                          ? `Not approved — ${mcqMeta.mcqApprovedCount ?? 0} approved, ${mcqMeta.mcqTotal - (mcqMeta.mcqApprovedCount ?? 0)} pending · open MCQ bank`
+                          : 'Not approved — open MCQ bank'}
                         className="inline-flex items-center justify-center text-red-600 hover:text-indigo-600"
                       >
                         <X className="h-4 w-4 stroke-[2.5]" aria-label="Not Approved" />

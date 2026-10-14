@@ -157,6 +157,13 @@ export type SopUploadResult = {
   id?: string;
   headerDateError?: boolean;
   headerDateErrors?: string[];
+  /** Informational detail for a successful upload (e.g. matched to a different SOP spelling). */
+  note?: string;
+  skipped?: boolean;
+  kind?: "video" | "slide" | "thumbnail";
+  /** SOP / version could not be determined — user must pick one of `candidates`. */
+  needsConfirmation?: boolean;
+  candidates?: { identifier: string; name: string; version: string; department: string }[];
 };
 
 export function summarizeSopUploadResults(results: SopUploadResult[]) {
@@ -230,6 +237,11 @@ export function BulkUploadResults({
                 {!r.success && r.error ? (
                   <p className="mt-0.5 text-[9px] font-medium leading-snug text-red-600">
                     {r.error}
+                  </p>
+                ) : null}
+                {r.success && r.note ? (
+                  <p className="mt-0.5 text-[9px] font-medium leading-snug text-emerald-700">
+                    {r.note}
                   </p>
                 ) : null}
               </div>

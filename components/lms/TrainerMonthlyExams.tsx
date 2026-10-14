@@ -503,6 +503,7 @@ type SopAttendance = {
 
 type McqLangSlot = {
   questionCount: number;
+  approvedCount: number;
   lmsApproved: boolean;
 };
 
@@ -619,10 +620,12 @@ export function TrainerMonthlyExams({
             needsGu: exam.needsGu === true,
             eng: {
               questionCount: Number(exam.eng?.questionCount) || 0,
+              approvedCount: Number(exam.eng?.approvedCount) || 0,
               lmsApproved: exam.eng?.lmsApproved === true,
             },
             guj: {
               questionCount: Number(exam.guj?.questionCount) || 0,
+              approvedCount: Number(exam.guj?.approvedCount) || 0,
               lmsApproved: exam.guj?.lmsApproved === true,
             },
             pdfEng: { available: exam.pdfEng?.available === true },
@@ -1797,7 +1800,7 @@ function uniqueEmployeesForSop(rows: MonthlyExamRow[]) {
   };
 }
 
-const EMPTY_MCQ_LANG: McqLangSlot = { questionCount: 0, lmsApproved: false };
+const EMPTY_MCQ_LANG: McqLangSlot = { questionCount: 0, approvedCount: 0, lmsApproved: false };
 
 function lookupMcqMeta(
   sopCode: string,
@@ -2133,12 +2136,11 @@ type SopSortKey =
 
 function mcqApprovedCount(slot: McqLangSlot): number {
   if (!slot.questionCount) return 0;
-  return slot.lmsApproved ? slot.questionCount : 0;
+  return slot.lmsApproved ? slot.questionCount : Math.min(slot.approvedCount, slot.questionCount);
 }
 
 function mcqPendingCount(slot: McqLangSlot): number {
-  if (!slot.questionCount) return 0;
-  return slot.lmsApproved ? 0 : slot.questionCount;
+  return Math.max(0, slot.questionCount - mcqApprovedCount(slot));
 }
 
 function assetMissingCount(
@@ -2908,8 +2910,8 @@ function McqLangRow({
 }) {
   const href = `/mcq-bank?search=${encodeURIComponent(sopCode)}`;
   const created = slot.questionCount > 0;
-  const approvedCount = created && slot.lmsApproved ? slot.questionCount : 0;
-  const pendingCount = created && !slot.lmsApproved ? slot.questionCount : 0;
+  const approvedCount = mcqApprovedCount(slot);
+  const pendingCount = mcqPendingCount(slot);
   return (
     <div className="flex items-center gap-0.5">
       <span className="min-w-fit text-[9px] font-medium uppercase tracking-wide text-gray-500">{lang}</span>

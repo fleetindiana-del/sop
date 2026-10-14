@@ -15,14 +15,21 @@ export function familyKeyForLmsCode(sopCode: string): string {
   return sopFamilyGroupKey({ identifier: String(sopCode || '').trim() });
 }
 
+export type McqApprovalStats = {
+  totalQ: number;
+  approvedQ: number;
+  pendingQ: number;
+  approved: boolean;
+};
+
 /**
- * Batch-resolve MCQ-bank approval for SOP codes / family keys.
+ * Batch-resolve MCQ-bank approval counts for SOP codes / family keys.
  * Map keys include both the family key and each requested code (uppercased).
  */
-export async function getMcqApprovedMapForCodes(
+export async function getMcqApprovalStatsForCodes(
   codes: string[],
-): Promise<Map<string, boolean>> {
-  const result = new Map<string, boolean>();
+): Promise<Map<string, McqApprovalStats>> {
+  const result = new Map<string, McqApprovalStats>();
   const unique = [...new Set(codes.map((c) => String(c || '').trim()).filter(Boolean))];
   if (unique.length === 0) return result;
 
@@ -79,25 +86,57 @@ export async function getMcqApprovedMapForCodes(
   }
 
   for (const fam of famKeys) {
-    const agg = byFam.get(fam);
-    const approved = agg
-      ? isMcqFamilyFullyApproved(agg.totalQ, agg.checkedQ)
-      : false;
-    result.set(fam, approved);
-    result.set(fam.toUpperCase(), approved);
+    const agg = byFam.get(fam) ?? { totalQ: 0, checkedQ: 0 };
+    const approvedQ = Math.min(agg.checkedQ, agg.totalQ);
+    const stats: McqApprovalStats = {
+      totalQ: agg.totalQ,
+      approvedQ,
+      pendingQ: Math.max(0, agg.totalQ - approvedQ),
+      approved: isMcqFamilyFullyApproved(agg.totalQ, agg.checkedQ),
+    };
+    result.set(fam, stats);
+    result.set(fam.toUpperCase(), stats);
   }
 
   for (const code of unique) {
-    const fam = familyKeyForLmsCode(code);
-    const approved = result.get(fam) === true;
-    result.set(code, approved);
-    result.set(code.toUpperCase(), approved);
+    const stats = result.get(familyKeyForLmsCode(code));
+    if (!stats) continue;
+    result.set(code, stats);
+    result.set(code.toUpperCase(), stats);
   }
 
   return result;
 }
 
+/**
+ * Batch-resolve MCQ-bank approval for SOP codes / family keys.
+ * Map keys include both the family key and each requested code (uppercased).
+ */
+export async function getMcqApprovedMapForCodes(
+  codes: string[],
+): Promise<Map<string, boolean>> {
+  const stats = await getMcqApprovalStatsForCodes(codes);
+  const result = new Map<string, boolean>();
+  for (const [key, s] of stats) result.set(key, s.approved);
+  return result;
+}
+
+const NO_MCQ_STATS: McqApprovalStats = { totalQ: 0, approvedQ: 0, pendingQ: 0, approved: false };
+
+export async function getSopMcqApprovalStats(sopCode: string): Promise<McqApprovalStats> {
+  const map = await getMcqApprovalStatsForCodes([sopCode]);
+  return map.get(sopCode) ?? map.get(familyKeyForLmsCode(sopCode)) ?? NO_MCQ_STATS;
+}
+
+/** Learner-facing reason an exam is locked on MCQ Bank approval. */
+export function mcqNotApprovedMessage(stats: McqApprovalStats): string {
+  if (stats.totalQ === 0) {
+    return 'This exam cannot be started — no MCQs have been created for this SOP in the MCQ Bank.';
+  }
+  return `This exam cannot be started — ${stats.pendingQ} of ${stats.totalQ} questions are not yet approved in the MCQ Bank `
+    + `(${stats.approvedQ} approved, ${stats.pendingQ} pending). It unlocks automatically once every question is approved.`;
+}
+
 export async function isSopMcqApprovedForLms(sopCode: string): Promise<boolean> {
-  const map = await getMcqApprovedMapForCodes([sopCode]);
-  return map.get(sopCode) === true || map.get(familyKeyForLmsCode(sopCode)) === true;
+  return (await getSopMcqApprovalStats(sopCode)).approved;
 }
