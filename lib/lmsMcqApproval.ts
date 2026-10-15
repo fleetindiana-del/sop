@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { connectDB } from '@/lib/mongodb';
 import { sopFamilyGroupKey, sopFamilyIdentifierRegex } from '@/lib/sop-utils';
 import { selectCanonicalBanksByLang } from '@/lib/mcq-bank-utils';
+import { sopFamilyKeyFromIdentifier } from '@/lib/sopIdentifierNormalize';
 
 /**
  * MCQ Bank "Approved" for a SOP family = every question is checked (ticked).
@@ -11,8 +12,17 @@ export function isMcqFamilyFullyApproved(totalQ: number, checkedQ: number): bool
   return totalQ > 0 && checkedQ >= totalQ;
 }
 
+/**
+ * LMS codes are usually base codes without a revision (STGE05), while banks carry one
+ * (STGE05-04). Treat a bare code as revision 0 so both resolve to the same family key (STGE:5).
+ */
 export function familyKeyForLmsCode(sopCode: string): string {
-  return sopFamilyGroupKey({ identifier: String(sopCode || '').trim() });
+  const code = String(sopCode || '').trim();
+  if (code && !/-\d+$/.test(code)) {
+    const fam = sopFamilyKeyFromIdentifier(`${code}-0`);
+    if (fam) return fam;
+  }
+  return sopFamilyGroupKey({ identifier: code });
 }
 
 export type McqApprovalStats = {
@@ -38,11 +48,10 @@ export async function getMcqApprovalStatsForCodes(
   const db = mongoose.connection.db;
   if (!db) return result;
 
-  const bankFamilies = [...new Set(unique.map(familyKeyForLmsCode))];
-  const bankOr = bankFamilies.flatMap((base) => [
-    { sopIdentifier: base },
-    { sopIdentifier: { $regex: sopFamilyIdentifierRegex(base) } },
-  ]);
+  // Query by the requested codes — family keys (STGE:5) are not identifier strings.
+  const bankOr = unique.map((code) => ({
+    sopIdentifier: { $regex: sopFamilyIdentifierRegex(code) },
+  }));
 
   const banks = bankOr.length
     ? await db.collection('mcqbanks').find(
