@@ -4,6 +4,7 @@ import type { ISOP } from "@/models/SOP";
 import { enrichMcqRationale } from "@/lib/mcq-rationale";
 import { isDuplicateMcqQuestionForGeneration } from "@/lib/similarity";
 import { sopFamilyIdentifierRegex } from "@/lib/sop-utils";
+import { canonicalSopIdentifier, sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 import { invalidateMcqBankAggregateCache } from "@/lib/mcqBankAggregateCache";
 
 // Shape the generator produces (kept structural to avoid a circular import with
@@ -121,9 +122,10 @@ export interface BankWriteResult {
 // Match by exact identifier + language (version-specific) rather than sopId, so
 // pdf+docx records of the same SOP version share one bank — preventing duplicate
 // banks that would double-count in the family-level stats fold. Different versions
-// keep distinct identifiers and so keep distinct banks.
+// keep distinct identifiers and so keep distinct banks. Zero-padding variants of
+// the same version (QAGE01-01 ≡ QAGE1-1) share one bank.
 function identifierRegex(identifier: string): RegExp {
-  return new RegExp(`^${identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+  return sopIdentifierEquivalentRegex(identifier);
 }
 
 /** Total MCQs across all active banks for this identifier + language. */
@@ -213,7 +215,7 @@ export async function appendGeneratedToBank(
     const created = await MCQBank.create({
       sopId: sop._id,
       sopName: sop.name,
-      sopIdentifier: sop.identifier,
+      sopIdentifier: canonicalSopIdentifier(sop.identifier),
       department: sop.department,
       language,
       mcqs: toAdd,
@@ -316,7 +318,7 @@ export async function replaceBankForSop(
   const created = await MCQBank.create({
     sopId: sop._id,
     sopName: sop.name,
-    sopIdentifier: sop.identifier,
+    sopIdentifier: canonicalSopIdentifier(sop.identifier),
     department: sop.department,
     language,
     mcqs: toAdd,

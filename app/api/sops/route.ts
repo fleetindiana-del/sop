@@ -7,6 +7,7 @@ import {
   parseFiltersFromSearchParams,
   sopVersionFields,
 } from "@/lib/sop-utils";
+import { canonicalSopIdentifier } from "@/lib/sopIdentifierNormalize";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { loadGroupedRegistry } from "@/lib/dashboardRegistrySource";
 import { attachRegistryCompliance } from "@/lib/registry-compliance-server";
@@ -69,7 +70,8 @@ export async function POST(request: NextRequest) {
       (body.identifier ?? "").trim(),
       body.version,
     );
-    const sop = await SOP.create({ ...body, sopBaseId, versionNum, version: resolvedVersion });
+    const identifier = canonicalSopIdentifier(body.identifier ?? "");
+    const sop = await SOP.create({ ...body, identifier, sopBaseId, versionNum, version: resolvedVersion });
     invalidateDashboardSopsCache();
     await logSopAudit({
       actor: actorFromSession(auth.session, request),

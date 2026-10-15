@@ -35,8 +35,8 @@ function titlePrefixCandidates(identifier: string): string[] {
   return [...out].filter(Boolean);
 }
 
-/** Canonical SOP code with zero-padded document index (e.g. QCMI1-0 → QCMI01-0). */
-export function displaySopCode(identifier: string): string {
+/** Canonical SOP code with two-digit document index and revision (e.g. QCMI1-0 → QCMI01-00). */
+export function displaySopCode(identifier: string | null | undefined): string {
   const trimmed = String(identifier || "").trim();
   if (!trimmed) return "";
   return formatSopCodeDisplay(trimmed);

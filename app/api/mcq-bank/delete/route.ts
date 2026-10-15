@@ -4,6 +4,7 @@ import { requireAuth, forbidUnlessDepartmentAccess } from "@/lib/withAuth";
 import { deleteBanksForFamily, type McqDeleteScope } from "@/lib/mcq-bank-write";
 import { mcqResolveDept } from "@/lib/mcq-bank-utils";
 import MCQBank from "@/models/MCQBank";
+import { sopFamilyIdentifierRegex } from "@/lib/sop-utils";
 
 const DELETE_PASSWORD = process.env.SOP_DELETE_PASSWORD ?? "indiana132";
 
@@ -28,7 +29,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     await connectDB();
-    const sample = await MCQBank.findOne({ sopIdentifier: identifier })
+    const sample = await MCQBank.findOne({ sopIdentifier: sopFamilyIdentifierRegex(identifier) })
       .select("sopIdentifier department")
       .lean();
     if (sample) {

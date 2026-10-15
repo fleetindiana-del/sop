@@ -7,6 +7,7 @@ import { useSession } from 'next-auth/react';
 import QuestionBasisSelection from '@/components/QuestionBasisSelection';
 import TestRunner from '@/components/TestRunner';
 import { ArrowLeft, ChevronRight, Loader2, Search } from 'lucide-react';
+import { displaySopCode } from '@/lib/sop-display';
 
 type Step = 'selection' | 'difficulty' | 'criteria' | 'testing';
 
@@ -239,7 +240,7 @@ export default function InterviewTestPage() {
                             <span className={`text-xs font-bold px-1.5 py-0.5 rounded shrink-0 ${entry.language === 'GUJ' ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'}`}>
                               {entry.language === 'GUJ' ? 'GU' : 'EN'}
                             </span>
-                            {entry.identifier} — {entry.language === 'GUJ' && entry.sopNameGujarati ? entry.sopNameGujarati : entry.sopName}
+                            {displaySopCode(entry.identifier)} — {entry.language === 'GUJ' && entry.sopNameGujarati ? entry.sopNameGujarati : entry.sopName}
                           </div>
                           <div className="text-xs text-slate-500 mt-0.5">
                             {entry.totalMcqs} questions · {entry.department}

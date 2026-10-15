@@ -8,6 +8,7 @@ import {
 import { colPct, employeeGridColWidths } from '@/components/lms/trainingGridLayout';
 import { DeptFieldCell } from '@/components/lms/DeptFieldCell';
 import { DesignationUpdatedBadge } from '@/components/lms/DesignationUpdatedBadge';
+import { displaySopCode } from '@/lib/sop-display';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTHS_FULL = [
@@ -642,7 +643,7 @@ function DrillDownModal({ drill, onClose }: { drill: DrillState; onClose: () => 
                     <tr key={s.sopCode} className="hover:bg-gray-50/90">
                       <td className="px-4 py-2 align-middle whitespace-nowrap">
                         <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-bold text-slate-700">
-                          {s.sopCode}
+                          {displaySopCode(s.sopCode)}
                         </span>
                       </td>
                       <td className="px-3 py-2 align-middle">

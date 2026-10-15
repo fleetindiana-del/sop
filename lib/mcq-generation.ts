@@ -20,6 +20,7 @@ import {
 import { DEFAULT_FREE_GEMINI_MODEL } from "@/lib/gemini-free-models";
 import type { LlmProvider } from "@/lib/llm";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
+import { sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 import { connectDB } from "@/lib/mongodb";
 import { appendGeneratedToBank, archiveBankForSop, activeBankMcqCount, MCQ_BANK_CAP, type BankInputMcq } from "@/lib/mcq-bank-write";
 import {
@@ -285,8 +286,9 @@ interface RunCtx {
   failedBatches: number;
 }
 
+/** Matches every zero-padding variant of the identifier (QAGE01-01 ≡ QAGE1-1). */
 function escapeId(identifier: string): RegExp {
-  return new RegExp(`^${identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+  return sopIdentifierEquivalentRegex(identifier);
 }
 
 /** Overall completion: bank size toward the per-language cap. */

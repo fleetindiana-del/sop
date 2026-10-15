@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import FindingCard from '@/app/compliance/components/FindingCard';
 import { exportComplianceReportToPdf } from '@/lib/complianceReportPdf';
+import { displaySopCode } from '@/lib/sop-display';
 
 type FindingShape = React.ComponentProps<typeof FindingCard>['finding'];
 
@@ -351,7 +352,7 @@ function RunView({
             Re-check Revised SOP
           </p>
           <p className="text-sm font-bold text-gray-900 mt-0.5">
-            {exportMeta.sopIdentifier}
+            {displaySopCode(exportMeta.sopIdentifier)}
             {exportMeta.sopName ? ` — ${exportMeta.sopName}` : ''}
           </p>
           {run.createdAt && (

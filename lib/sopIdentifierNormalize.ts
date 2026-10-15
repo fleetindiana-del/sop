@@ -109,14 +109,37 @@ export function formatSopNoDisplay(id: string): string {
 }
 
 /**
- * Registry / dashboard SOP number: zero-pad document index, keep revision as integer
- * (QCMI1-0 → QCMI01-0, QAGE4-11 → QAGE04-11).
+ * Canonical stored form of an SOP identifier: two-digit (minimum) document index and
+ * revision (QAGE1-1 → QAGE01-01, QAGE01-010 → QAGE01-10, QAGE105-6 → QAGE105-06).
+ * Use when persisting identifiers. Non-standard codes fall back to the normalized key.
+ * Internal match keys (sopBaseId, MCQ job ids) still use {@link normalizeSopIdentifierKey}.
+ */
+export function canonicalSopIdentifier(id: string): string {
+  return formatSopNoDisplay(id);
+}
+
+/**
+ * Case-insensitive regex matching every zero-padding variant of one SOP identifier
+ * (QAGE01-01 ≡ QAGE1-1 ≡ QAGE001-001). Drop-in replacement for an exact `^id$` regex.
+ */
+export function sopIdentifierEquivalentRegex(id: string): RegExp {
+  const nk = normalizeSopIdentifierKey(String(id || '').trim().toUpperCase());
+  const m = nk.match(/^([A-Z]{2,6})(\d+)-(\d+)$/);
+  if (m) {
+    return new RegExp(`^${m[1]}0*${parseInt(m[2], 10)}-0*${parseInt(m[3], 10)}$`, 'i');
+  }
+  return new RegExp(`^${escapeMongoRegex(String(id || '').trim())}$`, 'i');
+}
+
+/**
+ * Registry / dashboard SOP number: zero-pad document index and revision to two digits
+ * (QCMI1-0 → QCMI01-00, QAGE4-11 → QAGE04-11, QAGE01-1 → QAGE01-01).
  */
 export function formatSopCodeDisplay(id: string): string {
   const nk = normalizeSopIdentifierKey(String(id || '').trim().toUpperCase());
   const m = nk.match(/^([A-Z]{2,6})(\d+)-(\d+)$/);
   if (m) {
-    return `${m[1]}${String(parseInt(m[2], 10)).padStart(2, '0')}-${parseInt(m[3], 10)}`;
+    return `${m[1]}${String(parseInt(m[2], 10)).padStart(2, '0')}-${String(parseInt(m[3], 10)).padStart(2, '0')}`;
   }
   const docOnly = nk.match(/^([A-Z]{2,6})(\d+)$/);
   if (docOnly) {
@@ -140,6 +163,8 @@ export function sopCodeMatchesSearch(
     texts.add(formatSopCodeDisplay(raw).toLowerCase());
     texts.add(sopBaseDisplayFromIdentifier(raw).toLowerCase());
     for (const variant of expandSopIdentifierVariants(raw)) {
+      // Raw spellings too, so "QAGE01-1" finds QAGE01-01 and vice versa.
+      texts.add(variant.toLowerCase());
       texts.add(formatSopCodeDisplay(variant).toLowerCase());
       texts.add(sopBaseDisplayFromIdentifier(variant).toLowerCase());
     }

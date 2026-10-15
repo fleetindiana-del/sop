@@ -20,7 +20,7 @@ import { parseSopStructure } from "@/lib/sopStructureParser";
 import { attachGuidelineSourceFields } from "@/lib/guidelineClauseDisplay";
 import mongoose from "mongoose";
 import { countLinkedAnnexureDocuments } from "@/lib/compliance-sop-content";
-import { normalizeSopIdentifierKey } from "@/lib/sopIdentifierNormalize";
+import { normalizeSopIdentifierKey, sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 import RecheckRun from "@/models/RecheckRun";
 
 const REPORT_ENRICH_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -404,7 +404,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const sops = await SOP.find({ identifier: new RegExp(`^${sopIdentifier}$`, "i") });
+    const sops = await SOP.find({ identifier: sopIdentifierEquivalentRegex(sopIdentifier) });
     const sop = sops.find((s) => s.language !== "Gujarati") ?? sops[0];
     if (!sop) {
       return NextResponse.json({ error: "SOP not found" }, { status: 404 });

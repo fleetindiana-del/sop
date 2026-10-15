@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   BookOpen,
 } from 'lucide-react';
+import { displaySopCode } from '@/lib/sop-display';
 
 export interface TestQuestion {
   question: string;
@@ -308,7 +309,7 @@ export default function TestRunner({ questions, title, onExit, onComplete }: Tes
                       <span className="text-xs text-slate-500">Q{q.index + 1}</span>
                       {q.sopIdentifier && (
                         <span className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">
-                          {q.sopIdentifier}
+                          {displaySopCode(q.sopIdentifier)}
                         </span>
                       )}
                       {q.difficulty && (
@@ -437,7 +438,7 @@ export default function TestRunner({ questions, title, onExit, onComplete }: Tes
             </span>
             {q.sopIdentifier && (
               <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded-full text-xs border border-purple-500/30">
-                {q.sopIdentifier}
+                {displaySopCode(q.sopIdentifier)}
               </span>
             )}
             {q.sopName && (

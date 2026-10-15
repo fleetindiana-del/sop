@@ -15,6 +15,7 @@ import {
 import { formatSopCodeDisplay } from "@/lib/sopIdentifierNormalize";
 import { isDeptScopedRole, parseAssignedDepartments } from "@/lib/roles";
 import type { AppRole } from "@/lib/auth";
+import { displaySopCode } from "@/lib/sop-display";
 
 type CatalogSop = {
   _id: string;
@@ -333,7 +334,7 @@ export default function RequestComplianceRunPage() {
                           href={`/compliance/request/${r.id}`}
                           className="font-medium text-purple-700 hover:underline"
                         >
-                          {r.sopIdentifier}
+                          {displaySopCode(r.sopIdentifier)}
                         </Link>
                         <p className="text-xs text-gray-500">{r.sopName}</p>
                       </td>

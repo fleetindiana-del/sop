@@ -12,6 +12,7 @@ import {
   BookOpen,
   Clock,
 } from 'lucide-react';
+import { displaySopCode } from '@/lib/sop-display';
 
 interface Question {
   question: string;
@@ -238,7 +239,7 @@ export default function SpecificTrainingTestSessionPage() {
         <div className="flex flex-wrap gap-2 mb-4">
           {q.sopIdentifier && (
             <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-300 rounded-full text-xs border border-yellow-500/30">
-              {q.sopIdentifier}
+              {displaySopCode(q.sopIdentifier)}
             </span>
           )}
           {q.difficulty && (

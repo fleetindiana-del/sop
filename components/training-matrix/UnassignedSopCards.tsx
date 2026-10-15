@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { DEPT_COLORS } from '@/lib/trainingExamScheduleShared';
+import { displaySopCode } from '@/lib/sop-display';
 
 export type UnassignedCard = {
   sopCode: string;
@@ -53,7 +54,7 @@ export default function UnassignedSopCards({ cards, monthLabel, disabled }: Prop
                 title={disabled ? undefined : 'Drag onto a calendar day'}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-gray-900 truncate">{card.sopCode}</span>
+                  <span className="text-xs font-semibold text-gray-900 truncate">{displaySopCode(card.sopCode)}</span>
                   <span
                     className="text-[10px] font-medium px-1.5 py-0.5 rounded text-white shrink-0"
                     style={{ background: color }}

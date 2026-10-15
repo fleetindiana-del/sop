@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { MONTH_NAMES } from '@/lib/trainingExamScheduleShared';
+import { displaySopCode } from '@/lib/sop-display';
 
 export type CalendarEventDetail = {
   id: string;
@@ -133,7 +134,7 @@ export default function CalendarEventModal({
           {event && (
             <div className="text-xs text-gray-600 space-y-1">
               <div>
-                <span className="font-semibold text-gray-900">{event.sopCode}</span>
+                <span className="font-semibold text-gray-900">{displaySopCode(event.sopCode)}</span>
                 {event.sopName ? ` — ${event.sopName}` : ''}
               </div>
               <div>
@@ -179,7 +180,7 @@ export default function CalendarEventModal({
                 ) : (
                   createDefaults.unassignedOptions.map((o) => (
                     <option key={o.key} value={o.key}>
-                      {o.sopCode} — {o.department} ({MONTH_NAMES[o.plannedMonth]})
+                      {displaySopCode(o.sopCode)} — {o.department} ({MONTH_NAMES[o.plannedMonth]})
                     </option>
                   ))
                 )}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, ClipboardCheck, Loader2 } from "lucide-react";
+import { displaySopCode } from "@/lib/sop-display";
 
 type RunRequest = {
   id: string;
@@ -79,7 +80,7 @@ export function PendingRunRequests({
           >
             <div className="min-w-0">
               <p className="text-sm font-semibold text-gray-800">
-                <span className="font-mono text-purple-700">{req.sopIdentifier}</span>
+                <span className="font-mono text-purple-700">{displaySopCode(req.sopIdentifier)}</span>
                 {" — "}
                 {req.sopName}
               </p>

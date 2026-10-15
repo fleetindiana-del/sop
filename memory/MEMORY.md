@@ -1,3 +1,4 @@
 - [SOP cache instant sync](sop-cache-instant-sync.md) — SOP edits must propagate to matrices + LMS via invalidateSopDerivedCaches
 - [Dev bundler cross-tab reload](dev-bundler-cross-tab-reload.md) — `next dev --webpack` reloaded all tabs on a fresh route; fixed by using Turbopack
+- [SOP identifier two-digit versions](sop-identifier-two-digit-versions.md) — store/display QAGE01-01; internal keys stay unpadded; never exact-match identifiers
 - Agent instructions live in [`AGENTS.md`](../AGENTS.md) — shared by Claude Code and OpenAI Codex

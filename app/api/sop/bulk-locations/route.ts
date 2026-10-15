@@ -3,6 +3,7 @@ import { connectDB } from "@/lib/mongodb";
 import SOP from "@/models/SOP";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { requireAuth } from "@/lib/withAuth";
+import { sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 import { actorFromSession, logSopAudit, snapshotSop } from "@/lib/audit-log";
 import * as XLSX from "xlsx";
 
@@ -101,9 +102,8 @@ export async function POST(request: NextRequest) {
     const results: Array<{ identifier: string; success: boolean; error?: string }> = [];
 
     for (const row of rows) {
-      const escaped = row.identifier.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
       const group = await SOP.find({
-        identifier: new RegExp(`^${escaped}$`, "i"),
+        identifier: sopIdentifierEquivalentRegex(row.identifier),
       });
 
       if (!group.length) {

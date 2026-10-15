@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Shuffle,
 } from 'lucide-react';
+import { displaySopCode } from '@/lib/sop-display';
 
 interface RegistryEntry {
   id: string;
@@ -260,7 +261,7 @@ export default function PracticeModePage() {
           <div className="flex flex-wrap gap-2 mb-4">
             {q.sopIdentifier && (
               <span className="px-2 py-0.5 bg-violet-500/20 text-violet-300 rounded-full text-xs border border-violet-500/30">
-                {q.sopIdentifier}
+                {displaySopCode(q.sopIdentifier)}
               </span>
             )}
             {q.difficulty && (
@@ -514,7 +515,7 @@ export default function PracticeModePage() {
                             <span className={`text-xs font-bold px-1.5 py-0.5 rounded shrink-0 ${entry.language === 'GUJ' ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'}`}>
                               {entry.language === 'GUJ' ? 'GU' : 'EN'}
                             </span>
-                            <span className="truncate">{entry.identifier} — {entry.language === 'GUJ' && entry.sopNameGujarati ? entry.sopNameGujarati : entry.sopName}</span>
+                            <span className="truncate">{displaySopCode(entry.identifier)} — {entry.language === 'GUJ' && entry.sopNameGujarati ? entry.sopNameGujarati : entry.sopName}</span>
                           </div>
                           <div className="text-xs text-slate-500 mt-0.5">
                             {entry.totalMcqs} questions · {entry.department}

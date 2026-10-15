@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import InductionMatrixSOPAssignment from '@/models/InductionMatrixSOPAssignment';
+import { canonicalSopIdentifier, sopIdentifierEquivalentRegex } from '@/lib/sopIdentifierNormalize';
 import SOP from '@/models/SOP';
 
 export const dynamic = 'force-dynamic';
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
     // Check for duplicate active assignment
     const existing = await InductionMatrixSOPAssignment.findOne({
       department,
-      sopCode: sop.identifier,
+      sopCode: sopIdentifierEquivalentRegex(sop.identifier),
       isActive: true,
     });
     if (existing) {
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
     const assignment = await InductionMatrixSOPAssignment.create({
       department,
       sopId: sop._id,
-      sopCode: sop.identifier,
+      sopCode: canonicalSopIdentifier(sop.identifier),
       sopName: sop.name,
       effectiveMonth: parseInt(effectiveMonth, 10),
       effectiveYear: parseInt(effectiveYear, 10),

@@ -5,6 +5,7 @@ import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { markMcqBanksObsoleteForIdentifier } from "@/lib/mcq-bank-sync";
 import { forbidUnlessDepartmentAccess, requireAuth } from "@/lib/withAuth";
 import { actorFromSession, logSopAudit, snapshotSop } from "@/lib/audit-log";
+import { canonicalSopIdentifier } from "@/lib/sopIdentifierNormalize";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -46,6 +47,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "SOP not found" }, { status: 404 });
     }
     const body = await request.json();
+    if (typeof body?.identifier === "string") body.identifier = canonicalSopIdentifier(body.identifier);
     const sop = await SOP.findByIdAndUpdate(id, body, { returnDocument: 'after' }).lean();
     if (!sop) {
       return NextResponse.json({ error: "SOP not found" }, { status: 404 });

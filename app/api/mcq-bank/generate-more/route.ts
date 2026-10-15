@@ -8,6 +8,7 @@ import { MCQ_REPLACE_SYSTEM } from "@/lib/mcq-generation-prompts";
 import { MCQ_CONTENT_LIMIT, mcqPromptSopExcerpt } from "@/lib/mcq-source-text";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { requireAuth } from "@/lib/withAuth";
+import { sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 
 const REPLACE_PROMPT = MCQ_REPLACE_SYSTEM;
 
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
     }
 
     const sop = await SOP.findOne({
-      identifier: new RegExp(`^${identifier}$`, "i"),
+      identifier: sopIdentifierEquivalentRegex(identifier),
       language,
     });
     if (!sop) {

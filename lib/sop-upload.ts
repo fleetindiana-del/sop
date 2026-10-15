@@ -20,6 +20,7 @@ import {
   versionFromIdentifier,
 } from "@/lib/sop-utils";
 import {
+  canonicalSopIdentifier,
   expandSopIdentifierVariants,
   normalizeSopIdentifierKey,
   sopIdentifierMatchFilter,
@@ -161,7 +162,7 @@ export async function processSopFileInput(input: SopFileInput): Promise<SopFileR
       pathMeta.identifierFromPath,
       extractIdentifierFromFilename(pathMeta.fileName || fileName),
     );
-  const identifier = normalizeSopIdentifierKey(rawIdentifier ?? "");
+  const identifier = canonicalSopIdentifier(rawIdentifier ?? "");
 
   const version =
     versionInput ||

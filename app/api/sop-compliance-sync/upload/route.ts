@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth } from "@/lib/withAuth";
 import SOP from "@/models/SOP";
+import { sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 import { extractTablesFromDOCX } from "@/lib/docxTableParser";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest) {
             const reviewDate = parseDate(reviewDateStr);
             if (!effectiveDate && !reviewDate) continue;
 
-            let sop = await SOP.findOne({ identifier: `${sopNo}-${version}` });
+            let sop = await SOP.findOne({ identifier: sopIdentifierEquivalentRegex(`${sopNo}-${version}`) });
             if (!sop) {
               sop = await SOP.findOne({
                 identifier: new RegExp(`^${sopNo}(-\\d+)?$`, "i"),

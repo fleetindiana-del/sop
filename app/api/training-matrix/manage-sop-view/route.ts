@@ -31,10 +31,12 @@ import {
 import { bustTrainerScheduleCaches } from "@/lib/lmsTrainerCache";
 import { filterPrimaryRegistryRowsUniqueByFamily } from "@/lib/registryPrimaryRows";
 import {
+  canonicalSopIdentifier,
   expandSopIdentifierVariants,
   sopBaseDisplayFromIdentifier,
   sopFamilyKeyFromIdentifier,
   sopCodeMatchesSearch,
+  sopIdentifierEquivalentRegex,
 } from "@/lib/sopIdentifierNormalize";
 import {
   getTrainingMatrixDepartments,
@@ -1650,7 +1652,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     };
 
     const normEntries: NormEntry[] = upsertEntries.flatMap((entry) => {
-      const sopCode = (entry.sopCode || "").trim();
+      const sopCode = canonicalSopIdentifier((entry.sopCode || "").trim());
       const department = (entry.department || "").trim();
       const designations = (entry.designations || []).map((d) => (d || "").trim()).filter(Boolean);
       const months = (entry.months || []).filter((m) => Number.isInteger(m) && m >= 1 && m <= 12);
@@ -1741,7 +1743,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // All deletions in parallel
       Promise.all([...mergedRemovals.values()].map(async (r) => {
         const filter: Record<string, any> = {
-          sopCode: r.sopCode, department: r.department, year: r.year,
+          sopCode: sopIdentifierEquivalentRegex(r.sopCode), department: r.department, year: r.year,
           month: { $in: [...r.months] }, sourceFile: "manage-sop-manual",
         };
         if (r.removeAllDesignations) {
@@ -1839,7 +1841,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (!employeeName) continue;
           ops.push({
             updateOne: {
-              filter: { employeeName, sopCode: e.sopCode, month, year: e.year, department: e.department },
+              filter: { employeeName, sopCode: sopIdentifierEquivalentRegex(e.sopCode), month, year: e.year, department: e.department },
               update: {
                 $setOnInsert: {
                   uploadId, department: e.department, employeeName,
@@ -1930,7 +1932,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         continue;
       }
       for (const sop of sops) {
-        const sopCode = String(sop.sopCode || "").trim();
+        const sopCode = canonicalSopIdentifier(String(sop.sopCode || "").trim());
         if (!sopCode) continue;
         let months = (sop.months || []).filter((m) => Number.isInteger(m) && m >= 1 && m <= 12);
         if (months.length === 0) months = monthsFromDeptSnapshot(department, sopCode);
@@ -1969,7 +1971,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           updateOne: {
             filter: {
               employeeName: item.employeeName,
-              sopCode: item.sopCode,
+              sopCode: sopIdentifierEquivalentRegex(item.sopCode),
               month,
               year: item.year,
               department: item.department,
@@ -2270,7 +2272,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const filter = {
             department: u.department,
             isActive: true,
-            $or: [{ sopCode: u.sopCode }, { sopCode: base }],
+            $or: [{ sopCode: sopIdentifierEquivalentRegex(u.sopCode) }, { sopCode: base }],
           };
           const existing = await MatrixSOPAssignment.findOne(filter).select("_id").lean();
           if (existing) {
@@ -2282,7 +2284,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (u.designations.length === 0) return;
           const sopDoc = await SOP.findOne({
             $or: [
-              { identifier: u.sopCode },
+              { identifier: sopIdentifierEquivalentRegex(u.sopCode) },
               { identifier: base },
               { sopBaseId: base },
             ],
@@ -2305,7 +2307,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           await MatrixSOPAssignment.create({
             department: u.department,
             sopId: sopDoc._id,
-            sopCode: sopDoc.identifier || u.sopCode,
+            sopCode: canonicalSopIdentifier(sopDoc.identifier || u.sopCode),
             sopName: sopDoc.name || u.sopCode,
             effectiveMonth: month,
             effectiveYear: fallbackYear,

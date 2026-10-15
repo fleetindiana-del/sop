@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import TrainingMatrixRecord from '@/models/TrainingMatrixRecord';
 import SOP from '@/models/SOP';
+import { expandSopIdentifierVariants, normalizeSopIdentifierKey } from '@/lib/sopIdentifierNormalize';
 import { getLeftEmployeeKeys, isLeftEmployee, isLeftEmployeeName } from '@/lib/leftEmployees';
 
 export async function GET(request: NextRequest) {
@@ -105,15 +106,16 @@ export async function GET(request: NextRequest) {
       // Collect all sopCodes in our records
       const allSopCodes = [...new Set(records.map(r => r.sopCode))];
       if (allSopCodes.length > 0) {
-        const sopDocs = await SOP.find({ identifier: { $in: allSopCodes } }, {
+        const sopDocs = await SOP.find({ identifier: { $in: allSopCodes.flatMap(expandSopIdentifierVariants) } }, {
           identifier: 1, fileType: 1,
         }).lean() as any[];
         // A SOP identifier might have both docx and pdf entries
         for (const s of sopDocs) {
-          const existing = sopFileMap.get(s.identifier) || { hasDocx: false, hasPdf: false };
+          const key = normalizeSopIdentifierKey(s.identifier);
+          const existing = sopFileMap.get(key) || { hasDocx: false, hasPdf: false };
           if (s.fileType === 'docx') existing.hasDocx = true;
           if (s.fileType === 'pdf')  existing.hasPdf  = true;
-          sopFileMap.set(s.identifier, existing);
+          sopFileMap.set(key, existing);
         }
       }
     } catch (_) { /* SOP file check unavailable */ }
@@ -230,7 +232,7 @@ export async function GET(request: NextRequest) {
           // Missing DOCX / PDF — only check SOPs that are actually scheduled (have a tick)
           let missingDocx = 0, missingPdf = 0;
           for (const sopCode of ds.scheduledSopCodes) {
-            const fileInfo = sopFileMap.get(sopCode);
+            const fileInfo = sopFileMap.get(normalizeSopIdentifierKey(sopCode));
             if (!fileInfo || !fileInfo.hasDocx) missingDocx++;
             if (!fileInfo || !fileInfo.hasPdf)  missingPdf++;
           }

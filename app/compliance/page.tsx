@@ -19,6 +19,7 @@ import { exportComplianceReportToPdf } from '@/lib/complianceReportPdf';
 import { PendingRunRequests } from '@/components/compliance/PendingRunRequests';
 import { ComplianceModuleNav } from '@/components/compliance/ComplianceModuleNav';
 import { readCachedValue, writeCachedValue } from '@/lib/clientCache';
+import { displaySopCode } from '@/lib/sop-display';
 
 /** Bump the suffixes when either payload shape changes. */
 const COMPLIANCE_SOPS_CACHE_KEY = 'compliance:sops:v1';
@@ -2377,7 +2378,7 @@ export default function ComplianceEnginePage() {
                           </td>
                           <td className="px-4 py-3 align-top">
                             <span className="inline-block text-purple-700 font-bold text-xs bg-purple-50 px-2 py-0.5 rounded border border-purple-100 font-mono">
-                              {sop.identifier}
+                              {displaySopCode(sop.identifier)}
                             </span>
                           </td>
                           <td className="px-4 py-3 align-top text-gray-500 text-xs whitespace-nowrap">
@@ -2608,7 +2609,7 @@ export default function ComplianceEnginePage() {
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-semibold text-gray-800">
-                            <span className="font-mono text-purple-700">{s.identifier}</span>
+                            <span className="font-mono text-purple-700">{displaySopCode(s.identifier)}</span>
                             {' — '}
                             {s.name}
                           </span>
@@ -2838,7 +2839,7 @@ export default function ComplianceEnginePage() {
                   {sopLists[activeChip].map((item, i) => (
                     <div key={i} className="py-1">
                       <div className="flex items-center justify-between text-sm">
-                        <span className="font-mono text-purple-600 font-bold text-xs">{item.identifier}</span>
+                        <span className="font-mono text-purple-600 font-bold text-xs">{displaySopCode(item.identifier)}</span>
                         <span className="text-gray-600 text-xs truncate mx-2">{item.name}</span>
                         {'score' in item && typeof item.score === 'number' && (
                           <span className={`text-xs font-bold ${item.score >= 8 ? 'text-emerald-600' : item.score >= 5 ? 'text-amber-600' : 'text-rose-600'}`}>{item.score}/10</span>
@@ -3082,7 +3083,7 @@ export default function ComplianceEnginePage() {
                           >
                             <td className="px-3 py-2 align-middle">
                               <span className="inline-block text-purple-700 font-bold text-[11px] bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100 font-mono whitespace-nowrap">
-                                {report.sopIdentifier}
+                                {displaySopCode(report.sopIdentifier)}
                               </span>
                             </td>
                             <td className="px-3 py-2 align-middle">

@@ -12,6 +12,7 @@ import {
   annexureStatusTitle,
   resolveAnnexureStatus,
 } from '@/lib/annexureAuditDisplay';
+import { displaySopCode } from '@/lib/sop-display';
 
 const RecheckSopModal = dynamic(() => import('@/components/compliance/RecheckSopModal'), { ssr: false });
 
@@ -223,7 +224,7 @@ export default function ComplianceReportDetailPage() {
         <div className="max-w-5xl mx-auto px-2 py-1 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h1 className="text-xl font-bold text-gray-800">Compliance Report</h1>
-            <p className="text-sm text-gray-500">{report.sopIdentifier} — {report.sopName}</p>
+            <p className="text-sm text-gray-500">{displaySopCode(report.sopIdentifier)} — {report.sopName}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <button
@@ -270,7 +271,7 @@ export default function ComplianceReportDetailPage() {
           <div className="flex items-start justify-between mb-6">
             <div>
               <div className="flex items-center gap-2 mb-2 flex-wrap">
-                <span className="text-purple-700 font-bold bg-purple-50 px-3 py-1 rounded-lg border border-purple-100 text-sm">{report.sopIdentifier}</span>
+                <span className="text-purple-700 font-bold bg-purple-50 px-3 py-1 rounded-lg border border-purple-100 text-sm">{displaySopCode(report.sopIdentifier)}</span>
                 <span className={`px-3 py-1 rounded-lg border text-sm font-bold ${getStatusColor(report.complianceStatus)}`}>{report.complianceStatus}</span>
                 <span
                   className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-bold ${annexureStatusBadgeClass(resolveAnnexureStatus(report))}`}

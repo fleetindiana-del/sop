@@ -30,6 +30,7 @@ import {
 } from "@/lib/sop-name-resolution";
 import { nameFromFilename } from "@/lib/sop-filename";
 import {
+  canonicalSopIdentifier,
   normalizeSopIdentifierKey,
   normalizeUnicodeHyphens,
   parseRevisionFromSopIdentifier,
@@ -564,8 +565,9 @@ export async function applyRegistryUpdate(group: ISOP[], payload: EditSOPPayload
   const currentVersion = maxVersionInGroup(group);
   const currentRecords = recordsForVersion(group, currentVersion);
   const currentIds = new Set(currentRecords.map((r) => r._id.toString()));
-  const sopBaseId = baseIdentifierFromIdentifier(payload.identifier);
-  const resolvedVersion = resolveVersionForRecord(payload.identifier, payload.version);
+  const normalizedIdentifier = normalizeSopIdentifierKey(payload.identifier);
+  const sopBaseId = baseIdentifierFromIdentifier(normalizedIdentifier);
+  const resolvedVersion = resolveVersionForRecord(normalizedIdentifier, payload.version);
   const versionNum = versionNumber(resolvedVersion);
 
   const mediaLinks = {
@@ -628,7 +630,7 @@ export async function applyRegistryUpdate(group: ISOP[], payload: EditSOPPayload
 
       await record.updateOne({
         name: recordName,
-        identifier: payload.identifier.trim(),
+        identifier: canonicalSopIdentifier(payload.identifier),
         department: payload.department,
         location: payload.location?.trim() || undefined,
         version: resolvedVersion,

@@ -197,6 +197,7 @@ import {
 // 'xlsx' (~270KB) is pulled in on demand by exportToExcel — see the dynamic import there.
 import { TRAINING_MATRIX_CORE_DEPARTMENTS } from '@/lib/trainingMatrixDepartments';
 import { buildOfficeOnlineEmbedUrl, buildPreviewHref, isOfficePreviewAvailable } from '@/lib/file-urls';
+import { displaySopCode } from '@/lib/sop-display';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1088,7 +1089,7 @@ function DbSopModal({
                 <tbody>
                   {rows.map((r) => (
                     <tr key={r.sopCode} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="px-3 py-2 font-semibold text-black">{r.sopCode}</td>
+                      <td className="px-3 py-2 font-semibold text-black">{displaySopCode(r.sopCode)}</td>
                       <td className="px-3 py-2 text-black">{r.title || '—'}</td>
                     </tr>
                   ))}
@@ -2054,7 +2055,7 @@ function SopDetailsInline({
                           }`}
                       >
                         <td className="px-3 py-2 font-mono font-bold text-gray-900">
-                          {r?.sopCode}
+                          {displaySopCode(r?.sopCode)}
                         </td>
                         <td className="px-3 py-2 text-black">
                           <div className="font-semibold">{r?.title || '—'}</div>
@@ -2303,7 +2304,7 @@ function AssignSOPModal({
                     onClick={() => { setSelectedSop(s); setSopSearch(`${s.identifier} — ${s.name}`); setSopOptions([]); }}
                     className="flex w-full items-start gap-2 px-3 py-2 text-left text-xs hover:bg-purple-50"
                   >
-                    <span className="font-mono font-semibold text-purple-700 shrink-0">{s.identifier}</span>
+                    <span className="font-mono font-semibold text-purple-700 shrink-0">{displaySopCode(s.identifier)}</span>
                     <span className="text-black line-clamp-1">{s.name}</span>
                     <span className="ml-auto shrink-0 text-[10px] text-black">{s.department}</span>
                   </button>
@@ -2313,7 +2314,7 @@ function AssignSOPModal({
             {selectedSop && (
               <div className="mt-1 flex items-center gap-2 rounded-lg bg-purple-50 px-3 py-2 text-xs text-purple-800">
                 <CheckCircle className="h-3.5 w-3.5 shrink-0 text-purple-600" />
-                <span className="font-semibold">{selectedSop.identifier}</span>
+                <span className="font-semibold">{displaySopCode(selectedSop.identifier)}</span>
                 <span className="text-black">{selectedSop.name}</span>
                 <button type="button" onClick={() => { setSelectedSop(null); setSopSearch(''); }} className="ml-auto text-purple-400 hover:text-purple-700">
                   <X className="h-3.5 w-3.5" />
@@ -2417,7 +2418,7 @@ function EditMatrixEntryModal({
         <div className="flex items-center justify-between border-b px-5 py-4">
           <div>
             <h2 className="font-bold text-black">{form._id ? 'Edit' : 'Add'} Matrix Entry</h2>
-            <p className="mt-0.5 text-xs text-black">{entry.employeeName} — {entry.sopCode} — {MONTHS[entry.month - 1]} {entry.year}</p>
+            <p className="mt-0.5 text-xs text-black">{entry.employeeName} — {displaySopCode(entry.sopCode)} — {MONTHS[entry.month - 1]} {entry.year}</p>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-gray-100"><X className="h-4 w-4" /></button>
         </div>
@@ -2834,7 +2835,7 @@ function AssignSOPDataForm({
           <div className="flex flex-wrap gap-6">
             <div>
               <p className="mb-0.5 text-[10px] text-gray-400">SOP No.</p>
-              <p className="font-mono text-base font-bold text-purple-700">{sop.identifier}</p>
+              <p className="font-mono text-base font-bold text-purple-700">{displaySopCode(sop.identifier)}</p>
             </div>
             <div className="flex-1 min-w-0">
               <p className="mb-0.5 text-[10px] text-gray-400">SOP Name</p>
@@ -5862,7 +5863,7 @@ export default function TrainingMatrixPage() {
                   {/* ── SOP info bar ── */}
                   <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-sm font-black text-gray-900">{dm.sopCode}</span>
+                      <span className="font-mono text-sm font-black text-gray-900">{displaySopCode(dm.sopCode)}</span>
                       {dm.sopTitle && (
                         <span className="text-sm font-semibold text-black">{dm.sopTitle}</span>
                       )}
@@ -6275,7 +6276,7 @@ export default function TrainingMatrixPage() {
                                       </span>
                                     )}
                                   </td>
-                                  <td className="px-3 py-2 font-mono font-bold text-gray-900 whitespace-nowrap">{r.sopCode}</td>
+                                  <td className="px-3 py-2 font-mono font-bold text-gray-900 whitespace-nowrap">{displaySopCode(r.sopCode)}</td>
                                   <td className="px-3 py-2 text-black max-w-[200px] truncate" title={sopTitle}>{sopTitle}</td>
                                   <td className="px-3 py-2 font-semibold text-black whitespace-nowrap">{r.month || '—'}</td>
                                   <td className="px-3 py-2 whitespace-nowrap">
@@ -6342,7 +6343,7 @@ export default function TrainingMatrixPage() {
                       <tbody>
                         {monthDetail.sopRows.map((r) => (
                           <tr key={r.sopCode} className="border-b border-gray-50 hover:bg-gray-50">
-                            <td className="px-3 py-2 font-mono font-bold text-gray-900">{r.sopCode}</td>
+                            <td className="px-3 py-2 font-mono font-bold text-gray-900">{displaySopCode(r.sopCode)}</td>
                             <td className="px-3 py-2 font-bold text-emerald-700">{r.trained}</td>
                             <td className="px-3 py-2 font-bold text-red-700">{r.pending}</td>
                             <td className="px-3 py-2 text-black">{r.totalApplicable}</td>
@@ -6513,7 +6514,7 @@ export default function TrainingMatrixPage() {
                 {rows.map((r, idx) => (
                   <tr key={r.key} className={`border-t bg-white/70 hover:bg-white ${dismissed ? 'border-gray-100' : 'border-red-100'}`}>
                     <td className={`px-3 py-2 font-bold tabular-nums ${dismissed ? 'text-black' : 'text-red-400'}`}>{idx + 1}</td>
-                    <td className="px-3 py-2 font-mono font-black text-gray-900">{r.sopCode}</td>
+                    <td className="px-3 py-2 font-mono font-black text-gray-900">{displaySopCode(r.sopCode)}</td>
                     <td className="px-3 py-2">
                       <span
                         className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${dismissed ? 'bg-gray-100 border-gray-300 text-black' : 'bg-red-100 border-red-300 text-red-800'}`}
@@ -6675,7 +6676,7 @@ export default function TrainingMatrixPage() {
                   <div className="px-4 py-2 bg-gray-50 border-b flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs font-extrabold px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-100">
-                        {s.sopCode} {s.title && <span className="ml-2 font-sans font-bold text-purple-900 opacity-60">{s.title}</span>}
+                        {displaySopCode(s.sopCode)} {s.title && <span className="ml-2 font-sans font-bold text-purple-900 opacity-60">{s.title}</span>}
                       </span>
                       {!!s.month && <span className="text-[10px] font-semibold text-black">{s.month}</span>}
                     </div>

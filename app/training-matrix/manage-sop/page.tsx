@@ -22,6 +22,7 @@ import type * as XLSX from 'xlsx';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { sopCodeMatchesSearch } from '@/lib/sopIdentifierNormalize';
 import { compareSopCodes } from '@/lib/sop-utils';
+import { displaySopCode } from '@/lib/sop-display';
 
 // FullCalendar (~260KB) only matters in the calendar view mode, which most
 // sessions never open — keep it out of the initial Manage SOP bundle.
@@ -3081,7 +3082,7 @@ function ManageSOPDashboard() {
                                   </span>
                                 )}
                               </td>
-                              <td className="px-3 py-2 font-mono font-bold text-blue-700 whitespace-nowrap">{r.sopCode}</td>
+                              <td className="px-3 py-2 font-mono font-bold text-blue-700 whitespace-nowrap">{displaySopCode(r.sopCode)}</td>
                               <td className="px-3 py-2 text-gray-800 break-words" title={r.sopName}>{r.sopName}</td>
                               <td className="px-3 py-2 font-semibold text-gray-800 whitespace-nowrap">{r.month || '—'}</td>
                               <td className="px-3 py-2 whitespace-nowrap">
@@ -3569,7 +3570,7 @@ function ManageSOPDashboard() {
               <div className="min-w-0">
                 <div className="text-base font-bold text-gray-900">Add Employee Allocation</div>
                 <div className="text-xs text-gray-600">
-                  {addEmpModal.sopCode} · {deptAbbrLabel(addEmpModal.dept)}
+                  {displaySopCode(addEmpModal.sopCode)} · {deptAbbrLabel(addEmpModal.dept)}
                 </div>
               </div>
               <button
@@ -3729,7 +3730,7 @@ function ManageSOPDashboard() {
                       return (
                         <tr key={`log-${l.sopCode}-${l.department}-${l.month}-${l.year}-${idx}`} className="border-b border-gray-100 hover:bg-gray-50 align-top">
                           <td className="px-3 py-2 text-gray-500">{idx + 1}</td>
-                          <td className="px-3 py-2 font-bold text-blue-700">{l.sopCode}</td>
+                          <td className="px-3 py-2 font-bold text-blue-700">{displaySopCode(l.sopCode)}</td>
                           <td className="px-3 py-2 text-gray-800 break-words">{l.sopName || '—'}</td>
                           <td className="px-3 py-2">
                             <span
@@ -3848,7 +3849,7 @@ function ManageSOPDashboard() {
                       className="border-b border-gray-100 hover:bg-gray-50 align-top"
                     >
                       <td className="px-3 py-2 text-gray-500">{idx + 1}</td>
-                      <td className="px-3 py-2 font-bold text-blue-700">{item.sopCode}</td>
+                      <td className="px-3 py-2 font-bold text-blue-700">{displaySopCode(item.sopCode)}</td>
                       <td className="px-3 py-2 text-gray-800 break-words">{item.sopName}</td>
                       <td className="px-3 py-2 text-gray-700">
                         {item.scheduledMonthName ? (

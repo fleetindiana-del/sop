@@ -3,6 +3,7 @@ import { connectDB } from "@/lib/mongodb";
 import SOP from "@/models/SOP";
 import { buildPipelineStatusResponse } from "@/lib/pipeline";
 import { requireAuth } from "@/lib/withAuth";
+import { sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
     }
 
     await connectDB();
-    const sops = await SOP.find({ identifier: new RegExp(`^${identifier}$`, "i") }).lean();
+    const sops = await SOP.find({ identifier: sopIdentifierEquivalentRegex(identifier) }).lean();
     if (!sops.length) {
       return NextResponse.json({ error: "SOP not found" }, { status: 404 });
     }

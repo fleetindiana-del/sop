@@ -7,6 +7,7 @@ import {
   complianceRunProgressPct,
   useComplianceRunStore,
 } from "@/lib/store/compliance-run-store";
+import { displaySopCode } from "@/lib/sop-display";
 
 export function ComplianceRunFloatingPanel() {
   const pathname = usePathname();
@@ -130,7 +131,7 @@ export function ComplianceRunFloatingPanel() {
                 <ul className="mt-2 space-y-1 text-xs">
                   {serverActiveSops.map((s) => (
                     <li key={s.sopId} className="font-mono">
-                      {s.identifier} — {s.name}
+                      {displaySopCode(s.identifier)} — {s.name}
                     </li>
                   ))}
                 </ul>
@@ -157,7 +158,7 @@ export function ComplianceRunFloatingPanel() {
                   <ul className="mt-2 max-h-24 overflow-y-auto text-[10px] text-rose-600 space-y-0.5">
                     {sopLists.failed.map((f, i) => (
                       <li key={i}>
-                        {f.identifier}: {f.error}
+                        {displaySopCode(f.identifier)}: {f.error}
                       </li>
                     ))}
                   </ul>

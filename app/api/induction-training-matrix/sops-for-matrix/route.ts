@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import SOP from '@/models/SOP';
+import { sopIdentifierEquivalentRegex } from '@/lib/sopIdentifierNormalize';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,10 @@ export async function GET(req: NextRequest) {
     if (search) {
       filter.$or = [
         { identifier: { $regex: search, $options: 'i' } },
+        // Full SOP code: also match other zero-padding spellings (QAGE01-1 ≡ QAGE01-01).
+        ...(/^[A-Za-z]{2,6}\d+-\d+$/.test(search.trim())
+          ? [{ identifier: sopIdentifierEquivalentRegex(search) }]
+          : []),
         { name: { $regex: search, $options: 'i' } },
       ];
     }
