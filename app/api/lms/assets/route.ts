@@ -15,6 +15,7 @@ import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTraining
 import { getMcqApprovedMapForCodes, familyKeyForLmsCode } from '@/lib/lmsMcqApproval';
 import { batchTrainerExamUnlocked } from '@/lib/lmsTrainerGate';
 import { batchExamAttendanceUnlocked } from '@/lib/lmsAttendanceGate';
+import { getInductionGate } from '@/lib/lmsInductionGate';
 import Employee from '@/models/Employee';
 
 export const runtime = 'nodejs';
@@ -47,6 +48,11 @@ export interface SopAssetFlags {
    * False when the exam has no date yet, attendance is unfiled, or they were absent.
    */
   attendanceUnlocked: boolean;
+  /**
+   * False for a regular training SOP while the learner still has induction exams
+   * to complete — induction comes first.
+   */
+  inductionUnlocked: boolean;
 }
 
 // GET /api/lms/assets — per-assigned-SOP resource availability for the learner.
@@ -68,6 +74,7 @@ export async function GET() {
             isActive: boolean;
             isTrainer?: boolean;
             trainerDepartments?: string[];
+            inductionTrainingRequired?: boolean;
           }>();
         if (!employee || !employee.isActive) return { assets: {} };
 
@@ -82,7 +89,7 @@ export async function GET() {
         );
         const codes = assignments.map((a) => a.sopCode).filter(Boolean);
 
-        const [contentMap, mcqApprovedMap, trainerUnlockedMap, attendanceUnlockedMap] = await Promise.all([
+        const [contentMap, mcqApprovedMap, trainerUnlockedMap, attendanceUnlockedMap, inductionGate] = await Promise.all([
           getJourneyContentBatch(codes),
           getMcqApprovedMapForCodes(codes),
           batchTrainerExamUnlocked(
@@ -103,6 +110,7 @@ export async function GET() {
             },
             assignments.map((a) => ({ sopCode: a.sopCode, examDate: a.examDate })),
           ),
+          getInductionGate(employee, assignments),
         ]);
 
         const today = new Date();
@@ -145,6 +153,7 @@ export async function GET() {
               attendanceUnlockedMap.get(code) === true
               || attendanceUnlockedMap.get(code.toUpperCase()) === true
               || attendanceUnlockedMap.get(fam) === true,
+            inductionUnlocked: inductionGate.unlocked(code),
           };
         }
         return { assets };

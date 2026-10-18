@@ -234,7 +234,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     await connectDB();
 
     const employee = await Employee.findById(payload.sub)
-      .select('name department designation isTrainer trainerDepartments')
+      .select('name department designation isTrainer trainerDepartments inductionTrainingRequired')
       .lean();
 
     const resolved = await resolveExamSettingsForSop(sopCode, {
@@ -327,8 +327,25 @@ export async function GET(req: NextRequest, { params }: Params) {
         const { getEmployeeAssignmentsMap } = await import('@/lib/employeeAssignments');
         const assignmentsMap = await getEmployeeAssignmentsMap();
         const key = `${employee.department}||${employee.name}`.trim().toLowerCase();
+        const assignments = assignmentsMap.get(key) || [];
+
+        // Induction first: regular training exams wait until induction exams are done.
+        const { getInductionGate, INDUCTION_PENDING_REASON } = await import('@/lib/lmsInductionGate');
+        const inductionGate = await getInductionGate(employee, assignments);
+        if (!inductionGate.unlocked(sopCode)) {
+          return NextResponse.json(
+            {
+              error: INDUCTION_PENDING_REASON,
+              settings: toLearnerQuizSettings(resolved),
+              inductionPending: true,
+              pendingInductionSops: inductionGate.pending,
+            },
+            { status: 403 },
+          );
+        }
+
         const familyRe = sopFamilyIdentifierRegex(sopCode);
-        const hit = (assignmentsMap.get(key) || []).find(
+        const hit = assignments.find(
           (a) => familyRe.test(a.sopCode)
             || (baseIdentifierFromIdentifier(a.sopCode) || a.sopCode).toUpperCase() === family,
         );

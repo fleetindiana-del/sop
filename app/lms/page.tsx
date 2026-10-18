@@ -846,12 +846,15 @@ function TrainingTable({
               })();
               // Exams lock when the SOP is expired, its MCQs are not all approved, the
               // department trainer has not completed it, no sitting date is assigned,
-              // or attendance is missing.
-              const examLocked = docExpired || mcqLocked || trainerLocked || attendanceLocked;
+              // or attendance is missing. Regular training also waits on induction.
+              const inductionLocked = !trainerExempt && asset?.inductionUnlocked === false;
+              const examLocked = docExpired || mcqLocked || inductionLocked || trainerLocked || attendanceLocked;
               const lockReason = docExpired
                 ? 'SOP expired — renew the document before taking the exam'
                 : mcqLocked
                   ? mcqLockReason
+                : inductionLocked
+                  ? 'Complete your induction training exams first — this exam unlocks after induction'
                 : trainerLocked
                   ? 'Exam unlocks after your department trainer completes training for this SOP'
                   : attendanceLocked
