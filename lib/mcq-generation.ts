@@ -422,23 +422,54 @@ function clauseRefMatchesBatch(ref: string, batch: SopClause[]): boolean {
   return batch.some((c) => clauseRefsMatch(c.id, norm));
 }
 
-/** Fix missing/wrong sopReference by pairing questions to uncovered clauses in order. */
+const CONTENT_TOKEN = /[\p{L}\p{M}\p{N}]{3,}/gu;
+
+function contentTokens(text: string): Set<string> {
+  return new Set((text.toLowerCase().match(CONTENT_TOKEN) ?? []));
+}
+
+/** Share of the question + correct option's words found in the clause text (0–1). */
+function clauseContentScore(q: GeneratedMCQ, clause: SopClause): number {
+  const correct = { A: q.optionA, B: q.optionB, C: q.optionC, D: q.optionD }[q.correctAnswer] ?? "";
+  const qTokens = contentTokens(`${q.question} ${correct}`);
+  if (qTokens.size === 0) return 0;
+  const cTokens = contentTokens(`${clause.summary} ${clause.text}`);
+  let hits = 0;
+  for (const t of qTokens) if (cTokens.has(t)) hits++;
+  return hits / qTokens.size;
+}
+
+const MIN_CLAUSE_CONTENT_SCORE = 0.25;
+
+/**
+ * Fix missing/wrong sopReference. An exact clause id is kept; otherwise the
+ * question is matched to the unclaimed clause its wording actually comes from.
+ * Questions that can't be grounded, or that repeat an already-used clause, are
+ * dropped — never relabelled with an arbitrary clause id.
+ */
 function reconcileClauseRefs(questions: GeneratedMCQ[], work: SopClause[]): GeneratedMCQ[] {
   const out: GeneratedMCQ[] = [];
   const claimed = new Set<string>();
 
   for (const q of questions) {
-    let clause = work.find(
-      (c) => !claimed.has(c.id) && clauseRefMatchesBatch(q.sopReference ?? "", [c]),
-    );
+    const ref = q.sopReference ?? "";
+    let clause = work.find((c) => !claimed.has(c.id) && clauseRefsMatchExact(c.id, ref));
+    if (!clause && work.some((c) => clauseRefsMatchExact(c.id, ref))) continue;
     if (!clause) {
-      clause = work.find((c) => !claimed.has(c.id));
-      if (clause) q.sopReference = clause.id;
+      let bestScore = MIN_CLAUSE_CONTENT_SCORE;
+      for (const c of work) {
+        if (claimed.has(c.id)) continue;
+        const score = clauseContentScore(q, c);
+        if (score >= bestScore) {
+          bestScore = score;
+          clause = c;
+        }
+      }
     }
-    if (clause) {
-      claimed.add(clause.id);
-      out.push(q);
-    }
+    if (!clause) continue;
+    q.sopReference = clause.id;
+    claimed.add(clause.id);
+    out.push(q);
   }
   return out;
 }

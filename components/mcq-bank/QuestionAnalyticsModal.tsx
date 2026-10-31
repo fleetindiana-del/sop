@@ -96,7 +96,7 @@ export function QuestionAnalyticsModal({
 
   const [editMode, setEditMode] = useState(false);
   const [editDraft, setEditDraft] = useState<{
-    question: string; options: string[]; correctAnswer: string; explanation: string;
+    question: string; options: string[]; correctAnswer: string; explanation: string; sopReference: string;
   } | null>(null);
   const [editSaving, setEditSaving] = useState(false);
 
@@ -109,6 +109,7 @@ export function QuestionAnalyticsModal({
       options: [...mcq.options],
       correctAnswer: mcq.correctAnswer,
       explanation: mcq.explanation ?? "",
+      sopReference: mcq.sopReference ?? "",
     });
     setEditMode(true);
   }
@@ -132,6 +133,7 @@ export function QuestionAnalyticsModal({
           options: editDraft.options,
           correctAnswer: editDraft.correctAnswer,
           explanation: editDraft.explanation,
+          sopReference: editDraft.sopReference,
         }),
       });
       const data = await res.json();
@@ -141,6 +143,7 @@ export function QuestionAnalyticsModal({
           options: editDraft.options,
           correctAnswer: editDraft.correctAnswer,
           explanation: editDraft.explanation,
+          sopReference: editDraft.sopReference,
         });
         setEditMode(false);
         setEditDraft(null);
@@ -392,10 +395,20 @@ export function QuestionAnalyticsModal({
               <h4 className="text-[10px] font-bold text-blue-500 uppercase tracking-[0.2em] flex items-center gap-2 ml-1">
                 <BookOpen className="h-3 w-3" /> Technical SOP Context
               </h4>
-              <div className="bg-blue-50 p-4 rounded-[24px] border border-blue-100 shadow-inner italic min-h-[80px]">
-                <p className="text-sm text-blue-600 leading-relaxed">
-                  &quot;{view.sopReference ?? "Direct reference content is being indexed…"}&quot;
-                </p>
+              <div className={`bg-blue-50 p-4 rounded-[24px] border border-blue-100 shadow-inner min-h-[80px] ${editMode ? "" : "italic"}`}>
+                {editMode && editDraft ? (
+                  <textarea
+                    value={editDraft.sopReference}
+                    onChange={(e) => setEditDraft((d) => d ? { ...d, sopReference: e.target.value } : d)}
+                    rows={4}
+                    className="w-full bg-transparent border-0 text-sm text-blue-600 leading-relaxed focus:outline-none resize-none placeholder-blue-300"
+                    placeholder="SOP section reference, e.g. Section 5.1.1.2…"
+                  />
+                ) : (
+                  <p className="text-sm text-blue-600 leading-relaxed">
+                    &quot;{view.sopReference ?? "Direct reference content is being indexed…"}&quot;
+                  </p>
+                )}
               </div>
             </div>
           </div>

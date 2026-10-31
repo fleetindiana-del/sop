@@ -5,7 +5,7 @@ import { requireAuth, forbidUnlessDepartmentAccess } from "@/lib/withAuth";
 import { mcqResolveDept } from "@/lib/mcq-bank-utils";
 
 // POST /api/mcq-bank/edit-question
-// Body: { bankId, questionIndex, question, options, correctAnswer, explanation }
+// Body: { bankId, questionIndex, question, options, correctAnswer, explanation, sopReference? }
 export async function POST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     if (!db) throw new Error("Database not connected");
 
     const body = await request.json();
-    const { bankId, questionIndex, question, options, correctAnswer, explanation } = body;
+    const { bankId, questionIndex, question, options, correctAnswer, explanation, sopReference } = body;
 
     if (
       !bankId ||
@@ -62,6 +62,11 @@ export async function POST(request: NextRequest) {
       [`mcqs.${questionIndex}.explanation`]:   explanation ?? "",
       updatedAt: new Date(),
     };
+    // Optional: older callers don't send it, so leave the stored reference alone.
+    // Blank is ignored too — the bank schema requires a non-empty sopReference.
+    if (typeof sopReference === "string" && sopReference.trim()) {
+      $set[`mcqs.${questionIndex}.sopReference`] = sopReference.trim();
+    }
     const priorTranslations = (existing.mcqs?.[questionIndex]?.translations ?? {}) as Record<
       string,
       unknown
