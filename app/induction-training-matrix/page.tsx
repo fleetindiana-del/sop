@@ -787,6 +787,13 @@ type ActiveMonth = 'All' | string;
 
 // ─── Upload Modal ─────────────────────────────────────────────────────────────
 
+/** Same name + size + lastModified = same file picked twice. */
+function addUniqueFiles(prev: File[], next: File[]): File[] {
+  const key = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
+  const seen = new Set(prev.map(key));
+  return [...prev, ...next.filter((f) => !seen.has(key(f)) && seen.add(key(f)))];
+}
+
 function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -805,16 +812,25 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
       const fd = new FormData();
       files.forEach((f) => fd.append('files', f));
       fd.append('clearAll', 'true');
-      const res = await fetch('/api/induction-training-matrix/upload', { method: 'POST', body: fd });
-      const data = await res.json();
+      const res = await fetch('/api/induction-training-matrix/upload', {
+        method: 'POST',
+        body: fd,
+        signal: AbortSignal.timeout(180_000),
+      });
+      const data = await res.json().catch(() => ({ success: false, error: `Upload failed (HTTP ${res.status})` }));
+      setResults(data.results || []);
       if (data.success) {
-        setResults(data.results || []);
+        setFiles([]);
         onSuccess();
       } else {
         setError(data.error || 'Upload failed');
       }
     } catch (e: any) {
-      setError(e.message || 'Upload failed');
+      setError(
+        e?.name === 'TimeoutError'
+          ? 'Upload timed out — the server could not reach the database. Check your connection and try again.'
+          : e.message || 'Upload failed',
+      );
     } finally {
       setUploading(false);
     }
@@ -838,14 +854,14 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
         <div className="p-5 space-y-4">
           <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
             <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
-            <span><strong>All existing matrix data will be replaced</strong> with the new Excel files. This cannot be undone.</span>
+            <span><strong>Induction SOP assignments for each department in the file will be replaced</strong> (same as the induction ticks on Manage SOP). Employees flagged for induction receive the SOPs listed under their designation.</span>
           </div>
           <div
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();
               const dropped = Array.from(e.dataTransfer.files).filter((f) => /\.xlsx$/i.test(f.name));
-              setFiles((prev) => [...prev, ...dropped]);
+              setFiles((prev) => addUniqueFiles(prev, dropped));
             }}
             onClick={() => inputRef.current?.click()}
             className="cursor-pointer rounded-xl border-2 border-dashed border-purple-300 bg-purple-50/50 p-6 text-center transition hover:border-purple-400"
@@ -861,7 +877,8 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
               className="hidden"
               onChange={(e) => {
                 const chosen = Array.from(e.target.files ?? []);
-                setFiles((prev) => [...prev, ...chosen]);
+                setFiles((prev) => addUniqueFiles(prev, chosen));
+                e.target.value = '';
               }}
             />
           </div>
@@ -894,8 +911,13 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
                   <div className="font-medium">{r.fileName}</div>
                   {r.ok ? (
                     <div className="mt-0.5 text-[11px]">
-                      {r.department} — {r.employees} employees, {r.sops} SOPs
-                      {r.fileUrl ? ' — uploaded to CDN' : ''}
+                      {r.department} — {r.sops} SOPs assigned across {r.designations} designations
+                      {r.unmatchedSops?.length ? (
+                        <div className="mt-0.5 text-amber-700">
+                          {r.unmatchedSops.length} code{r.unmatchedSops.length !== 1 ? 's' : ''} not found in SOP registry: {r.unmatchedSops.slice(0, 15).join(', ')}
+                          {r.unmatchedSops.length > 15 ? '…' : ''}
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="mt-0.5 text-[11px]">{r.error}</div>
@@ -908,7 +930,7 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
 
         {confirming ? (
           <div className="border-t px-5 py-3 space-y-2">
-            <p className="text-xs text-black font-medium">Are you sure? This will delete all existing training matrix data and replace it with the selected {files.length} file{files.length !== 1 ? 's' : ''}.</p>
+            <p className="text-xs text-black font-medium">Are you sure? This will replace the induction SOP assignments of every department found in the selected {files.length} file{files.length !== 1 ? 's' : ''}.</p>
             <div className="flex justify-end gap-2">
               <button onClick={() => setConfirming(false)} className="rounded-lg border px-4 py-1.5 text-sm font-medium text-black hover:bg-gray-50">
                 Cancel
@@ -932,7 +954,7 @@ function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
               disabled={!files.length || uploading}
               className="rounded-lg bg-purple-600 px-4 py-1.5 text-sm font-medium text-white shadow hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {`Upload ${files.length || ''}`.trim()}
+              {uploading ? 'Uploading…' : `Upload ${files.length || ''}`.trim()}
             </button>
           </div>
         )}

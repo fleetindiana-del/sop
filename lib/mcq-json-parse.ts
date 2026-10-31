@@ -35,14 +35,17 @@ function sanitizeJsonCandidate(text: string): string {
 function letterFromCorrectAnswer(raw: unknown, options: [string, string, string, string]): "A" | "B" | "C" | "D" | null {
   if (raw == null) return null;
   const s = String(raw).trim();
+  if (!s) return null;
   const upper = s.toUpperCase();
   if (/^[ABCD]$/.test(upper)) return upper as "A" | "B" | "C" | "D";
-  const m = upper.match(/\b([ABCD])\b/);
-  if (m) return m[1] as "A" | "B" | "C" | "D";
-  const idx = options.findIndex((o) => o && s.toLowerCase() === o.toLowerCase());
+  // Option text must win over letter heuristics — "A deviation must be raised"
+  // is option text, not the letter A (the old `\b[ABCD]\b` scan mis-keyed these).
+  const norm = (t: string) => t.toLowerCase().replace(/[\s.,;:!?"'`()]+/g, " ").trim();
+  const idx = options.findIndex((o) => o && norm(s) === norm(o));
   if (idx >= 0) return (["A", "B", "C", "D"] as const)[idx];
-  const optM = s.match(/^option\s*([abcd])/i);
-  if (optM) return optM[1].toUpperCase() as "A" | "B" | "C" | "D";
+  // Letter-only forms: "Option B", "Answer: C", "(D)", "B)", "B.", "B: text", "B - text".
+  const m = s.match(/^(?:(?:correct\s+)?(?:answer|option)\s*(?:is)?\s*[:\-]?\s*)?\(?([ABCD])(?:\)|\.|:|\s+-|\s*$)/i);
+  if (m) return m[1].toUpperCase() as "A" | "B" | "C" | "D";
   return null;
 }
 
