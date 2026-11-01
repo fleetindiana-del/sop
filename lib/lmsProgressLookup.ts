@@ -13,6 +13,9 @@ export interface QuizAttemptRecord {
   attempt: number;
   score: number;
   at: string;
+  /** Absent on attempts recorded before the flag existed. */
+  passed?: boolean;
+  wrongQuestionIds?: string[];
 }
 
 export interface ProgressRecord {

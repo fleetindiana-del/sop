@@ -36,6 +36,10 @@ export interface SopBreakdown {
     bestScore: number;
     passed: boolean;
     passMark?: number;
+    passedOnAttempt?: number;
+    wrongAnswers?: number;
+    acknowledged?: number;
+    ackSopCode?: string;
   };
 }
 
@@ -403,9 +407,20 @@ function ComponentMini({
     return <span className="text-[10px] text-gray-300" title={`${title}: N/A`}>—</span>;
   }
   if (status === 'completed') {
+    const passedOn = exam?.passed ? exam.passedOnAttempt : undefined;
     return (
-      <span title={`${title}: Completed`}>
+      <span
+        title={passedOn
+          ? `${title}: Passed on attempt ${passedOn} of ${exam!.attempts}`
+          : `${title}: Completed`}
+        className="inline-flex flex-col items-center"
+      >
         <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-green-600" />
+        {passedOn && (
+          <span className="text-[9px] font-semibold tabular-nums text-green-700">
+            {passedOn}/{exam!.attempts}
+          </span>
+        )}
       </span>
     );
   }
@@ -656,6 +671,23 @@ function DrillDownModal({ drill, onClose }: { drill: DrillState; onClose: () => 
                               <ListChecks className="h-2.5 w-2.5" /> Exam
                             </span>
                           )}
+                          {s.exam ? (
+                            <a
+                              href={`/lms/acknowledgement/${encodeURIComponent(s.exam.ackSopCode || s.sopCode)}?employeeId=${encodeURIComponent(record.employeeId)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={`ml-1 mt-0.5 inline-flex items-center rounded px-1.5 py-px text-[9px] font-semibold ${
+                                s.exam.wrongAnswers && (s.exam.acknowledged ?? 0) < s.exam.wrongAnswers
+                                  ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                  : 'bg-purple-50 text-purple-700 hover:bg-purple-100'
+                              }`}
+                              title={s.exam.wrongAnswers
+                                ? `${s.exam.acknowledged ?? 0} of ${s.exam.wrongAnswers} incorrect answer${s.exam.wrongAnswers === 1 ? '' : 's'} acknowledged`
+                                : 'Acknowledgement letter — no incorrect answers on record'}
+                            >
+                              Ack letter{s.exam.wrongAnswers ? ` (${s.exam.acknowledged ?? 0}/${s.exam.wrongAnswers})` : ''}
+                            </a>
+                          ) : null}
                         </div>
                       </td>
                       <td className="px-2 py-2 align-middle whitespace-nowrap">

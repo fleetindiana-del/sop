@@ -63,6 +63,33 @@ interface DisplayOption {
 }
 interface PreparedQuestion extends MCQQuestion { displayOptions: DisplayOption[]; }
 
+/** A wrong answer as filed with its exam attempt (see lib/lmsExamReview.ts). */
+interface WrongQuestionRecord {
+  questionId: string;
+  question: string;
+  givenAnswer: string;
+  givenText: string;
+  correctAnswer: string;
+  correctText: string;
+  sopReference?: string;
+  explanation?: string;
+}
+
+function wrongQuestionRecord(q: PreparedQuestion, given: string | undefined): WrongQuestionRecord {
+  const givenOpt = q.displayOptions.find((o) => o.label === given);
+  const correctOpt = q.displayOptions.find((o) => o.label === q.correctAnswer);
+  return {
+    questionId: q._id,
+    question: q.question,
+    givenAnswer: given || '',
+    givenText: givenOpt?.text ?? '',
+    correctAnswer: q.correctAnswer,
+    correctText: correctOpt?.text ?? q.correctAnswer,
+    sopReference: q.sopReference,
+    explanation: q.explanation,
+  };
+}
+
 interface QuizSettings {
   passingScore: number;
   timeLimitMinutes: number;
@@ -769,7 +796,13 @@ function QuizStep({
   sopCode: string;
   sopName?: string;
   step: JourneyStep;
-  onComplete: (score: number, passed: boolean, newAttempts: number, missedIds: string[]) => void;
+  onComplete: (
+    score: number,
+    passed: boolean,
+    newAttempts: number,
+    missedIds: string[],
+    wrongQuestions: WrongQuestionRecord[],
+  ) => void;
   onExit: () => void;
 }) {
   const [localAttempts, setLocalAttempts] = useState(step.attempts ?? 0);
@@ -795,6 +828,11 @@ function QuizStep({
   const [quizMode, setQuizMode] = useState<'trial' | 'exam'>('exam');
   /** Per-question acknowledgements on the review screen (wrong + correct cards). */
   const [ackedQuestionIds, setAckedQuestionIds] = useState<Set<string>>(() => new Set());
+  /** Formal attempt shown on the review screen — acknowledgements are filed under it. */
+  const [reviewAttempt, setReviewAttempt] = useState<number | null>(null);
+  /** Acknowledgements of this attempt's mistakes the server has saved. */
+  const [savedAckCount, setSavedAckCount] = useState(0);
+  const ackChainRef = useRef<Promise<void>>(Promise.resolve());
 
   const sopTitle = (sopName || '').trim() || sopCode;
 
@@ -1018,12 +1056,15 @@ function QuizStep({
     setScore(pct);
     setRetestQueue(wrong);
     setAckedQuestionIds(new Set());
+    setSavedAckCount(0);
+    setReviewAttempt(null);
     setPhase('review');
 
     // Demo does not count toward attempts / progress.
     if (quizMode === 'trial') return;
 
     const newAttempts = localAttempts + 1;
+    setReviewAttempt(newAttempts);
     setLocalAttempts(newAttempts);
     setAttemptHistory((prev) => {
       const next = prev.filter((h) => h.attempt !== newAttempts);
@@ -1034,7 +1075,9 @@ function QuizStep({
     const required = isRetest ? 100 : (settings?.passingScore ?? 80);
     const passed = pct >= required;
     setExamAttempts((n) => n + 1);
-    onComplete(pct, passed, newAttempts, passed ? [] : wrong.map((q) => q._id));
+    // Every mistake is filed with the attempt — the letter lists them all, ticked or not.
+    const wrongQuestions = wrong.map((q) => wrongQuestionRecord(q, answers[q._id]));
+    onComplete(pct, passed, newAttempts, passed ? [] : wrong.map((q) => q._id), wrongQuestions);
   }, [questions, answers, localAttempts, isRetest, settings, onComplete, quizMode]);
 
   // Keep ref in sync so timer can auto-submit
@@ -1055,13 +1098,54 @@ function QuizStep({
     setPhase('answering');
   };
 
+  /**
+   * File the acknowledgement of an incorrect answer under its exam attempt — the
+   * record behind the Acknowledgement Letter. Saves run one after another so a
+   * quick tick/untick lands in order; a 409 means the attempt's own result has
+   * not reached the server yet, so wait and retry.
+   */
+  const persistAck = (q: PreparedQuestion, attempt: number, acknowledged: boolean) => {
+    const body = JSON.stringify({
+      sopCode,
+      step: step.id,
+      attempt,
+      acknowledged,
+      questionId: q._id,
+      // Only used if the attempt's mistakes have not been filed yet.
+      question: wrongQuestionRecord(q, answers[q._id]),
+    });
+    ackChainRef.current = ackChainRef.current.then(async () => {
+      for (let tryNo = 0; tryNo < 5; tryNo++) {
+        try {
+          const res = await fetch('/api/lms/acknowledgements', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+          });
+          if (res.ok) {
+            setSavedAckCount((n) => Math.max(0, n + (acknowledged ? 1 : -1)));
+            return;
+          }
+          if (res.status !== 409) return;
+        } catch { /* network — retry */ }
+        await new Promise((r) => setTimeout(r, 1000 * (tryNo + 1)));
+      }
+    });
+  };
+
   const toggleQuestionAck = (questionId: string, checked: boolean) => {
+    if (ackedQuestionIds.has(questionId) === checked) return;
     setAckedQuestionIds((prev) => {
       const next = new Set(prev);
       if (checked) next.add(questionId);
       else next.delete(questionId);
       return next;
     });
+    // Only mistakes in a formal attempt belong in the letter.
+    const q = questions.find((x) => x._id === questionId);
+    if (q && quizMode === 'exam' && reviewAttempt && answers[questionId] !== q.correctAnswer) {
+      persistAck(q, reviewAttempt, checked);
+    }
   };
 
   const allowRetake = settings?.allowRetakeAfterPass !== false;
@@ -1434,6 +1518,18 @@ function QuizStep({
         </div>
 
         {attemptHistoryBlock}
+
+        {reviewAttempt !== null && wrongInFullReview > 0 && (
+          <a
+            href={`/lms/acknowledgement/${encodeURIComponent(sopCode)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-white px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-50"
+            title="Every incorrect answer of your attempts, with the ones you acknowledged ticked"
+          >
+            <FileText className="h-3.5 w-3.5" /> Acknowledgement letter ({savedAckCount}/{wrongInFullReview} acknowledged this attempt)
+          </a>
+        )}
 
         {/* Wrong answers + correct answers — shown after every failed attempt before retest */}
         {!passed && missedCount > 0 && !revealAnswers && (
@@ -2081,6 +2177,7 @@ export default function JourneyPage() {
     passed: boolean,
     newAttempts: number,
     missedIds: string[],
+    wrongQuestions: WrongQuestionRecord[],
   ) => {
     // Never un-complete: if they already passed and a retake fails, keep completed=true
     setLocalSteps((prev) =>
@@ -2103,6 +2200,10 @@ export default function JourneyPage() {
     // repeat: the server upserts attemptHistory by attempt number.
     const quizPayload = {
       completed: passed, passed, score, attempts: newAttempts, pendingRetestIds: missedIds,
+      // Every mistake in this attempt, passed or not — filed with the attempt for
+      // the attempt history and the Acknowledgement Letter.
+      wrongQuestions,
+      sopName: data?.sop?.name || '',
     };
     let newPct = await updateProgress(stepId, quizPayload);
     for (let retry = 0; newPct === null && retry < 2; retry++) {
@@ -2127,7 +2228,7 @@ export default function JourneyPage() {
         if (newPct !== null && newPct >= 100) setShowCelebration(true);
       }
     }
-  }, [updateProgress, sopCode]);
+  }, [updateProgress, sopCode, data?.sop?.name]);
 
   if (loading) {
     return (
@@ -2293,8 +2394,8 @@ export default function JourneyPage() {
                 sopCode={sopCode}
                 sopName={data?.sop?.name || ''}
                 step={activeStep}
-                onComplete={(score, passed, newAttempts, missedIds) =>
-                  handleQuizComplete(activeStep.id, score, passed, newAttempts, missedIds)
+                onComplete={(score, passed, newAttempts, missedIds, wrongQuestions) =>
+                  handleQuizComplete(activeStep.id, score, passed, newAttempts, missedIds, wrongQuestions)
                 }
                 onExit={() => router.push('/lms')}
               />

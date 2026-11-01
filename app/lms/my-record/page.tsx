@@ -14,9 +14,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft, CheckCircle2, ClipboardList, Clock, Loader2,
+  ArrowLeft, CheckCircle2, ClipboardList, Clock, FileCheck2, Loader2,
   RefreshCw, Search, TrendingUp,
 } from 'lucide-react';
+import { rollupExamAttempts } from '@/lib/lmsExamAttempts';
+import { AttemptCountButton, ExamAttemptsModal } from '@/components/lms/ExamAttemptsModal';
 import {
   buildProgressMap,
   getProgress,
@@ -58,6 +60,14 @@ interface CertificateRecord {
 }
 
 type RecordTab = 'all' | 'completed' | 'remaining';
+
+/** Incorrect answers on file for one SOP and how many are acknowledged (`/api/lms/acknowledgements`). */
+interface AckSummary {
+  sopCode: string;
+  wrong: number;
+  acknowledged: number;
+  attempts: number[];
+}
 
 const MONTHS_SHORT = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -135,6 +145,27 @@ function marksLabel(progress?: ProgressRecord): string {
   return `${Math.round(quiz.score)}%`;
 }
 
+/** Attempts column: how many tries (click for each attempt), which one passed, and each score. */
+function AttemptsCell({ progress, onOpen }: { progress?: ProgressRecord; onOpen: () => void }) {
+  const r = rollupExamAttempts(progress?.steps?.quiz);
+  if (r.total <= 0) return <span className="text-gray-300">—</span>;
+  return (
+    <div>
+      <AttemptCountButton total={r.total} passedOnAttempt={r.passedOnAttempt} onClick={onOpen} />
+      <p className={`text-[10px] font-semibold ${r.passedOnAttempt ? 'text-green-700' : 'text-amber-700'}`}>
+        {r.passedOnAttempt
+          ? r.total === 1 ? 'Passed on first attempt' : `Passed on attempt ${r.passedOnAttempt}`
+          : 'Not passed yet'}
+      </p>
+      {r.history.length > 1 && (
+        <p className="mt-0.5 whitespace-nowrap text-[10px] tabular-nums text-gray-400">
+          {r.history.map((h) => `#${h.attempt}: ${h.score}%`).join(' · ')}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function passFailLabel(progress?: ProgressRecord): 'Pass' | 'Fail' | '—' {
   const quiz = progress?.steps?.quiz;
   if (!quiz || quiz.attempts <= 0) return '—';
@@ -197,6 +228,8 @@ export default function EmployeeTrainingRecordPage() {
   const [assignments, setAssignments] = useState<SopAssignment[]>([]);
   const [progressMap, setProgressMap] = useState<Map<string, ProgressRecord>>(new Map());
   const [certMap, setCertMap] = useState<Map<string, CertificateRecord>>(new Map());
+  const [ackMap, setAckMap] = useState<Map<string, AckSummary>>(new Map());
+  const [attemptsFor, setAttemptsFor] = useState<{ sopCode: string; sopName: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tab, setTab] = useState<RecordTab>('completed');
@@ -205,10 +238,11 @@ export default function EmployeeTrainingRecordPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [meRes, progressRes, certRes] = await Promise.all([
+      const [meRes, progressRes, certRes, ackRes] = await Promise.all([
         fetch('/api/lms/auth/me'),
         fetch('/api/lms/progress'),
         fetch('/api/lms/certificates'),
+        fetch('/api/lms/acknowledgements'),
       ]);
       if (meRes.status === 401 || meRes.status === 403) {
         router.push('/lms');
@@ -221,6 +255,7 @@ export default function EmployeeTrainingRecordPage() {
       const me = await meRes.json();
       const prog = progressRes.ok ? await progressRes.json() : { progress: [] };
       const cert = certRes.ok ? await certRes.json() : { certificates: [] };
+      const ack = ackRes.ok ? await ackRes.json() : { summaries: [] };
       setLearner(me.employee ?? null);
       setAssignments(
         ((me.assignments || []) as SopAssignment[]).filter(
@@ -229,6 +264,9 @@ export default function EmployeeTrainingRecordPage() {
       );
       setProgressMap(buildProgressMap((prog.progress || []) as ProgressRecord[]));
       setCertMap(buildCertMap((cert.certificates || []) as CertificateRecord[]));
+      setAckMap(new Map(
+        ((ack.summaries || []) as AckSummary[]).map((a) => [progressLookupKey(a.sopCode), a]),
+      ));
       setError('');
     } catch {
       setError('Could not reach the server. Check your connection and try again.');
@@ -249,12 +287,13 @@ export default function EmployeeTrainingRecordPage() {
         assignment: a,
         progress,
         certificate,
+        ack: ackMap.get(progressLookupKey(a.sopCode)),
         completed,
         overdue: !completed && (schedule === 'missed' || schedule === 'overdue'),
         pct: Math.round(progress?.overallPercentage ?? 0),
       };
     });
-  }, [assignments, progressMap, certMap]);
+  }, [assignments, progressMap, certMap, ackMap]);
 
   const counts = useMemo(() => ({
     all: rows.length,
@@ -419,7 +458,7 @@ export default function EmployeeTrainingRecordPage() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-                <table className="w-full min-w-[1180px] text-left text-xs">
+                <table className="w-full min-w-[1360px] text-left text-xs">
                   <thead className="border-b border-gray-200 bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500">
                     <tr>
                       <th className="px-3 py-2 font-semibold">Employee</th>
@@ -434,6 +473,8 @@ export default function EmployeeTrainingRecordPage() {
                       <th className="px-3 py-2 font-semibold">Exam Date</th>
                       <th className="px-3 py-2 font-semibold">Marks Obtained</th>
                       <th className="px-3 py-2 font-semibold">Pass/Fail</th>
+                      <th className="px-3 py-2 font-semibold">Attempts</th>
+                      <th className="px-3 py-2 font-semibold">Acknowledgement</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -522,6 +563,35 @@ export default function EmployeeTrainingRecordPage() {
                               );
                             })()}
                           </td>
+                          <td className="px-3 py-2">
+                            <AttemptsCell
+                              progress={row.progress}
+                              onOpen={() => setAttemptsFor({
+                                sopCode: row.progress?.sopCode || row.assignment.sopCode,
+                                sopName: displayName(row.assignment).english,
+                              })}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            {(row.progress?.steps?.quiz?.attempts ?? 0) > 0 ? (
+                              <Link
+                                href={`/lms/acknowledgement/${encodeURIComponent(row.ack?.sopCode || row.progress!.sopCode)}`}
+                                className={`inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-[10px] font-semibold ${
+                                  row.ack && row.ack.acknowledged < row.ack.wrong
+                                    ? 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                                    : 'border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100'
+                                }`}
+                                title={row.ack
+                                  ? `${row.ack.acknowledged} of ${row.ack.wrong} incorrect answer${row.ack.wrong === 1 ? '' : 's'} acknowledged`
+                                  : 'No incorrect answers on record'}
+                              >
+                                <FileCheck2 className="h-3 w-3" /> Letter
+                                {row.ack ? ` (${row.ack.acknowledged}/${row.ack.wrong})` : ''}
+                              </Link>
+                            ) : (
+                              <span className="text-gray-300">—</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -532,6 +602,13 @@ export default function EmployeeTrainingRecordPage() {
           </>
         )}
       </main>
+      {attemptsFor && (
+        <ExamAttemptsModal
+          sopCode={attemptsFor.sopCode}
+          sopName={attemptsFor.sopName}
+          onClose={() => setAttemptsFor(null)}
+        />
+      )}
     </div>
   );
 }
