@@ -14,6 +14,8 @@ import Link from 'next/link';
 import { signOut, useSession } from 'next-auth/react';
 import { isPrivilegedRole } from '@/lib/page-access';
 import { isAdmin } from '@/lib/roles';
+import { rollupExamAttempts } from '@/lib/lmsExamAttempts';
+import { AttemptCountButton, ExamAttemptsModal } from '@/components/lms/ExamAttemptsModal';
 import {
   clearLmsClientCache,
   lmsClientFields,
@@ -569,6 +571,8 @@ function TrainingTable({
 }) {
   const [sort, setSort] = useState<SortState>({ key: 'sopCode', dir: 'asc' });
   const [picker, setPicker] = useState<{ sopCode: string; def: ResourceDef } | null>(null);
+  /** SOP whose exam attempts are open in the detail view. */
+  const [attemptsFor, setAttemptsFor] = useState<{ sopCode: string; sopName: string } | null>(null);
 
   // Open a resource: jump straight to it, or ask which language when both exist.
   const selectResource = (sopCode: string, def: ResourceDef) => {
@@ -681,6 +685,7 @@ function TrainingTable({
               </>
             ) : null}
             {!selection ? <col className="w-16" /> : null}
+            <col className="w-[4.5rem]" />
             <col className="w-[11rem]" />
           </colgroup>
           <thead>
@@ -738,6 +743,9 @@ function TrainingTable({
               {!selection ? (
                 <SortHeader label="%" sortKey="progress" sort={sort} onSort={(k) => setSort((p) => nextSort(p, k))} align="right" title="Completion percentage" />
               ) : null}
+              <th className="truncate px-1 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-indigo-700" title="Formal exam attempts — click for each attempt's date, score and result">
+                Attempts
+              </th>
               <th className="px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-gray-500" title="Actions">Act</th>
             </tr>
           </thead>
@@ -864,6 +872,7 @@ function TrainingTable({
                   : undefined;
               const highlightExpiredDue =
                 docExpired && !isFullyComplete(progress);
+              const examAttempts = rollupExamAttempts(progress?.steps?.quiz);
 
               return (
                 <tr
@@ -1101,6 +1110,16 @@ function TrainingTable({
                       </div>
                     </td>
                   ) : null}
+                  <td className="px-1 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
+                    <AttemptCountButton
+                      total={examAttempts.total}
+                      passedOnAttempt={examAttempts.passedOnAttempt}
+                      onClick={() => setAttemptsFor({
+                        sopCode: progress?.sopCode || assignment.sopCode,
+                        sopName: displayTrainingName(assignment).english,
+                      })}
+                    />
+                  </td>
                   <td className="px-1 py-1.5 text-right" onClick={(e) => selection && e.stopPropagation()}>
                     {selection ? (
                       <span className="text-[10px] font-semibold text-gray-400">
@@ -1166,6 +1185,13 @@ function TrainingTable({
         </table>
       </div>
     </div>
+    {attemptsFor && (
+      <ExamAttemptsModal
+        sopCode={attemptsFor.sopCode}
+        sopName={attemptsFor.sopName}
+        onClose={() => setAttemptsFor(null)}
+      />
+    )}
     {picker && (
       <LanguagePicker
         def={picker.def}
@@ -2083,12 +2109,37 @@ function Dashboard({
  */
 function LmsSignedOut({
   notice,
+  problem,
   onLogin,
 }: {
   notice?: string;
+  /** `problem` from /api/lms/auth/me — see `LmsIdentityProblem`. */
+  problem?: string;
   onLogin: (emp: Employee) => void;
 }) {
+  const router = useRouter();
   const { data: session } = useSession();
+  // A Super Admin / SOP Admin signed in to the application has no learner
+  // record of their own, so a second (LMS) sign-in is pointless — send them to
+  // the LMS admin console, which the application session already authorises.
+  // A login that deliberately keeps a separate LMS password still gets the form.
+  const sendToAdmin = Boolean(
+    session?.user?.role
+    && isAdmin(session.user.role)
+    && (problem === 'no-employee-record' || problem === 'ambiguous-employee-record'),
+  );
+
+  useEffect(() => {
+    if (sendToAdmin) router.replace('/lms/admin');
+  }, [sendToAdmin, router]);
+
+  if (sendToAdmin) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
+      </div>
+    );
+  }
 
   return (
     <>
@@ -2114,6 +2165,7 @@ export default function LmsPage() {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [authSource, setAuthSource] = useState<AuthSource>('lms');
   const [loginNotice, setLoginNotice] = useState('');
+  const [loginProblem, setLoginProblem] = useState('');
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
@@ -2157,6 +2209,7 @@ export default function LmsPage() {
         // an administrator, so show the reason instead of a bare login form.
         if (body.problem && body.problem !== 'no-session') {
           setLoginNotice(String(body.error || ''));
+          setLoginProblem(String(body.problem));
         }
         return;
       }
@@ -2196,7 +2249,7 @@ export default function LmsPage() {
   }
 
   if (!employee) {
-    return <LmsSignedOut notice={loginNotice} onLogin={setEmployee} />;
+    return <LmsSignedOut notice={loginNotice} problem={loginProblem} onLogin={setEmployee} />;
   }
 
   return (

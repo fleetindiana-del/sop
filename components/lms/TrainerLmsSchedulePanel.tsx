@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertCircle, CalendarCheck, Check, ChevronDown, ClipboardList, RefreshCw, Trash2, UserCheck, Users, X,
+  AlertCircle, CalendarCheck, Check, ChevronDown, ClipboardList, Loader2, RefreshCw, Trash2, UserCheck, Users, X,
 } from 'lucide-react';
 import {
   countEmployeeUniqueSops,
@@ -10,6 +10,7 @@ import {
   listEmployeeUniqueSops,
 } from '@/lib/lmsTrainerExamCounts';
 import { MarkAttendanceModal } from '@/components/lms/MarkAttendanceModal';
+import { AttemptCountButton, ExamAttemptsModal } from '@/components/lms/ExamAttemptsModal';
 import { toDateOnlyIso } from '@/lib/trainingExamScheduleShared';
 import { deptMatchesTrainerScope } from '@/lib/lmsTrainerScope';
 import { compareSopCodes, isSopDocumentExpired } from '@/lib/sop-utils';
@@ -263,6 +264,11 @@ export function TrainerLmsSchedulePanel({
     sopName: string;
     employeeIds: string[];
   } | null>(null);
+  /** Exam attempts per employee for the SOP in `employeePopup`, from /api/lms/exam-attempts. */
+  const [popupAttempts, setPopupAttempts] = useState<
+    Record<string, { total: number; passedOnAttempt: number | null }> | null
+  >(null);
+  const [attemptsFor, setAttemptsFor] = useState<{ sopCode: string; sopName: string; employeeId: string } | null>(null);
   const [empSopDetail, setEmpSopDetail] = useState<{
     title: string;
     subtitle: string;
@@ -486,6 +492,23 @@ export function TrainerLmsSchedulePanel({
     });
     setEmpSopDetail(null);
   }, [uniqueSops]);
+
+  useEffect(() => {
+    if (!employeePopup || employeePopup.employeeIds.length === 0) return;
+    let cancelled = false;
+    const qs = new URLSearchParams({
+      sopCode: employeePopup.sopCode,
+      employeeIds: employeePopup.employeeIds.join(','),
+    });
+    fetch(`/api/lms/exam-attempts?${qs}`)
+      .then((res) => (res.ok ? res.json() : { attempts: {} }))
+      .then((json) => { if (!cancelled) setPopupAttempts(json.attempts || {}); })
+      .catch(() => { if (!cancelled) setPopupAttempts({}); });
+    return () => {
+      cancelled = true;
+      setPopupAttempts(null);
+    };
+  }, [employeePopup]);
 
   const todayIso = useMemo(() => toDateOnlyIso(new Date()), []);
 
@@ -1270,7 +1293,7 @@ export function TrainerLmsSchedulePanel({
                 </p>
                 <p className="mt-0.5 text-[10px] text-emerald-800/70">
                   How many unique SOP exams each employee must complete in {monthLabel}.
-                  Click green or red to see their SOPs.
+                  Click green or red to see their SOPs; click the attempt count for each exam attempt.
                 </p>
               </div>
               <button
@@ -1323,6 +1346,20 @@ export function TrainerLmsSchedulePanel({
                         >
                           {emp.uniqueTotal}
                         </button>
+                        {popupAttempts === null ? (
+                          <Loader2 className="h-3 w-3 animate-spin text-emerald-700/40" />
+                        ) : popupAttempts[emp.employeeId] ? (
+                          <AttemptCountButton
+                            compact
+                            total={popupAttempts[emp.employeeId].total}
+                            passedOnAttempt={popupAttempts[emp.employeeId].passedOnAttempt}
+                            onClick={() => setAttemptsFor({
+                              sopCode: employeePopup.sopCode,
+                              sopName: employeePopup.sopName,
+                              employeeId: emp.employeeId,
+                            })}
+                          />
+                        ) : null}
                       </div>
                     );
                   })}
@@ -1331,6 +1368,15 @@ export function TrainerLmsSchedulePanel({
             </div>
           </div>
         </div>
+      )}
+
+      {attemptsFor && (
+        <ExamAttemptsModal
+          sopCode={attemptsFor.sopCode}
+          sopName={attemptsFor.sopName}
+          employeeId={attemptsFor.employeeId}
+          onClose={() => setAttemptsFor(null)}
+        />
       )}
 
       {/* Detail: SOPs behind a green/red/total click */}

@@ -35,6 +35,10 @@ import {
   type SopStatus,
 } from '@/lib/lmsCompletion';
 import type { ISOP } from '@/models/SOP';
+import ExamAcknowledgement from '@/models/lms/ExamAcknowledgement';
+import { rollupExamAttempts, type ExamAttemptEntry } from '@/lib/lmsExamAttempts';
+import { progressLookupKey } from '@/lib/lmsProgressLookup';
+import mongoose from 'mongoose';
 
 export const dynamic = 'force-dynamic';
 
@@ -122,6 +126,13 @@ export interface ExamAttemptSummary {
   passed: boolean;
   /** Pass mark that applies regardless of SOP settings (trainers must score 100%). */
   passMark?: number;
+  /** Attempt number that passed the exam. */
+  passedOnAttempt?: number;
+  /** Incorrect answers on file across attempts, and how many the learner acknowledged. */
+  wrongAnswers?: number;
+  acknowledged?: number;
+  /** SOP code the acknowledgement letter is filed under. */
+  ackSopCode?: string;
 }
 
 function examAttemptSummary(
@@ -154,7 +165,17 @@ function examAttemptSummary(
     }
   }
   if (attempts === 0) return undefined;
-  return { attempts, lastScore, bestScore, passed, ...(isTrainer ? { passMark: 100 } : {}) };
+  const rollup = rollupExamAttempts(
+    ...COMPONENT_GROUPS.mcq.map((key) => steps?.[key] as { attemptHistory?: ExamAttemptEntry[] } | undefined),
+  );
+  return {
+    attempts,
+    lastScore,
+    bestScore,
+    passed,
+    ...(isTrainer ? { passMark: 100 } : {}),
+    ...(rollup.passedOnAttempt ? { passedOnAttempt: rollup.passedOnAttempt } : {}),
+  };
 }
 
 export interface EmployeeTrainingRecord {
@@ -257,6 +278,56 @@ export async function GET(req: NextRequest) {
         // Without them this roll-up recomputed completion from raw steps alone
         // and disagreed with the learner's own screen.
         const progressMap = await loadExamProgressMap(employeeIds.map(String));
+
+        // Incorrect answers on file per employee + SOP and how many are acknowledged.
+        const ackRows = await ExamAcknowledgement.aggregate<{
+          _id: { employeeId: unknown; sopCode: string };
+          wrong: number;
+          acknowledged: number;
+        }>([
+          {
+            $match: {
+              employeeId: { $in: employeeIds.map((e) => new mongoose.Types.ObjectId(String(e))) },
+              'questions.0': { $exists: true },
+            },
+          },
+          { $unwind: '$questions' },
+          {
+            $group: {
+              _id: { employeeId: '$employeeId', sopCode: '$sopCode' },
+              wrong: { $sum: 1 },
+              acknowledged: {
+                $sum: {
+                  $cond: [
+                    {
+                      $or: [
+                        { $eq: ['$questions.acknowledged', true] },
+                        {
+                          $and: [
+                            { $eq: [{ $type: '$questions.acknowledged' }, 'missing'] },
+                            { $ne: [{ $ifNull: ['$questions.acknowledgedAt', null] }, null] },
+                          ],
+                        },
+                      ],
+                    },
+                    1,
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        ]);
+        const ackMap = new Map<string, { wrong: number; acknowledged: number; sopCode: string }>();
+        for (const r of ackRows) {
+          const key = `${String(r._id.employeeId)}::${progressLookupKey(r._id.sopCode)}`;
+          const prev = ackMap.get(key);
+          ackMap.set(key, {
+            wrong: (prev?.wrong ?? 0) + r.wrong,
+            acknowledged: (prev?.acknowledged ?? 0) + r.acknowledged,
+            sopCode: prev?.sopCode ?? r._id.sopCode,
+          });
+        }
 
         const assignmentKeyLocal = (code: string) =>
           String(code || '').toUpperCase().replace(/-\d+$/, '').trim();
@@ -452,7 +523,13 @@ export async function GET(req: NextRequest) {
               scheduleStatus,
               hasExam: availableSet.has('quiz') || availableSet.has('quizGu'),
               components,
-              exam: examAttemptSummary(steps, Boolean(emp.isTrainer)),
+              exam: (() => {
+                const exam = examAttemptSummary(steps, Boolean(emp.isTrainer));
+                const ack = ackMap.get(`${id}::${progressLookupKey(a.sopCode)}`);
+                return exam && ack
+                  ? { ...exam, wrongAnswers: ack.wrong, acknowledged: ack.acknowledged, ackSopCode: ack.sopCode }
+                  : exam;
+              })(),
             }];
           });
 

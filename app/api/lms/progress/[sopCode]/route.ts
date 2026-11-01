@@ -12,6 +12,7 @@ import {
 } from '@/lib/lmsCache';
 import { LMS_STEP_IDS, recalcOverallPercent } from '@/lib/lmsCompletion';
 import LearningProgress from '@/models/lms/LearningProgress';
+import { recordAttemptMistakes, sanitizeWrongQuestions } from '@/lib/lmsExamReview';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,6 +63,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const { step, availableSteps: initSteps, ...stepData } = body;
 
     let progress = await LearningProgress.findOne({ employeeId: payload.sub, sopCode });
+    // Wrong answers of a formal attempt, saved below once the attempt is recorded.
+    let attemptMistakes: Parameters<typeof recordAttemptMistakes>[0] | null = null;
 
     if (!progress) {
       progress = new LearningProgress({
@@ -114,7 +117,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
           );
         }
       }
-      const merged = { ...current, ...stepData };
+      const merged: Record<string, unknown> = { ...current, ...stepData };
+      // Per-attempt detail — stored on the attempt record below, not on the step.
+      delete merged.wrongQuestionIds;
+      delete merged.wrongQuestions;
+      delete merged.sopName;
 
       // Quiz: once a user has passed, never allow a failed retake to un-complete their training
       if ((step === 'quiz' || step === 'quizGu') && (current.passed === true || current.completed === true)) {
@@ -138,18 +145,44 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         stepData.attempts > 0
       ) {
         const prev = Array.isArray(current.attemptHistory)
-          ? ([...current.attemptHistory] as Array<{ attempt: number; score: number; at?: Date }>)
+          ? ([...current.attemptHistory] as Array<{
+              attempt: number; score: number; at?: Date; passed?: boolean; wrongQuestionIds?: string[];
+            }>)
           : [];
+        // The questions this attempt got wrong — what an acknowledgement may refer
+        // to (see /api/lms/acknowledgements).
+        const wrongQuestions = sanitizeWrongQuestions(stepData.wrongQuestions);
+        const wrongQuestionIds = Array.isArray(stepData.wrongQuestions)
+          ? wrongQuestions.map((q) => q.questionId)
+          : Array.isArray(stepData.wrongQuestionIds)
+            ? stepData.wrongQuestionIds
+                .filter((id): id is string => typeof id === 'string' && id.length > 0)
+                .slice(0, 200)
+            : undefined;
         const entry = {
           attempt: stepData.attempts as number,
           score: stepData.score as number,
           at: new Date(),
+          ...(typeof stepData.passed === 'boolean' ? { passed: stepData.passed } : {}),
+          ...(wrongQuestionIds ? { wrongQuestionIds } : {}),
         };
         const existingIdx = prev.findIndex((h) => h.attempt === entry.attempt);
         if (existingIdx >= 0) prev[existingIdx] = entry;
         else prev.push(entry);
         prev.sort((a, b) => a.attempt - b.attempt);
         merged.attemptHistory = prev;
+        if (wrongQuestions.length) {
+          attemptMistakes = {
+            employeeId: payload.sub,
+            sopCode,
+            sopName: typeof stepData.sopName === 'string' ? stepData.sopName.trim().slice(0, 500) : undefined,
+            step,
+            attempt: entry.attempt,
+            score: entry.score,
+            attemptAt: entry.at,
+            questions: wrongQuestions,
+          };
+        }
       }
 
       (progress.steps as Record<string, unknown>)[step] = merged;
@@ -177,6 +210,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
 
     await progress.save();
+    if (attemptMistakes) await recordAttemptMistakes(attemptMistakes);
     invalidateLmsLearnerCache(payload.sub, sopCode);
     // Trainer/admin dashboards (Trainer View month/employee/SOP-wise counts) cache
     // this employee's completion status too — bust them so counts stay in sync.

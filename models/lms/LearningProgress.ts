@@ -14,6 +14,10 @@ export interface IQuizAttemptRecord {
   attempt: number;
   score: number; // 0-100
   at: Date;
+  /** Whether this attempt met its pass mark. Absent on attempts recorded before the flag existed. */
+  passed?: boolean;
+  /** Question ids answered incorrectly in this attempt — what an acknowledgement may refer to. */
+  wrongQuestionIds?: string[];
 }
 
 export interface IQuizStepProgress {
@@ -63,6 +67,8 @@ const quizAttemptSchema = {
   attempt: { type: Number, required: true },
   score:   { type: Number, required: true },
   at:      { type: Date, default: Date.now },
+  passed:  { type: Boolean },
+  wrongQuestionIds: { type: [String], default: undefined },
 };
 
 const LearningProgressSchema = new Schema<ILearningProgress>(
