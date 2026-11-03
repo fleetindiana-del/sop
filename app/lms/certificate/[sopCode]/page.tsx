@@ -63,6 +63,10 @@ export default function CertificatePage() {
 
       const postRes = await fetch(`/api/lms/certificate/${sopCode}`, { method: 'POST' });
       const postData = await postRes.json();
+      if (postData.inductionCertificate) {
+        router.replace('/lms/induction/certificate');
+        return;
+      }
       if (!postRes.ok) {
         setError(postData.error || 'Certificate could not be issued yet.');
         return;

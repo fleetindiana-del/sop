@@ -8,7 +8,7 @@ import {
   CheckCircle2, AlertCircle, Loader2, RefreshCw,
   FileText, ClipboardList, Award, Calendar,
   ArrowDown, ArrowUp, ChevronsUpDown, Check, X, EyeOff, Users,
-  UserCheck, UserCog,
+  UserCheck, UserCog, ShieldCheck,
 } from 'lucide-react';
 import Link from 'next/link';
 import { signOut, useSession } from 'next-auth/react';
@@ -16,6 +16,7 @@ import { isPrivilegedRole } from '@/lib/page-access';
 import { isAdmin } from '@/lib/roles';
 import { rollupExamAttempts } from '@/lib/lmsExamAttempts';
 import { AttemptCountButton, ExamAttemptsModal } from '@/components/lms/ExamAttemptsModal';
+import { LearnerInductionPanel } from '@/components/lms/LearnerInductionPanel';
 import {
   clearLmsClientCache,
   lmsClientFields,
@@ -140,8 +141,21 @@ function formatAssignedShort(value: string): string {
   return value.length > 8 ? value.slice(0, 8) : value;
 }
 
+/** Induction track from /api/lms/auth/me. */
+interface InductionMeta {
+  status: 'not_assigned' | 'in_progress' | 'completed';
+  total: number;
+  completedCount: number;
+  /** Regular training stays hidden until induction is completed. */
+  regularLocked: boolean;
+}
+
+type TrainingTrack = 'regular' | 'induction';
+
 interface DashboardCache {
   assignments: SopAssignment[];
+  inductionAssignments?: SopAssignment[];
+  induction?: InductionMeta;
   progress: ProgressRecord[];
   certificates: CertRecord[];
   assets?: Record<string, SopAssetFlags>;
@@ -1406,7 +1420,10 @@ function Dashboard({
   const isAppAdmin = Boolean(appRole && isAdmin(appRole));
   const isAppTrainer = appRole === 'trainer';
   const canOpenTrainerView = employee.isTrainer === true || isAppAdmin || isAppTrainer;
-  const [assignments, setAssignments] = useState<SopAssignment[]>([]);
+  const [regularAssignments, setRegularAssignments] = useState<SopAssignment[]>([]);
+  const [inductionAssignments, setInductionAssignments] = useState<SopAssignment[]>([]);
+  const [induction, setInduction] = useState<InductionMeta | null>(null);
+  const [trackChoice, setTrackChoice] = useState<TrainingTrack | null>(null);
   const [progressMap, setProgressMap] = useState<Map<string, ProgressRecord>>(new Map());
   const [certificates, setCertificates] = useState<CertRecord[]>([]);
   const [assetsMap, setAssetsMap] = useState<Record<string, SopAssetFlags>>({});
@@ -1421,11 +1438,29 @@ function Dashboard({
   const [trainerData, setTrainerData] = useState<TrainerTableData | null>(null);
   const trainingsRef = useRef<HTMLElement>(null);
 
+  // Induction is a separate track: while it is pending only the Induction
+  // Training tab exists; once completed, Regular Training opens and the
+  // Induction tab keeps the completed record and certificate.
+  const hasInductionTab = Boolean(induction && induction.status !== 'not_assigned');
+  const regularVisible = !induction?.regularLocked;
+  const track: TrainingTrack = !hasInductionTab
+    ? 'regular'
+    : !regularVisible
+      ? 'induction'
+      : trackChoice ?? (induction?.status === 'in_progress' ? 'induction' : 'regular');
+  const inductionActive = induction?.status === 'in_progress';
+  const assignments = useMemo(
+    () => (track === 'induction' ? (inductionActive ? inductionAssignments : []) : regularAssignments),
+    [track, inductionActive, inductionAssignments, regularAssignments],
+  );
+
   const load = useCallback(async (force = false) => {
     const dashField = lmsClientFields.dashboard(employee.id);
     const cached = !force ? readLmsClientCache<DashboardCache>(dashField) : null;
     if (cached?.value) {
-      setAssignments(validAssignments(cached.value.assignments || []));
+      setRegularAssignments(validAssignments(cached.value.assignments || []));
+      setInductionAssignments(validAssignments(cached.value.inductionAssignments || []));
+      setInduction(cached.value.induction || null);
       setProgressMap(buildProgressMap(cached.value.progress || []));
       setCertificates(cached.value.certificates || []);
       setAssetsMap(cached.value.assets || {});
@@ -1451,14 +1486,18 @@ function Dashboard({
       const certData  = certRes.ok ? await certRes.json() : { certificates: [] };
       const assetData = assetsRes.ok ? await assetsRes.json() : { assets: {} };
       const assignments = validAssignments(meData.assignments || []);
+      const inductionAssignments = validAssignments(meData.inductionAssignments || []);
+      const induction = (meData.induction || null) as InductionMeta | null;
       const progress = (progData.progress || []) as ProgressRecord[];
       const certificates = certData.certificates || [];
       const assets = (assetData.assets || {}) as Record<string, SopAssetFlags>;
-      setAssignments(assignments);
+      setRegularAssignments(assignments);
+      setInductionAssignments(inductionAssignments);
+      setInduction(induction);
       setProgressMap(buildProgressMap(progress));
       setCertificates(certificates);
       setAssetsMap(assets);
-      writeLmsClientCache(dashField, { assignments, progress, certificates, assets });
+      writeLmsClientCache(dashField, { assignments, inductionAssignments, induction, progress, certificates, assets });
     } finally {
       setLoading(false);
     }
@@ -1510,6 +1549,11 @@ function Dashboard({
 
   const handleCertificate = useCallback((sopCode: string) => {
     router.push(`/lms/certificate/${sopCode}`);
+  }, [router]);
+
+  // Induction SOPs share one consolidated certificate.
+  const handleInductionCertificate = useCallback(() => {
+    router.push('/lms/induction/certificate');
   }, [router]);
 
   const handleIgnoreSop = useCallback(async (a: SopAssignment) => {
@@ -1620,11 +1664,12 @@ function Dashboard({
       )
       : undefined;
     const y = new Date().getFullYear();
-    const base = monthFilter === 'all'
+    // Induction SOPs are listed together regardless of their scheduled month.
+    const base = monthFilter === 'all' || track === 'induction'
       ? assignments
       : assignments.filter((a) => a.month === monthFilter && a.year === y);
     return base.map((a) => withEffectiveExamDate(a, employeesByCode));
-  }, [assignments, monthFilter, trainerData]);
+  }, [assignments, monthFilter, trainerData, track]);
 
   const filtered = useMemo(() => {
     let list = monthScopedAssignments;
@@ -1845,6 +1890,15 @@ function Dashboard({
                 <UserCheck className="h-3.5 w-3.5" /> All Employees
               </Link>
             )}
+            {isPrivileged && (
+              <Link
+                href="/lms/admin/induction"
+                className="flex items-center gap-1.5 rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100"
+                title="Induction training progress, attempts and certificates for every new employee"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" /> Induction Training
+              </Link>
+            )}
             {canOpenTrainerView && (
               <Link
                 href="/lms/trainer"
@@ -1918,6 +1972,50 @@ function Dashboard({
               />
             )}
 
+            {hasInductionTab && (
+              <div className="mb-3 flex flex-wrap items-center gap-1.5 border-b border-gray-200" role="tablist">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={track === 'induction'}
+                  onClick={() => setTrackChoice('induction')}
+                  className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition ${
+                    track === 'induction'
+                      ? 'border-orange-500 text-orange-700'
+                      : 'border-transparent text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" /> Induction Training
+                  <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                    induction?.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
+                  }`}>
+                    {induction?.status === 'completed' ? 'Completed' : `${induction?.completedCount ?? 0}/${induction?.total ?? 0}`}
+                  </span>
+                </button>
+                {regularVisible && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={track === 'regular'}
+                    onClick={() => setTrackChoice('regular')}
+                    className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition ${
+                      track === 'regular'
+                        ? 'border-purple-600 text-purple-700'
+                        : 'border-transparent text-gray-500 hover:text-gray-800'
+                    }`}
+                  >
+                    <ClipboardList className="h-3.5 w-3.5" /> Regular Training
+                  </button>
+                )}
+                {!regularVisible && (
+                  <p className="ml-auto pb-1.5 text-[11px] text-gray-500">
+                    Regular training opens after you complete all induction training exams.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {(track === 'regular' || inductionActive) && (<>
             {/* Continue learning */}
             <ContinueLearning assignments={monthScopedAssignments} progressMap={progressMap} onOpen={handleOpen} onPrefetch={prefetchJourney} />
 
@@ -1930,7 +2028,7 @@ function Dashboard({
                     ? (trainerBulk.mode === 'mark-attendance' ? 'Mark Attendance — click a SOP' : 'Schedule Training — select SOPs')
                     : trainerData?.scheduleFilterLabel
                       ? `My Trainings · ${trainerData.scheduleFilterLabel}`
-                      : 'My Trainings'}
+                      : track === 'induction' ? 'Induction Training' : 'My Trainings'}
                 </h2>
                 <div className="flex flex-wrap items-center gap-2">
                   {!trainerBulk && canOpenTrainerView && (
@@ -1960,6 +2058,7 @@ function Dashboard({
               {/* Month + status filters — one row */}
               {!trainerBulk && (
                 <div className="mb-2.5 flex flex-wrap items-center gap-1">
+                  {track === 'regular' && (<>
                   <button
                     type="button"
                     onClick={() => setMonthFilter('all')}
@@ -1992,6 +2091,7 @@ function Dashboard({
                     );
                   })}
                   <span className="mx-1 hidden h-4 w-px bg-gray-200 sm:inline-block" aria-hidden />
+                  </>)}
                   {!showingTrainerSops && (['all', 'in_progress', 'due', 'upcoming', 'completed', 'overdue', 'ignored'] as FilterTab[]).map((tab) => (
                     <button
                       key={tab}
@@ -2046,7 +2146,7 @@ function Dashboard({
                   certMap={certMap}
                   assetsMap={assetsMap}
                   onOpenStep={handleOpenStep}
-                  onCertificate={handleCertificate}
+                  onCertificate={track === 'induction' ? handleInductionCertificate : handleCertificate}
                   onPrefetch={prefetchJourney}
                   onIgnoreSop={trainerBulk || !canOpenTrainerView ? undefined : handleIgnoreSop}
                   ignoringKey={ignoringKey}
@@ -2081,6 +2181,13 @@ function Dashboard({
                   You have <strong>{tabCounts.overdue} overdue</strong> training{tabCounts.overdue !== 1 ? 's' : ''}.
                   Please complete them as soon as possible to remain compliant.
                 </p>
+              </div>
+            )}
+            </>)}
+
+            {track === 'induction' && (
+              <div className="mt-4">
+                <LearnerInductionPanel refreshKey={progressMap} />
               </div>
             )}
           </>

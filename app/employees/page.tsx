@@ -2,11 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSession } from 'next-auth/react';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
+import { isAdmin } from '@/lib/roles';
 import {
   EmployeeTrainingGrid,
   buildMonthlyBreakdown,
+  deleteEmployeeSopAssignment,
   type EmployeeGridRow,
+  type RemoveSopHandler,
   type MonthBreakdown,
   type SopBreakdown,
 } from '@/components/employees/EmployeeTrainingGrid';
@@ -880,6 +884,8 @@ function CredentialsModal({
 
 export default function EmployeesPage() {
   useAuthGuard();
+  const { data: session } = useSession();
+  const canRemoveSops = Boolean(session?.user?.role && isAdmin(session.user.role));
   const [employees,  setEmployees]  = useState<Employee[]>([]);
   const [deletedEmployees, setDeletedEmployees] = useState<Employee[]>([]);
   const [deletedLoading, setDeletedLoading] = useState(false);
@@ -973,6 +979,11 @@ export default function EmployeesPage() {
   }, [loadRoster, loadDeleted]);
 
   useEffect(() => {
+    void loadTraining(activeDept !== 'All' ? activeDept : undefined);
+  }, [loadTraining, activeDept]);
+
+  const removeSop = useCallback<RemoveSopHandler>(async (record, sop) => {
+    await deleteEmployeeSopAssignment(record, sop);
     void loadTraining(activeDept !== 'All' ? activeDept : undefined);
   }, [loadTraining, activeDept]);
 
@@ -1424,6 +1435,7 @@ export default function EmployeesPage() {
             rows={gridRows}
             rosterLoading={loading}
             trainingLoading={trainingLoading}
+            onRemoveSop={canRemoveSops ? removeSop : undefined}
             renderActions={(row) => {
               const emp = findEmployee(row.employeeId);
               if (!emp) return null;

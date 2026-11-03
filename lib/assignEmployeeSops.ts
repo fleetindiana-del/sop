@@ -4,6 +4,7 @@ import { connectDB } from '@/lib/mongodb';
 import MatrixSOPAssignment from '@/models/MatrixSOPAssignment';
 import TrainingMatrixRecord from '@/models/TrainingMatrixRecord';
 import Employee from '@/models/Employee';
+import ScheduledExam from '@/models/lms/ScheduledExam';
 import {
   employeeAssignmentMapKey,
   getEmployeeAssignmentsMap,
@@ -245,10 +246,10 @@ async function updateTrainingExclusions(opts: {
   department: string;
   sopCodes: string[];
   exclude: boolean;
-}): Promise<void> {
+}): Promise<string[]> {
   const keys = [...new Set(opts.sopCodes.map(trainingExclusionKey).filter(Boolean))];
   const name = opts.employeeName.trim();
-  if (keys.length === 0 || !name) return;
+  if (keys.length === 0 || !name) return [];
 
   await connectDB();
   const matches = await Employee.find({
@@ -263,7 +264,7 @@ async function updateTrainingExclusions(opts: {
         .toLowerCase() === wantDept.toLowerCase(),
   );
   const targets = inDept.length > 0 ? inDept : matches.length === 1 ? matches : [];
-  if (targets.length === 0) return;
+  if (targets.length === 0) return [];
 
   await Employee.updateMany(
     { _id: { $in: targets.map((t) => t._id) } },
@@ -272,6 +273,7 @@ async function updateTrainingExclusions(opts: {
       : { $pull: { excludedTrainingSops: { $in: keys } } },
   );
   invalidateEmployeeAssignmentsCache();
+  return targets.map((t) => String(t._id));
 }
 
 export async function persistEmployeeSopAssignments(opts: {
@@ -346,12 +348,28 @@ export async function persistEmployeeSopRemovals(opts: {
 
   // Recorded before the matrix removal so the rebuilt assignment map no longer
   // re-derives these SOPs from trainer coverage / designation applicability.
-  await updateTrainingExclusions({
+  const employeeIds = await updateTrainingExclusions({
     employeeName: opts.employeeName,
     department: opts.department,
     sopCodes: codes,
     exclude: true,
   });
+
+  // A pending trainer-scheduled exam also surfaces the SOP (and ignores the
+  // exclusion list), so cancel it too or the removal does not stick.
+  if (employeeIds.length > 0) {
+    const bases = [...new Set(codes.map(trainingExclusionKey).filter(Boolean))];
+    await ScheduledExam.updateMany(
+      {
+        employeeId: { $in: employeeIds },
+        status: 'scheduled',
+        sopCode: {
+          $in: bases.map((b) => new RegExp(`^${b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-\\d+)?$`, 'i')),
+        },
+      },
+      { $set: { status: 'cancelled' } },
+    );
+  }
 
   const req = new NextRequest('http://localhost/api/training-matrix/manage-sop-view', {
     method: 'POST',

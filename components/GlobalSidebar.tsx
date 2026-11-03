@@ -12,7 +12,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
-  Cloud,
   FileQuestion,
   Files,
   GraduationCap,
@@ -71,6 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Induction Matrix', href: '/induction-training-matrix', icon: Users },
       { label: 'LMS Administration', href: '/lms/admin', icon: SlidersHorizontal },
       { label: 'Trainer Overview', href: '/lms/admin/trainer-overview', icon: Users },
+      { label: 'Induction Training', href: '/lms/admin/induction', icon: ShieldCheck },
     ],
   },
   {
@@ -80,11 +80,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Compliance Engine', href: '/compliance', icon: ShieldCheck },
       { label: 'Request a Review', href: '/compliance/request', icon: ClipboardCheck },
     ],
-  },
-  {
-    label: 'Storage',
-    icon: Cloud,
-    items: [{ label: 'Bunny Files', href: '/bunny-files', icon: Cloud }],
   },
 ];
 
@@ -103,6 +98,19 @@ export function GlobalSidebar() {
   const learner = isLearnerOnly(role);
 
   const [open, setOpen] = React.useState(false);
+  const asideRef = React.useRef<HTMLElement>(null);
+
+  // Double-clicking anywhere outside the open sidebar collapses it, alongside
+  // the explicit "Collapse sidebar" button.
+  React.useEffect(() => {
+    if (!open) return;
+    const onDoubleClick = (e: MouseEvent) => {
+      if (asideRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener('dblclick', onDoubleClick);
+    return () => document.removeEventListener('dblclick', onDoubleClick);
+  }, [open]);
   const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(() => {
     const active = NAV_GROUPS.find((group) =>
       group.items.some((item) => pathIsActive(pathname, item.href)),
@@ -140,6 +148,7 @@ export function GlobalSidebar() {
       )}
 
       <aside
+        ref={asideRef}
         aria-label="Main navigation"
         className={`fixed inset-y-0 left-0 z-[80] flex w-[290px] flex-col border-r border-slate-200 bg-white shadow-2xl transition-transform duration-300 print:hidden ${
           open ? 'translate-x-0' : '-translate-x-full'

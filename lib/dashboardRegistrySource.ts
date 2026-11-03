@@ -4,7 +4,9 @@ import { groupSOPRecords } from '@/lib/sop-utils';
 import { SOP_LIST_EXCLUDE } from '@/lib/sop-list-projection';
 import { getOrBuildServerGroupedCache } from "@/lib/server-cache";
 import {
+  familyKeysFor,
   readPersistentGroupedCache,
+  refreshPersistentGroupedCacheIncrementally,
   writePersistentGroupedCache,
   signatureFromRecords,
 } from '@/lib/persistentGroupedCache';
@@ -48,6 +50,11 @@ async function loadGroupedRegistry(): Promise<RegistrySOP[]> {
     const persisted = await readPersistentGroupedCache();
     if (persisted) return persisted;
 
+    // Stale because a few SOPs changed: regroup just those families instead of
+    // the full 16-54s collection scan below.
+    const patched = await refreshPersistentGroupedCacheIncrementally();
+    if (patched) return patched;
+
     // Exclude extracted SOP text AND the later MCQ/compliance parse caches.
     // `content` is ~30KB avg / up to 77KB (~56MB across the collection).
     // `mcqClauseCache` stores per-clause full text (same magnitude) and was
@@ -59,13 +66,19 @@ async function loadGroupedRegistry(): Promise<RegistrySOP[]> {
     // full scan here buys nothing. Worse, sorting an unindexed scan forces an
     // in-memory sort that exceeds M0's 32MB limit on this collection — that was the
     // ~31s cold-query penalty. Dropping it lets the scan stream straight through.
-    const records = await SOP.find({}).select(SOP_LIST_EXCLUDE).lean();
+    // Small batches: one ~5MB first batch outlasted the 45s socket timeout on
+    // the throttled M0 link (MongoNetworkTimeoutError); each getMore stays short.
+    const records = await SOP.find({}).select(SOP_LIST_EXCLUDE).batchSize(200).lean();
     const grouped = groupSOPRecords(records as never[]);
 
     // Persist for the next cold container. Signature is taken from the records we
     // just scanned (exact, no race with a concurrent mutation). Fire-and-forget so
     // the request isn't held up by the cache write.
-    void writePersistentGroupedCache(grouped, signatureFromRecords(records as never[]));
+    void writePersistentGroupedCache(
+      grouped,
+      signatureFromRecords(records as never[]),
+      familyKeysFor(grouped, records as never[]),
+    );
 
     return grouped;
   });
