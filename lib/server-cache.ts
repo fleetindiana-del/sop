@@ -12,7 +12,10 @@ const SERVER_TTL_MS = 60 * 1000;
 export function invalidateDashboardSopsCache() {
   serverGroupedCache = null;
   serverGroupedInFlight = null;
-  void invalidatePersistentGroupedCache();
+  // The persisted copy is kept: its signature (count + newest updatedAt) already
+  // detects the write, and the next read patches only the changed families
+  // instead of rescanning the whole SOP collection (16-54s on Atlas M0).
+  // bustServerDashboardCache() still drops it for a full rebuild.
   // Propagate to every other SOP-derived cache (training matrix, induction
   // matrix, manage-SOPs view, LMS portal) so a single dashboard edit reflects
   // everywhere instantly instead of waiting out each cache's TTL.

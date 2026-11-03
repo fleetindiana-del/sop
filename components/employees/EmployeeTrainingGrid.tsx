@@ -3,7 +3,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDown, ArrowUp, ChevronsUpDown, CheckCircle2, Circle, FileText,
-  ListChecks, Loader2, Presentation, Search, Video, X, Eye, EyeOff, BarChart2,
+  ListChecks, Loader2, Presentation, Search, Video, X, Eye, EyeOff, BarChart2, Trash2,
 } from 'lucide-react';
 import { colPct, employeeGridColWidths } from '@/components/lms/trainingGridLayout';
 import { DeptFieldCell } from '@/components/lms/DeptFieldCell';
@@ -461,10 +461,62 @@ function formatScheduledMonths(months: number[]): string {
   return months.map((m) => MONTHS[m - 1] || `M${m}`).join(', ');
 }
 
-function DrillDownModal({ drill, onClose }: { drill: DrillState; onClose: () => void }) {
+/** Removes one mistakenly assigned SOP from one employee. Throws with a message on failure. */
+export type RemoveSopHandler = (record: EmployeeGridRow, sop: SopBreakdown) => Promise<void>;
+
+/**
+ * Unassign one SOP from one employee. The server also records it in the
+ * employee's exclusions, so designation / trainer coverage do not re-add it.
+ */
+export async function deleteEmployeeSopAssignment(record: EmployeeGridRow, sop: SopBreakdown): Promise<void> {
+  const res = await fetch('/api/training-matrix/assign-employee-sops', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      employeeName: record.employeeName,
+      department: record.department,
+      sopCodes: [sop.sopCode],
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'Failed to remove SOP');
+  }
+}
+
+function DrillDownModal({
+  drill,
+  onClose,
+  onRemoveSop,
+}: {
+  drill: DrillState;
+  onClose: () => void;
+  onRemoveSop?: RemoveSopHandler;
+}) {
   const { record } = drill;
   const isProgress = drill.kind === 'progress' || drill.kind === 'all';
   const [query, setQuery] = useState('');
+  // The drill holds a snapshot of the row, so hide removed SOPs locally until
+  // the parent reloads.
+  const [removed, setRemoved] = useState<Set<string>>(() => new Set());
+  const [confirmCode, setConfirmCode] = useState<string | null>(null);
+  const [removingCode, setRemovingCode] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState('');
+
+  const removeSop = async (sop: SopBreakdown) => {
+    if (!onRemoveSop) return;
+    setRemovingCode(sop.sopCode);
+    setRemoveError('');
+    try {
+      await onRemoveSop(record, sop);
+      setRemoved((prev) => new Set(prev).add(sop.sopCode));
+      setConfirmCode(null);
+    } catch (err) {
+      setRemoveError(err instanceof Error ? err.message : 'Failed to remove SOP');
+    } finally {
+      setRemovingCode(null);
+    }
+  };
   const [sort, setSort] = useState<SortState>({ key: 'sopCode', dir: 'asc' });
   const onSort = (key: string) =>
     setSort((prev) => nextSort(prev, key, key === 'sopCode' || key === 'sopName' || key === 'sched' ? 'asc' : 'desc'));
@@ -476,14 +528,15 @@ function DrillDownModal({ drill, onClose }: { drill: DrillState; onClose: () => 
   }, [onClose]);
 
   const sops = useMemo(() => {
-    if (drill.kind === 'all' || drill.kind === 'progress') return record.sops;
-    if (drill.kind === 'status') return record.sops.filter((s) => s.status === drill.status);
-    return record.sops.filter((s) => {
+    const assigned = removed.size ? record.sops.filter((s) => !removed.has(s.sopCode)) : record.sops;
+    if (drill.kind === 'all' || drill.kind === 'progress') return assigned;
+    if (drill.kind === 'status') return assigned.filter((s) => s.status === drill.status);
+    return assigned.filter((s) => {
       if (!s.months.includes(drill.month)) return false;
       if (drill.status) return s.status === drill.status;
       return true;
     });
-  }, [drill, record]);
+  }, [drill, record, removed]);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -617,6 +670,12 @@ function DrillDownModal({ drill, onClose }: { drill: DrillState; onClose: () => 
           </div>
         )}
 
+        {removeError && (
+          <p className="shrink-0 border-b border-red-100 bg-red-50 px-5 py-2 text-xs font-medium text-red-700">
+            {removeError}
+          </p>
+        )}
+
         {/* Table */}
         <div className="min-h-0 flex-1 overflow-auto">
           {sops.length === 0 ? (
@@ -647,6 +706,11 @@ function DrillDownModal({ drill, onClose }: { drill: DrillState; onClose: () => 
                   {isProgress && (
                     <th className="min-w-[200px] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
                       What&apos;s going on
+                    </th>
+                  )}
+                  {onRemoveSop && (
+                    <th className="px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                      Remove
                     </th>
                   )}
                 </tr>
@@ -725,6 +789,42 @@ function DrillDownModal({ drill, onClose }: { drill: DrillState; onClose: () => 
                       {prog && (
                         <td className="px-4 py-2 align-middle text-[11px] leading-snug text-gray-600">
                           {prog.summary}
+                        </td>
+                      )}
+                      {onRemoveSop && (
+                        <td className="px-3 py-2 text-right align-middle whitespace-nowrap">
+                          {removingCode === s.sopCode ? (
+                            <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin text-red-500" />
+                          ) : confirmCode === s.sopCode ? (
+                            <span className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => removeSop(s)}
+                                disabled={removingCode !== null}
+                                className="rounded-md bg-red-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                              >
+                                Remove
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmCode(null)}
+                                className="rounded-md border border-gray-200 px-2 py-1 text-[10px] font-semibold text-gray-600 hover:bg-gray-50"
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => { setRemoveError(''); setConfirmCode(s.sopCode); }}
+                              disabled={removingCode !== null}
+                              className="rounded-md p-1.5 text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                              title={`Remove ${s.sopCode} from ${record.employeeName}`}
+                              aria-label={`Remove ${s.sopCode} from ${record.employeeName}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </td>
                       )}
                     </tr>
@@ -877,12 +977,15 @@ export function EmployeeTrainingGrid({
   rosterLoading,
   renderActions,
   showActions = true,
+  onRemoveSop,
 }: {
   rows: EmployeeGridRow[];
   trainingLoading: boolean;
   rosterLoading: boolean;
   renderActions?: (row: EmployeeGridRow) => ReactNode;
   showActions?: boolean;
+  /** When set, each SOP in the drill-down gets a remove button (admins only). */
+  onRemoveSop?: RemoveSopHandler;
 }) {
   const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
   const [drill, setDrill] = useState<DrillState | null>(null);
@@ -1103,7 +1206,7 @@ export function EmployeeTrainingGrid({
         )}
       </div>
 
-      {drill && <DrillDownModal drill={drill} onClose={() => setDrill(null)} />}
+      {drill && <DrillDownModal drill={drill} onClose={() => setDrill(null)} onRemoveSop={onRemoveSop} />}
     </>
   );
 }

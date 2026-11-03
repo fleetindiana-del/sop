@@ -12,7 +12,9 @@ import { TrainingDeptCapsules, type TrainingDeptCapsule, type SopCapsuleFilter, 
 import {
   EmployeeTrainingGrid,
   buildMonthlyBreakdown,
+  deleteEmployeeSopAssignment,
   type EmployeeGridRow,
+  type RemoveSopHandler,
   type MonthBreakdown,
   type SopBreakdown as GridSopBreakdown,
 } from '@/components/employees/EmployeeTrainingGrid';
@@ -472,6 +474,8 @@ export default function EmployeeTrainingDashboardPage() {
     if (authStatus === 'unauthenticated') router.push('/login');
   }, [authStatus, router]);
 
+  const canRemoveSops = Boolean(session?.user?.role && isAdmin(session.user.role));
+
   const load = useCallback(async (force = false) => {
     const field = lmsClientFields.adminEmployeeTraining('all');
     const cached = !force ? readLmsClientCache<{ records: EmployeeTrainingRecord[] }>(field) : null;
@@ -509,6 +513,11 @@ export default function EmployeeTrainingDashboardPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const removeSop = useCallback<RemoveSopHandler>(async (record, sop) => {
+    await deleteEmployeeSopAssignment(record, sop);
+    void load(true);
+  }, [load]);
 
   const gridRows = useMemo((): EmployeeGridRow[] => {
     const q = search.trim().toLowerCase();
@@ -917,6 +926,7 @@ export default function EmployeeTrainingDashboardPage() {
               rosterLoading={loading}
               trainingLoading={false}
               showActions
+              onRemoveSop={canRemoveSops ? removeSop : undefined}
             />
           </div>
         ) : (

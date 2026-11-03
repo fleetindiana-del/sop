@@ -81,13 +81,9 @@ function preferByDepartment(rows: EmployeeLean[], userDepartment: string): Emplo
  * heuristic below — including for a Super Admin or SOP Admin, whose display
  * name rarely matches an employee at all.
  */
-async function linkedEmployee(userId: string): Promise<EmployeeLean | null> {
-  if (!userId) return null;
-  const user = await User.findById(userId).select('lmsEmployeeId').lean<{
-    lmsEmployeeId?: unknown;
-  } | null>();
-  if (!user?.lmsEmployeeId) return null;
-  return Employee.findOne({ _id: user.lmsEmployeeId, isActive: true })
+async function linkedEmployee(lmsEmployeeId: unknown): Promise<EmployeeLean | null> {
+  if (!lmsEmployeeId) return null;
+  return Employee.findOne({ _id: lmsEmployeeId, isActive: true })
     .select(LEAN_FIELDS)
     .lean<EmployeeLean | null>();
 }
@@ -99,11 +95,7 @@ async function linkedEmployee(userId: string): Promise<EmployeeLean | null> {
  * LMS-only: they hold their own learning-module password, so a dashboard
  * session must not open their training record on its own.
  */
-async function sharesLmsLogin(userId: string): Promise<boolean> {
-  if (!userId) return true;
-  const user = await User.findById(userId).select('sharedLmsLogin').lean<{
-    sharedLmsLogin?: boolean;
-  } | null>();
+function sharesLmsLogin(user: { sharedLmsLogin?: boolean } | null): boolean {
   return isSharedLmsLogin(user || {});
 }
 
@@ -129,20 +121,30 @@ async function employeeForAppUser(
 ): Promise<{ employee: EmployeeLean } | { problem: LmsIdentityProblem }> {
   await connectDB();
 
-  if (!(await sharesLmsLogin(userId))) return { problem: 'lms-login-required' };
+  // One read covers both the shared-login flag and the admin-set link; this
+  // runs on every LMS request made with a dashboard session.
+  const user = userId
+    ? await User.findById(userId).select('sharedLmsLogin lmsEmployeeId').lean<{
+        sharedLmsLogin?: boolean;
+        lmsEmployeeId?: unknown;
+      } | null>()
+    : null;
+  if (userId && !sharesLmsLogin(user)) return { problem: 'lms-login-required' };
 
-  const linked = await linkedEmployee(userId);
+  const linked = await linkedEmployee(user?.lmsEmployeeId);
   if (linked) return { employee: linked };
 
   if (username) {
-    const byHandle = await Employee.findOne({ lmsUsername: ci(username), isActive: true })
-      .select(LEAN_FIELDS)
-      .lean<EmployeeLean | null>();
+    // Independent lookups, run together; the handle still wins over the code.
+    const [byHandle, byCode] = await Promise.all([
+      Employee.findOne({ lmsUsername: ci(username), isActive: true })
+        .select(LEAN_FIELDS)
+        .lean<EmployeeLean | null>(),
+      Employee.findOne({ employeeId: ci(username), isActive: true })
+        .select(LEAN_FIELDS)
+        .lean<EmployeeLean | null>(),
+    ]);
     if (byHandle) return { employee: byHandle };
-
-    const byCode = await Employee.findOne({ employeeId: ci(username), isActive: true })
-      .select(LEAN_FIELDS)
-      .lean<EmployeeLean | null>();
     if (byCode) return { employee: byCode };
   }
 

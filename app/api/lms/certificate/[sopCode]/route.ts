@@ -14,6 +14,9 @@ import Certificate from '@/models/lms/Certificate';
 import LearningProgress from '@/models/lms/LearningProgress';
 import Employee from '@/models/Employee';
 import SOP from '@/models/SOP';
+import { getEmployeeAssignmentsMap, employeeAssignmentMapKey } from '@/lib/employeeAssignments';
+import { inductionAssignmentsOf } from '@/lib/lmsInduction';
+import { stripVersion } from '@/lib/lmsExamScheduling';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,6 +71,28 @@ export async function POST(_req: NextRequest, { params }: Params) {
     // Already issued?
     const existing = await Certificate.findOne({ employeeId: payload.sub, sopCode }).lean();
     if (existing) return NextResponse.json({ certificate: existing });
+
+    // Induction SOPs are certified together on the consolidated induction
+    // certificate, never one certificate per SOP.
+    const learner = await Employee.findById(payload.sub)
+      .select('name department inductionTrainingRequired')
+      .lean<{ name: string; department: string; inductionTrainingRequired?: boolean }>();
+    if (learner?.inductionTrainingRequired === true) {
+      const map = await getEmployeeAssignmentsMap({ departments: [learner.department].filter(Boolean) });
+      const family = stripVersion(sopCode);
+      const isInduction = inductionAssignmentsOf(
+        map.get(employeeAssignmentMapKey(learner.department, learner.name)) || [],
+      ).some((a) => stripVersion(a.sopCode) === family);
+      if (isInduction) {
+        return NextResponse.json(
+          {
+            error: 'Induction SOPs are certified on your consolidated induction training certificate.',
+            inductionCertificate: true,
+          },
+          { status: 409 },
+        );
+      }
+    }
 
     // Verify progress is complete AND the quiz was actually passed
     const progress = await LearningProgress.findOne({ employeeId: payload.sub, sopCode });

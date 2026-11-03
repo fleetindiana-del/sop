@@ -1236,13 +1236,28 @@ async function mergeInductionAssignments(
     isActive: true,
     ...deptFilter,
   })
-    .select('name department designation dateOfJoining')
-    .lean<Array<{ name: string; department: string; designation: string; dateOfJoining?: Date }>>();
+    .select('name department designation dateOfJoining excludedTrainingSops')
+    .lean<Array<{
+      name: string;
+      department: string;
+      designation: string;
+      dateOfJoining?: Date;
+      excludedTrainingSops?: string[];
+    }>>();
 
   if (flagged.length === 0) return;
 
+  // SOPs an admin removed from one employee must not come back via induction.
+  const excludedByEmp = new Map<string, Set<string>>();
+  for (const e of flagged) {
+    if (!e.excludedTrainingSops?.length) continue;
+    const excluded = trainingExclusionSet(e.excludedTrainingSops);
+    for (const k of empKeys(e.department, e.name)) excludedByEmp.set(k, excluded);
+  }
+
   const add = (department: string, name: string, assignment: EmployeeSopAssignment) => {
     if (isInvalidSopAssignmentCode(assignment.sopCode)) return;
+    if (excludedByEmp.get(empKey(department, name))?.has(trainingExclusionKey(assignment.sopCode))) return;
     let list = getAliasedAssignments(map, department, name);
     if (!list) {
       list = [];

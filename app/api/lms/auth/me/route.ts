@@ -12,6 +12,9 @@ import { filterIgnoredAssignments, listTrainingIgnores } from '@/lib/lmsTraining
 import { applyReschedulesToList, listTrainingReschedules } from '@/lib/lmsTrainingReschedule';
 import { formatCycleStart, getTrainingCycleStart } from '@/lib/lmsTrainingCycle';
 import { toLmsClientEmployee } from '@/lib/employeeTrainer';
+import { getInductionGate } from '@/lib/lmsInductionGate';
+import { inductionAssignmentsOf, loadInductionSummaries } from '@/lib/lmsInduction';
+import { stripVersion } from '@/lib/lmsExamScheduling';
 import Employee from '@/models/Employee';
 
 export const runtime = 'nodejs';
@@ -45,6 +48,7 @@ export async function GET() {
           isActive: boolean;
           isTrainer?: boolean;
           trainerDepartments?: string[];
+          inductionTrainingRequired?: boolean;
         }>();
         if (!employee || !employee.isActive) {
           return null;
@@ -62,16 +66,38 @@ export async function GET() {
           listTrainingReschedules(employee.department),
         ]);
         const notExplicitlyIgnored = filterIgnoredAssignments(raw, ignoreRules, employee.department);
-        const assignments = applyReschedulesToList(notExplicitlyIgnored, rescheduleRules, {
+        const scheduled = applyReschedulesToList(notExplicitlyIgnored, rescheduleRules, {
           employeeId: String(employee._id),
           employeeDepartment: employee.department,
         });
+        // Induction is its own track. While its exams are pending (and the gate
+        // applies) regular training stays hidden; once induction is completed
+        // it is no longer active training and only regular training is listed.
+        const gate = await getInductionGate(employee, scheduled);
+        const inductionList = inductionAssignmentsOf(scheduled);
+        const inductionFamilies = new Set(inductionList.map((a) => stripVersion(a.sopCode)));
+        const regular = scheduled.filter(
+          (a) => a.trainingType !== 'induction' && !inductionFamilies.has(stripVersion(a.sopCode)),
+        );
+        const summary = (await loadInductionSummaries([{ id: String(employee._id), assignments: scheduled }]))
+          .get(String(employee._id));
+        const inductionStatus = employee.inductionTrainingRequired === true && summary
+          ? summary.status
+          : 'not_assigned';
+        const regularLocked = gate.pending.length > 0;
 
         const cycle = getTrainingCycleStart();
 
         return {
           employee: toLmsClientEmployee(employee),
-          assignments,
+          assignments: regularLocked ? [] : regular,
+          inductionAssignments: inductionStatus === 'in_progress' ? inductionList : [],
+          induction: {
+            status: inductionStatus,
+            total: summary?.total ?? 0,
+            completedCount: summary?.completedCount ?? 0,
+            regularLocked,
+          },
           trainingCycleStart: formatCycleStart(cycle),
         };
       },

@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Loader2,
   Settings2,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 import { SopExamSettingsPanel } from "@/components/lms/SopExamSettingsPanel";
@@ -57,6 +58,12 @@ export default function LmsAdminPage() {
                 <Users className="h-3.5 w-3.5" /> Trainer Overview
               </Link>
             )}
+            <Link
+              href="/lms/admin/induction"
+              className="flex items-center gap-1.5 rounded-lg border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-700 transition hover:bg-orange-100"
+            >
+              <ShieldCheck className="h-3.5 w-3.5" /> Induction Training
+            </Link>
             <Link
               href="/lms/admin/global"
               className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
