@@ -13,6 +13,7 @@ import { loadGroupedRegistry } from "@/lib/dashboardRegistrySource";
 import { attachRegistryCompliance } from "@/lib/registry-compliance-server";
 import { filterByAssignedDepartments, requireAuth } from "@/lib/withAuth";
 import { actorFromSession, logSopAudit, snapshotSop } from "@/lib/audit-log";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
@@ -59,7 +60,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -88,3 +89,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

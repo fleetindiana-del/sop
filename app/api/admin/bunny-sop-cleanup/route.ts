@@ -11,8 +11,9 @@ import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { SOP_LIST_EXCLUDE } from "@/lib/sop-list-projection";
 import { requireAuth } from "@/lib/withAuth";
 import { isBunnyConfigured } from "@/lib/validateEnv";
+import { withActivityLog } from "@/lib/activity-log";
 
-export async function POST() {
+async function handlePOST() {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -79,3 +80,5 @@ export async function POST() {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

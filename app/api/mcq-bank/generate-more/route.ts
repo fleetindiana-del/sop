@@ -9,10 +9,11 @@ import { MCQ_CONTENT_LIMIT, mcqPromptSopExcerpt } from "@/lib/mcq-source-text";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { requireAuth } from "@/lib/withAuth";
 import { sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
+import { withActivityLog } from "@/lib/activity-log";
 
 const REPLACE_PROMPT = MCQ_REPLACE_SYSTEM;
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -74,3 +75,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

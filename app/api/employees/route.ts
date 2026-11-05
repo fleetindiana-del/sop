@@ -17,6 +17,7 @@ import {
   listSopsAssignedToEmployee,
   persistEmployeeSopAssignments,
 } from '@/lib/assignEmployeeSops';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -94,7 +95,7 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/employees — create a new employee
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     await connectDB();
     const body = await req.json();
@@ -196,3 +197,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

@@ -5,10 +5,11 @@ import SOPGuideline from "@/models/SOPGuideline";
 import { analyzeSOPComplianceV2 } from "@/lib/complianceEngineV2";
 import { saveComplianceReport } from "@/lib/complianceReportStorage";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 300;
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
@@ -80,3 +81,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

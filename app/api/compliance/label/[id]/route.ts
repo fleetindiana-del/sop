@@ -10,6 +10,7 @@ import {
   type GapLifecycleStatus,
   type ProductClassification,
 } from "@/lib/label-compliance/types";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 60;
 
@@ -32,7 +33,7 @@ export async function GET(
   return NextResponse.json({ success: true, report });
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -99,3 +100,5 @@ export async function PATCH(
   if (!updated) return NextResponse.json({ error: "Report not found" }, { status: 404 });
   return NextResponse.json({ success: true, report: updated });
 }
+
+export const PATCH = withActivityLog(handlePATCH);

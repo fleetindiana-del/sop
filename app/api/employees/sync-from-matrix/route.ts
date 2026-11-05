@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { syncEmployeesFromMatrix } from '@/lib/syncEmployeesFromMatrix';
 import { invalidateEmployeeDerivedCaches } from '@/lib/employeeCacheInvalidation';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +14,7 @@ export const dynamic = 'force-dynamic';
 // Note: this now also runs automatically on every GET /api/employees, so the
 // employee page stays in sync without anyone pressing a button. Kept for
 // explicit/manual triggers and backwards compatibility.
-export async function POST() {
+async function handlePOST() {
   try {
     await connectDB();
     const result = await syncEmployeesFromMatrix();
@@ -31,3 +32,5 @@ export async function POST() {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

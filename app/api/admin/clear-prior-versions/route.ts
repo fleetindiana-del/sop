@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { clearAllPriorVersionRecords } from "@/lib/clear-prior-versions";
 import { requireAuth } from "@/lib/withAuth";
 import { actorFromSession, runWithAuditActor } from "@/lib/audit-log";
+import { withActivityLog } from "@/lib/activity-log";
 
-export async function POST() {
+async function handlePOST() {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -19,3 +20,5 @@ export async function POST() {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

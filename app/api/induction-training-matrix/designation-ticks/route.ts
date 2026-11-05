@@ -10,6 +10,7 @@ import {
 } from '@/lib/inductionDesignationAssignments';
 import { invalidateInductionTrainingMatrixCache } from '@/lib/inductionTrainingMatrixCache';
 import { invalidateEmployeeAssignmentsCache } from '@/lib/employeeAssignments';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,7 +47,7 @@ export async function GET() {
 // Body: { ticks: { [sopCode]: { "dept|designation": boolean } } } — the full
 // induction state for each SOP sent; departments left with no ticked
 // designation have their assignment deactivated.
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const auth = await requireAuth(['admin', 'trainer']);
   if (auth.error) return auth.error;
   try {
@@ -138,3 +139,5 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const PUT = withActivityLog(handlePUT);

@@ -9,12 +9,13 @@ import {
   findEmployeeForLmsLogin,
   passwordMatchesLmsLogin,
 } from '@/lib/sharedLoginLookup';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // POST /api/lms/auth/login — employee learning-module sign in.
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     const { username, password } = await req.json();
     if (!username || !password) {
@@ -59,3 +60,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

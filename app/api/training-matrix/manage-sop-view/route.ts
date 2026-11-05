@@ -48,6 +48,7 @@ import {
 import { resolveTrainerDepartments } from "@/lib/employeeTrainer";
 import SOP from "@/models/SOP";
 import { getLeftEmployeeKeys, isLeftEmployee } from "@/lib/leftEmployees";
+import { withActivityLog } from "@/lib/activity-log";
 
 const MONTH_NAMES = [
   "",
@@ -1607,7 +1608,7 @@ async function getOrCreateManualUploadId(
   return created._id;
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+async function handlePOST(request: NextRequest): Promise<NextResponse> {
   const reqStartMs = nowMs();
   try {
     const dbConnectStartMs = nowMs();
@@ -2377,3 +2378,5 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

@@ -3,10 +3,11 @@ import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth, forbidUnlessDepartmentAccess } from "@/lib/withAuth";
 import { mcqResolveDept } from "@/lib/mcq-bank-utils";
+import { withActivityLog } from "@/lib/activity-log";
 
 // PATCH /api/mcq-bank/update-status
 // Body: { bankId, index, field: "isChecked"|"isReviewed"|"isSimilar", value: boolean }
-export async function PATCH(request: NextRequest) {
+async function handlePATCH(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -59,3 +60,5 @@ export async function PATCH(request: NextRequest) {
     );
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);

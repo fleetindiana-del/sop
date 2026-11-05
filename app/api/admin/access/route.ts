@@ -13,6 +13,7 @@ import { APP_PAGES, sanitizePageAccess } from "@/lib/page-registry";
 import { actorFromSession, logUserAudit, snapshotUser } from "@/lib/audit-log";
 import { invalidateUserAccessCaches } from "@/lib/userAccessCacheInvalidation";
 import type { AppRole } from "@/lib/auth";
+import { withActivityLog } from "@/lib/activity-log";
 
 type UserAccessRow = {
   _id: mongoose.Types.ObjectId;
@@ -84,7 +85,7 @@ export async function GET() {
 }
 
 // PATCH /api/admin/access — update one user's page and department access.
-export async function PATCH(request: NextRequest) {
+async function handlePATCH(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -172,3 +173,5 @@ export async function PATCH(request: NextRequest) {
     );
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);

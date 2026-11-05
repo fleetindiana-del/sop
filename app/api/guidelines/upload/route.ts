@@ -10,6 +10,7 @@ import {
   identifyGuidelineType,
   categorizeGuideline,
 } from "@/lib/ocrProcessor";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 120;
 
@@ -35,7 +36,7 @@ function clearCache() { summaryCache = null; }
 
 // ── POST — Upload PDFs ─────────────────────────────────────────────────────
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
   const userId = (auth.session?.user as { id?: string })?.id ?? "system";
@@ -255,7 +256,7 @@ export async function GET(request: NextRequest) {
 
 // ── DELETE — Remove single guideline ──────────────────────────────────────
 
-export async function DELETE(request: NextRequest) {
+async function handleDELETE(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -280,3 +281,6 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);
+export const DELETE = withActivityLog(handleDELETE);

@@ -10,10 +10,11 @@ import {
   buildVersionComparison,
 } from "@/lib/label-compliance/analyze";
 import { rateLimitLabelApi, requireGeminiConfigured } from "@/lib/label-compliance/http";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 180;
 
-export async function POST(
+async function handlePOST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -94,3 +95,5 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

@@ -3,10 +3,11 @@ import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth, forbidUnlessDepartmentAccess } from "@/lib/withAuth";
 import { mcqResolveDept } from "@/lib/mcq-bank-utils";
+import { withActivityLog } from "@/lib/activity-log";
 
 // POST /api/mcq-bank/edit-question
 // Body: { bankId, questionIndex, question, options, correctAnswer, explanation, sopReference? }
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -91,3 +92,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

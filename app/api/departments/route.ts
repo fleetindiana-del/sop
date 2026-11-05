@@ -15,6 +15,7 @@ import { resolveTrainerDepartments } from "@/lib/employeeTrainer";
 import { deptMatchesTrainerScope } from "@/lib/lmsTrainerScope";
 import Employee from "@/models/Employee";
 import User from "@/models/User";
+import { withActivityLog } from "@/lib/activity-log";
 
 // Password required to delete a department (also enforced in the UI).
 const DELETE_PASSWORD = "indiana132";
@@ -97,7 +98,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -142,7 +143,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function PATCH(request: NextRequest) {
+async function handlePATCH(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -194,7 +195,7 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
-export async function DELETE(request: NextRequest) {
+async function handleDELETE(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -238,3 +239,7 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);
+export const PATCH = withActivityLog(handlePATCH);
+export const DELETE = withActivityLog(handleDELETE);

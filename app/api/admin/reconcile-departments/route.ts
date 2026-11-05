@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { reconcileAllDepartments } from "@/lib/reconcile-departments";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -18,3 +19,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

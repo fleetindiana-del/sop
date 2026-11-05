@@ -5,6 +5,7 @@ import LabelComplianceReport from "@/models/LabelComplianceReport";
 import { scoreLabelDraft } from "@/lib/label-compliance/analyze";
 import { rateLimitLabelApi, requireGeminiConfigured } from "@/lib/label-compliance/http";
 import { PRODUCT_CLASSIFICATIONS, type ProductClassification } from "@/lib/label-compliance/types";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 120;
 
@@ -12,7 +13,7 @@ function isClassification(value: unknown): value is ProductClassification {
   return typeof value === "string" && (PRODUCT_CLASSIFICATIONS as readonly string[]).includes(value);
 }
 
-export async function POST(
+async function handlePOST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -74,3 +75,5 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

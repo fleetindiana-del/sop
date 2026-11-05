@@ -6,6 +6,7 @@ import { markMcqBanksObsoleteForIdentifier } from "@/lib/mcq-bank-sync";
 import { forbidUnlessDepartmentAccess, requireAuth } from "@/lib/withAuth";
 import { actorFromSession, logSopAudit, snapshotSop } from "@/lib/audit-log";
 import { canonicalSopIdentifier } from "@/lib/sopIdentifierNormalize";
+import { withActivityLog } from "@/lib/activity-log";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -35,7 +36,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   }
 }
 
-export async function PATCH(request: NextRequest, context: RouteContext) {
+async function handlePATCH(request: NextRequest, context: RouteContext) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -69,7 +70,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 }
 
-export async function DELETE(request: NextRequest, context: RouteContext) {
+async function handleDELETE(request: NextRequest, context: RouteContext) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -106,3 +107,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     );
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);
+export const DELETE = withActivityLog(handleDELETE);

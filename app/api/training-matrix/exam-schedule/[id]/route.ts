@@ -11,6 +11,7 @@ import {
   toDateOnlyIso,
   MONTH_NAMES,
 } from '@/lib/trainingExamSchedule';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +19,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 // PATCH /api/training-matrix/exam-schedule/[id]
 // Body: { examDate?: string, status?: 'cancelled' | 'scheduled' | 'completed', updatedBy? }
-export async function PATCH(req: NextRequest, context: Ctx) {
+async function handlePATCH(req: NextRequest, context: Ctx) {
   try {
     const auth = await requireAuth(['admin']);
     if (auth.error) return auth.error;
@@ -94,7 +95,7 @@ export async function PATCH(req: NextRequest, context: Ctx) {
 }
 
 // DELETE — soft-cancel
-export async function DELETE(req: NextRequest, context: Ctx) {
+async function handleDELETE(req: NextRequest, context: Ctx) {
   try {
     const auth = await requireAuth(['admin']);
     if (auth.error) return auth.error;
@@ -122,3 +123,6 @@ export async function DELETE(req: NextRequest, context: Ctx) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);
+export const DELETE = withActivityLog(handleDELETE);

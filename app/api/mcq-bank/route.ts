@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
@@ -131,7 +132,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function DELETE(request: NextRequest) {
+async function handleDELETE(request: NextRequest) {
   try {
     await connectDB();
     const { searchParams } = new URL(request.url);
@@ -150,3 +151,5 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
+
+export const DELETE = withActivityLog(handleDELETE);

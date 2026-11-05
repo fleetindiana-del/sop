@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { requireLmsManager } from '@/lib/lmsTrainerAuth';
 import PracticalAssessment from '@/models/lms/PracticalAssessment';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,7 +10,7 @@ type Params = { params: Promise<{ id: string }> };
 
 // PATCH /api/lms/admin/practical/[id]
 // Body: { action: 'approve' | 'reject', score?: number, remarks?: string }
-export async function PATCH(req: NextRequest, { params }: Params) {
+async function handlePATCH(req: NextRequest, { params }: Params) {
   const auth = await requireLmsManager();
   if (!auth.ok) return auth.response;
 
@@ -42,3 +43,5 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);

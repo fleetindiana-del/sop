@@ -23,6 +23,7 @@ import {
 import { getJourneyContentBatch } from '@/lib/lmsJourneyContent';
 import { expiredSopCodeSet } from '@/lib/assignEmployeeSops';
 import { isSopDocumentExpired } from '@/lib/sop-utils';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +49,7 @@ type Action = 'assign-exam' | 'schedule-training' | 'remove-assign';
  * - remove-assign: cancel live ScheduledExam rows for the given SOPs in the
  *   trainer's departments (optionally scoped to month/year).
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -368,3 +369,5 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

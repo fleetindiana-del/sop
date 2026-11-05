@@ -5,11 +5,12 @@ import ComplianceGapFinding from "@/models/ComplianceGapFinding";
 import { runIncrementalComplianceReview } from "@/lib/compliance-incremental";
 import { requireAuth } from "@/lib/withAuth";
 import { getComplianceProvider, type LlmProvider } from "@/lib/llm";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 300;
 
 /** Stage 3 — incremental revalidation of unresolved findings only. */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -53,3 +54,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

@@ -7,6 +7,7 @@ import SOPGuideline from "@/models/SOPGuideline";
 import SOPGuidelineResult from "@/models/SOPGuidelineResult";
 import ComplianceReport from "@/models/ComplianceReport";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -132,7 +133,7 @@ function failedFinding(guideline: Record<string, unknown>, clause: Record<string
   };
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
@@ -563,3 +564,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, error: (e as Error).message }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

@@ -34,6 +34,7 @@ import {
   assertComplianceRunActive,
 } from '@/lib/compliance-run-control';
 import { resolveComplianceSopContent } from '@/lib/compliance-sop-content';
+import { withActivityLog } from '@/lib/activity-log';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════
@@ -96,7 +97,7 @@ export const maxDuration = 300;
  * provider "grokbot" runs the Codex pipeline unchanged, but each prompt is
  * answered by GrokBot through the MCP AI-task queue instead of `codex exec`.
  */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const body = await request.clone().json().catch(() => null);
   if (body?.provider === 'codex') return runWithAgentBackend('codex', () => analyzeV3(request));
   if (body?.provider !== 'grokbot') return analyzeV3(request);
@@ -957,3 +958,5 @@ function buildNextSteps(
   
   return steps;
 }
+
+export const POST = withActivityLog(handlePOST);

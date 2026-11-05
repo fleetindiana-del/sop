@@ -6,6 +6,7 @@ import { isComplianceOperator } from "@/lib/page-access";
 import ComplianceRunRequest from "@/models/ComplianceRunRequest";
 import ComplianceReport from "@/models/ComplianceReport";
 import { toRequestDto, type CompactFinding } from "@/lib/complianceRunRequests";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
@@ -104,7 +105,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -166,3 +167,5 @@ export async function PATCH(
     );
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);

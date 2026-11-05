@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import { applyEditsToMCQs } from "@/lib/mcqReviewHelper";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,7 @@ function reshuffleOptions(q: any): any {
   return { ...q, options: shuffled };
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   try {
     const body = await request.json();
     const { mode, difficulty, sopId, bankId, questionCount = 20 } = body;
@@ -101,3 +102,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

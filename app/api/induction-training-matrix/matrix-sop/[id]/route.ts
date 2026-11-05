@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import InductionMatrixSOPAssignment from '@/models/InductionMatrixSOPAssignment';
 import InductionMatrixEntryData from '@/models/InductionMatrixEntryData';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
 // PATCH /api/induction-training-matrix/matrix-sop/[id] — update designation applicability or active status
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handlePATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     await connectDB();
     const { id } = await params;
@@ -38,7 +39,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 // DELETE /api/induction-training-matrix/matrix-sop/[id] — soft-delete: mark inactive, preserve audit data
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handleDELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     await connectDB();
     const { id } = await params;
@@ -68,3 +69,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);
+export const DELETE = withActivityLog(handleDELETE);

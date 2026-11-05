@@ -6,6 +6,7 @@ import { requireAuth } from "@/lib/withAuth";
 import { sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 import { actorFromSession, logSopAudit, snapshotSop } from "@/lib/audit-log";
 import * as XLSX from "xlsx";
+import { withActivityLog } from "@/lib/activity-log";
 
 /**
  * Parse the standard location Excel format:
@@ -72,7 +73,7 @@ function parseLocationCsv(text: string): Array<{ identifier: string; location: s
   return rows;
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -140,3 +141,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

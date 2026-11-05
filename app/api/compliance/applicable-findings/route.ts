@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import ComplianceReport from "@/models/ComplianceReport";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
@@ -54,7 +55,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
@@ -85,3 +86,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

@@ -3,10 +3,11 @@ import { connectDB } from "@/lib/mongodb";
 import SOP from "@/models/SOP";
 import MCQBank from "@/models/MCQBank";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
-export async function POST() {
+async function handlePOST() {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -28,3 +29,5 @@ export async function POST() {
 
   return NextResponse.json({ results });
 }
+
+export const POST = withActivityLog(handlePOST);

@@ -12,6 +12,7 @@ import {
   listTrainingReschedules,
 } from '@/lib/lmsTrainingReschedule';
 import Employee from '@/models/Employee';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -73,7 +74,7 @@ export async function GET(req: NextRequest) {
 
 // POST /api/lms/reschedule
 // Body: { department, sopCode, fromMonth, fromYear, toMonth, toYear, employeeId?, employeeName?, note? }
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const actor = await requireActor();
   if (!actor) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
@@ -132,3 +133,5 @@ export async function POST(req: NextRequest) {
     employeeId,
   });
 }
+
+export const POST = withActivityLog(handlePOST);

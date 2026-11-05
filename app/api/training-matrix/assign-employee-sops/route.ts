@@ -13,6 +13,7 @@ import {
   expiredSopCodeSet,
 } from '@/lib/assignEmployeeSops';
 import type { Session } from 'next-auth';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,7 +77,7 @@ export async function GET(req: NextRequest) {
 }
 
 // POST — assign selected SOPs (or all designation-applicable SOPs) to one employee.
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const gate = await canAssignSops();
   if (!gate.ok) return gate.response;
 
@@ -154,7 +155,7 @@ export async function POST(req: NextRequest) {
 }
 
 // DELETE — unassign one or more SOPs already assigned to an employee.
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const gate = await canAssignSops();
   if (!gate.ok) return gate.response;
 
@@ -194,3 +195,6 @@ export async function DELETE(req: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);
+export const DELETE = withActivityLog(handleDELETE);

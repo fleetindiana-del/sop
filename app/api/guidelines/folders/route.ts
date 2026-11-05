@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import SOPGuideline from "@/models/SOPGuideline";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
 const DEFAULT_FOLDERS = ["ICH Guidelines", "WHO GMP", "FDA CFR", "Schedule M"];
 
@@ -54,7 +55,7 @@ export async function GET() {
   }
 }
 
-export async function DELETE(request: NextRequest) {
+async function handleDELETE(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -76,3 +77,5 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
+
+export const DELETE = withActivityLog(handleDELETE);

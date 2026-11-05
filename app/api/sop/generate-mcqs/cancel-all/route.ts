@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/withAuth";
 import { requestMcqGenerationCancelAll } from "@/lib/mcq-generation";
+import { withActivityLog } from "@/lib/activity-log";
 
 /** POST /api/sop/generate-mcqs/cancel-all — emergency stop for all in-flight MCQ jobs. */
-export async function POST() {
+async function handlePOST() {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -17,3 +18,5 @@ export async function POST() {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

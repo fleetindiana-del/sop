@@ -21,11 +21,12 @@ import {
 import { logAuditEvent, resolveAuditActor } from '@/lib/audit-log';
 import Employee from '@/models/Employee';
 import TrainerEmployee from '@/models/lms/TrainerEmployee';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
 // PATCH /api/employees/[id] — update profile fields and/or the learning-module password.
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handlePATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     await connectDB();
     const { id } = await params;
@@ -262,7 +263,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 // Left employees stay on the Left tab via PATCH isActive=false; this path takes
 // them off both live rosters. A missing id is treated as already gone so the
 // UI can drop the row instead of getting stuck on "Employee not found".
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handleDELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     await connectDB();
     const { id } = await params;
@@ -347,3 +348,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);
+export const DELETE = withActivityLog(handleDELETE);

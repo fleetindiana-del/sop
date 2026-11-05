@@ -4,8 +4,9 @@ import SOP from "@/models/SOP";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { requireAuth } from "@/lib/withAuth";
 import { languageFromContentScript } from "@/lib/sop-name-resolution";
+import { withActivityLog } from "@/lib/activity-log";
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -46,3 +47,5 @@ export async function POST(request: NextRequest) {
     errors: errors.slice(0, 20),
   });
 }
+
+export const POST = withActivityLog(handlePOST);

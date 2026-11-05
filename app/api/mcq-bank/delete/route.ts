@@ -5,12 +5,13 @@ import { deleteBanksForFamily, type McqDeleteScope } from "@/lib/mcq-bank-write"
 import { mcqResolveDept } from "@/lib/mcq-bank-utils";
 import MCQBank from "@/models/MCQBank";
 import { sopFamilyIdentifierRegex } from "@/lib/sop-utils";
+import { withActivityLog } from "@/lib/activity-log";
 
 const DELETE_PASSWORD = process.env.SOP_DELETE_PASSWORD ?? "indiana132";
 
 // DELETE /api/mcq-bank/delete
 // Body: { identifier: string, scope: "eng"|"guj"|"both", password: string }
-export async function DELETE(request: NextRequest) {
+async function handleDELETE(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -50,3 +51,5 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
+
+export const DELETE = withActivityLog(handleDELETE);

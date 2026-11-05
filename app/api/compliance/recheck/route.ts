@@ -25,6 +25,7 @@ import {
   parseSopStructure,
   resolveSectionForExcerpt,
 } from "@/lib/sopStructureParser";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 300;
 
@@ -190,7 +191,7 @@ function buildUserPrompt(
   ].join("\n");
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -803,3 +804,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

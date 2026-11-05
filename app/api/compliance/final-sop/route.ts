@@ -4,6 +4,7 @@ import SOP from "@/models/SOP";
 import { applyDocxTextFix } from "@/lib/compliance-docx-patch";
 import { loadWordDocumentBuffer } from "@/lib/loadStoredFileBuffer";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 120;
 
@@ -19,7 +20,7 @@ export interface FinalSopFix {
  * Applies ALL provided fixes to the SOP DOCX in memory (sequentially) and
  * returns the fully-patched document as a download. Nothing is saved.
  */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
@@ -106,3 +107,5 @@ export async function POST(request: NextRequest) {
     },
   });
 }
+
+export const POST = withActivityLog(handlePOST);

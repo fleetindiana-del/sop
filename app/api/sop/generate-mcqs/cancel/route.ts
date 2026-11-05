@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth } from "@/lib/withAuth";
 import { requestMcqGenerationCancel } from "@/lib/mcq-generation";
+import { withActivityLog } from "@/lib/activity-log";
 
 // POST /api/sop/generate-mcqs/cancel
 // Body: { identifier: string }
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -30,3 +31,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

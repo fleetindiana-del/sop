@@ -17,6 +17,7 @@ import SOP from '@/models/SOP';
 import { getEmployeeAssignmentsMap, employeeAssignmentMapKey } from '@/lib/employeeAssignments';
 import { inductionAssignmentsOf } from '@/lib/lmsInduction';
 import { stripVersion } from '@/lib/lmsExamScheduling';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,7 +60,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 // POST /api/lms/certificate/[sopCode] — generate certificate if all steps complete
-export async function POST(_req: NextRequest, { params }: Params) {
+async function handlePOST(_req: NextRequest, { params }: Params) {
   const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
@@ -176,3 +177,5 @@ export async function POST(_req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

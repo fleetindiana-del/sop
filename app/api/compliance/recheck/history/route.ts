@@ -3,6 +3,7 @@ import { connectDB } from "@/lib/mongodb";
 import RecheckRun from "@/models/RecheckRun";
 import { requireAuth } from "@/lib/withAuth";
 import { computeRecheckScore } from "@/lib/recheckScore";
+import { withActivityLog } from "@/lib/activity-log";
 
 // GET /api/compliance/recheck/history?reportId=...  → runs for a report (newest first)
 // GET /api/compliance/recheck/history?runId=...      → single run
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
 
 // PATCH — toggle "ignore" on a prior point or a new issue, then recompute score.
 // Body: { runId, kind: "point" | "issue", index, ignored }
-export async function PATCH(request: NextRequest) {
+async function handlePATCH(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -74,3 +75,5 @@ export async function PATCH(request: NextRequest) {
 
   return NextResponse.json({ success: true, score, verdict, resolvedCount, openCount });
 }
+
+export const PATCH = withActivityLog(handlePATCH);

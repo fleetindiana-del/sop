@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { processMediaUpload } from "@/lib/media-upload";
 import { requireAuth } from "@/lib/withAuth";
 import { actorFromSession, runWithAuditActor } from "@/lib/audit-log";
+import { withActivityLog } from "@/lib/activity-log";
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -21,3 +22,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

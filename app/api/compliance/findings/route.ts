@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import ComplianceGapFinding from "@/models/ComplianceGapFinding";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
@@ -43,7 +44,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function PATCH(request: NextRequest) {
+async function handlePATCH(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -92,3 +93,5 @@ export async function PATCH(request: NextRequest) {
     );
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);

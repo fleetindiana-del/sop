@@ -12,6 +12,7 @@ import ExamAcknowledgement, {
   type IAcknowledgedQuestion,
   type IExamAcknowledgement,
 } from '@/models/lms/ExamAcknowledgement';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -213,7 +214,7 @@ export async function GET(req: NextRequest) {
  * Accepted only for the learner's own attempt, and only for a question that
  * attempt recorded as answered incorrectly.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const self = await resolveLmsIdentity();
   if (!self) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
@@ -292,3 +293,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveLmsIdentity } from '@/lib/lmsIdentity';
 import { signLmsMediaToken, verifyLmsMediaToken } from '@/lib/lmsMediaToken';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,7 +10,7 @@ export const dynamic = 'force-dynamic';
  * POST { url } → { viewUrl } (LMS-auth only).
  * GET  ?t=token → streams the file inline (no attachment) for iframe preview.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
@@ -87,3 +88,5 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

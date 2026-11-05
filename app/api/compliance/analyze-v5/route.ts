@@ -16,6 +16,7 @@ import {
   isComplianceAnalysisCancelledError,
   isComplianceRunActiveInProcess,
 } from "@/lib/compliance-run-control";
+import { withActivityLog } from "@/lib/activity-log";
 
 const MAX_CLAUSE_TEXT = 4000;
 
@@ -62,7 +63,7 @@ export const maxDuration = 300;
  * evidence matching, GMP intelligence, cross-SOP dependency validation,
  * de-duplication, risk classification, transparent scoring and traceability.
  */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
@@ -289,3 +290,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

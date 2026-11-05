@@ -12,6 +12,7 @@ import { resolveTrainerFlag } from "@/lib/roles";
 import { invalidateUserAccessCaches } from "@/lib/userAccessCacheInvalidation";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
+import { withActivityLog } from "@/lib/activity-log";
 
 const ROLES: AppRole[] = ["admin", "sop_admin", "trainer", "viewer"];
 
@@ -35,7 +36,7 @@ function toPublicUser(user: IUser) {
   };
 }
 
-export async function PATCH(request: NextRequest, context: RouteContext) {
+async function handlePATCH(request: NextRequest, context: RouteContext) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -179,7 +180,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 }
 
-export async function DELETE(request: NextRequest, context: RouteContext) {
+async function handleDELETE(request: NextRequest, context: RouteContext) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -222,3 +223,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     );
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);
+export const DELETE = withActivityLog(handleDELETE);

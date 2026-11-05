@@ -23,6 +23,7 @@ import {
   stripVersion,
   yearOfDate,
 } from '@/lib/trainingExamSchedule';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -109,7 +110,7 @@ export async function GET(req: NextRequest) {
  * The client sends the expected roster plus only the absentees, mirroring the
  * workflow: everyone is present until the trainer says otherwise.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -221,7 +222,7 @@ export async function POST(req: NextRequest) {
  * PATCH /api/lms/trainer/attendance — correct one employee's mark on a filed sheet.
  * Body: { id, employeeId, status: 'present' | 'absent', remark? }
  */
-export async function PATCH(req: NextRequest) {
+async function handlePATCH(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -271,7 +272,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 /** DELETE /api/lms/trainer/attendance?id= — withdraw a sheet filed in error. */
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -299,3 +300,7 @@ export async function DELETE(req: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);
+export const PATCH = withActivityLog(handlePATCH);
+export const DELETE = withActivityLog(handleDELETE);

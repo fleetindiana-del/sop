@@ -9,6 +9,7 @@ import {
 import { listTrainingIgnores } from '@/lib/lmsTrainingIgnore';
 import Employee from '@/models/Employee';
 import LmsTrainingIgnore from '@/models/lms/LmsTrainingIgnore';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,7 +51,7 @@ export async function GET() {
 // Body: { month, year, sopCode?: string, scope?: 'sop' | 'month' }
 // Restricted to Trainers / SOP Admins / Super Admins — this hides training
 // for an entire department, not just the caller.
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
   const { trainer } = auth;
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
 
 // DELETE /api/lms/ignore — restore a previously ignored SOP or month
 // Restricted to Trainers / SOP Admins / Super Admins, matching POST.
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
   const { trainer } = auth;
@@ -113,3 +114,6 @@ export async function DELETE(req: NextRequest) {
   bustIgnoreCaches();
   return NextResponse.json({ ok: true });
 }
+
+export const POST = withActivityLog(handlePOST);
+export const DELETE = withActivityLog(handleDELETE);

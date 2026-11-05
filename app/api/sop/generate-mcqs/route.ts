@@ -3,12 +3,13 @@ import { connectDB } from "@/lib/mongodb";
 import { requireAuth } from "@/lib/withAuth";
 import { enqueueMcqGeneration, parseMcqLanguage, canStartCodexMcqHere } from "@/lib/mcq-generation";
 import { runWithAgentBackend } from "@/lib/agent-backend";
+import { withActivityLog } from "@/lib/activity-log";
 
 // Kick off generation in the background and return immediately. The previous
 // implementation awaited the full dual-language run (up to 16+ Gemini calls plus
 // retries), which routinely blew past the HTTP timeout. The client now polls
 // GET /api/sop/generate-mcqs/status?identifier=… for live progress.
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -48,3 +49,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

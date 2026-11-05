@@ -5,6 +5,7 @@ import PracticalAssessment from '@/models/lms/PracticalAssessment';
 import LearningProgress from '@/models/lms/LearningProgress';
 import Employee from '@/models/Employee';
 import SOP from '@/models/SOP';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 // POST /api/lms/practical/[sopCode] — request a practical assessment
-export async function POST(_req: NextRequest, { params }: Params) {
+async function handlePOST(_req: NextRequest, { params }: Params) {
   const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
@@ -84,3 +85,5 @@ export async function POST(_req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

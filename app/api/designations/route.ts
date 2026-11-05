@@ -7,6 +7,7 @@ import TrainerEmployee from "@/models/lms/TrainerEmployee";
 import { requireAuth, canManageDesignations } from "@/lib/withAuth";
 import { actorFromSession, logAuditEvent } from "@/lib/audit-log";
 import { invalidateEmployeeDerivedCaches } from "@/lib/employeeCacheInvalidation";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
@@ -92,7 +93,7 @@ export async function GET(request: NextRequest) {
 }
 
 /** POST /api/designations — create a designation. */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
   if (!canManageDesignations(auth.session.user.role)) return forbidden();
@@ -154,7 +155,7 @@ export async function POST(request: NextRequest) {
  * training / attendance / assessment / certificate records are deliberately not
  * touched: they record the title held at the time.
  */
-export async function PATCH(request: NextRequest) {
+async function handlePATCH(request: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
   if (!canManageDesignations(auth.session.user.role)) return forbidden();
@@ -396,7 +397,7 @@ export async function PATCH(request: NextRequest) {
  * Refused while any active employee still holds the title — reassign them
  * first. Historical records that reference the name are unaffected either way.
  */
-export async function DELETE(request: NextRequest) {
+async function handleDELETE(request: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
   if (!canManageDesignations(auth.session.user.role)) return forbidden();
@@ -448,3 +449,7 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);
+export const PATCH = withActivityLog(handlePATCH);
+export const DELETE = withActivityLog(handleDELETE);

@@ -3,6 +3,10 @@ export type ApiCatalogEntry = { path: string; description: string };
 
 export const API_CATALOG: ApiCatalogEntry[] = [
   {
+    "path": "/api/activity-logs",
+    "description": "GET /api/activity-logs?pageKey=training-matrix&userName=&department=QA&method=POST&status=failed&q=&from=2026-11-01&to=2026-11-05&page=1&limit=50 Activity audit log for every page: each save / change / delete request — who, when, from which page (pageKey/pageLabel, e.g. training-matrix, mcq-bank, lm"
+  },
+  {
     "path": "/api/audit-logs",
     "description": ""
   },

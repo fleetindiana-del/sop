@@ -8,6 +8,7 @@ import {
   rateLimitLabelApi,
   requireGeminiConfigured,
 } from "@/lib/label-compliance/http";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 120;
 
@@ -35,7 +36,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ success: true, reports });
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const gemini = requireGeminiConfigured();
   if (gemini) return gemini;
   const limited = rateLimitLabelApi(request, "extract", 8);
@@ -75,3 +76,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

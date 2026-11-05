@@ -6,6 +6,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { saveComplianceReport } from "@/lib/complianceReportStorage";
 import { requireAuth } from "@/lib/withAuth";
 import type { ComplianceFinding } from "@/lib/complianceEngine";
+import { withActivityLog } from "@/lib/activity-log";
 
 /**
  * SOP Compliance Intelligence Engine V4 - Batch Optimized (reference dev folder).
@@ -132,7 +133,7 @@ function parseBatchResponse(responseText: string, expectedCount: number): Record
 
 export const maxDuration = 300;
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
@@ -345,3 +346,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

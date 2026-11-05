@@ -4,6 +4,7 @@ import { connectDB } from '@/lib/mongodb';
 import { requireLmsManager } from '@/lib/lmsTrainerAuth';
 import { generateUniqueLmsUsername, generateAutoPassword } from '@/lib/lms-credentials';
 import Employee from '@/models/Employee';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,7 +16,7 @@ export const dynamic = 'force-dynamic';
 // response is the ONE time the admin can see/share it.
 // Trainer / SOP Admin / Super Admin only — this returns plaintext LMS
 // passwords for every employee that has none set.
-export async function POST() {
+async function handlePOST() {
   const auth = await requireLmsManager();
   if (!auth.ok) return auth.response;
 
@@ -47,3 +48,5 @@ export async function POST() {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

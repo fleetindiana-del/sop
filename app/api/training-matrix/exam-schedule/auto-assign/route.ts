@@ -10,12 +10,13 @@ import {
   serializeSchedule,
   MONTH_NAMES,
 } from '@/lib/trainingExamSchedule';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
 // POST /api/training-matrix/exam-schedule/auto-assign
 // Body: { year: number, month?: number, createdBy?: string }
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     const auth = await requireAuth(['admin']);
     if (auth.error) return auth.error;
@@ -110,3 +111,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

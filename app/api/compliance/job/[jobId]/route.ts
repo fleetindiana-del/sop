@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import ComplianceAnalysisJob from "@/models/ComplianceAnalysisJob";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
 export async function GET(
   _request: NextRequest,
@@ -28,7 +29,7 @@ export async function GET(
   }
 }
 
-export async function DELETE(
+async function handleDELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ) {
@@ -47,3 +48,5 @@ export async function DELETE(
     );
   }
 }
+
+export const DELETE = withActivityLog(handleDELETE);

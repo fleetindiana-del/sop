@@ -17,6 +17,7 @@ import {
   toDateOnlyIso,
   MONTH_NAMES,
 } from '@/lib/trainingExamSchedule';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +34,7 @@ function bustCaches() {
  * Assign / update an employee-scoped LMS exam date for a SOP.
  * Body: { employeeId, sopCode, examDate (YYYY-MM-DD), department?, plannedMonth?, year?, allowOutsideMonth? }
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -134,3 +135,5 @@ export async function POST(req: NextRequest) {
     examDate: toDateOnlyIso(examDate),
   });
 }
+
+export const POST = withActivityLog(handlePOST);

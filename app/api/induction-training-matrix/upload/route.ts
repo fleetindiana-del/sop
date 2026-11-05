@@ -13,6 +13,7 @@ import { buildExcelToDbBaseLookup, resolveExcelCodeToDbBase } from '@/lib/sopIde
 import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
 import { invalidateInductionTrainingMatrixCache } from '@/lib/inductionTrainingMatrixCache';
 import { invalidateEmployeeAssignmentsCache } from '@/lib/employeeAssignments';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -38,7 +39,7 @@ type SopMeta = { _id: Types.ObjectId; base: string; name: string; versionNum: nu
 // for induction receives the SOPs of their designation. Each uploaded
 // department's previous induction assignments are replaced. The main Training
 // Matrix is untouched.
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = await requireAuth(['admin', 'trainer']);
   if (auth.error) return auth.error;
 
@@ -189,3 +190,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);

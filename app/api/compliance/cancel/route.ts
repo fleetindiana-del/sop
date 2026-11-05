@@ -6,9 +6,10 @@ import {
   requestStopAllComplianceRuns,
 } from "@/lib/compliance-run-control";
 import { killOrphanComplianceCodexProcesses } from "@/lib/compliance-process-kill";
+import { withActivityLog } from "@/lib/activity-log";
 
 /** POST /api/compliance/cancel — stop compliance analysis (one SOP or all). */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
@@ -52,3 +53,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

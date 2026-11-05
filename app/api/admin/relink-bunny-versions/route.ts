@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { relinkBunnyVersionFiles } from "@/lib/relink-bunny-versions";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -23,3 +24,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

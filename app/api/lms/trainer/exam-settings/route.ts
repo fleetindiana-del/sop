@@ -16,6 +16,7 @@ import SopExamSettings, {
 } from '@/models/lms/SopExamSettings';
 import { baseIdentifierFromIdentifier } from '@/lib/sop-utils';
 import { isSopMcqApprovedForLms } from '@/lib/lmsMcqApproval';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -102,7 +103,7 @@ export async function GET() {
 }
 
 // PATCH /api/lms/trainer/exam-settings — update SOP exam settings in trainer scope
-export async function PATCH(req: NextRequest) {
+async function handlePATCH(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -191,3 +192,5 @@ export async function PATCH(req: NextRequest) {
     );
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);

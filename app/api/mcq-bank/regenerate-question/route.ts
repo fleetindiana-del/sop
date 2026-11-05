@@ -13,6 +13,7 @@ import { anthropicMcqApiAvailable, generateAnthropicMcqBatch } from "@/lib/anthr
 import { generateClaudeCliMcqBatch, getMcqClaudeModel } from "@/lib/claude-cli";
 import type { ParsedMcq } from "@/lib/mcq-json-parse";
 import { invalidateMcqBankAggregateCache } from "@/lib/mcqBankAggregateCache";
+import { withActivityLog } from "@/lib/activity-log";
 
 // Always Claude for individual regeneration, preferring the direct Anthropic API
 // (faster) when ANTHROPIC_API_KEY is configured, same fallback order as the main
@@ -73,7 +74,7 @@ function isGroundedInExcerpt(sopReference: string, excerpt: string): boolean {
 // Body: { bankId, questionIndex }
 // Regenerates a single MCQ in place, always via Claude regardless of the app's
 // configured LLM_PROVIDER — individual regeneration is a Claude-only workflow.
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -198,3 +199,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

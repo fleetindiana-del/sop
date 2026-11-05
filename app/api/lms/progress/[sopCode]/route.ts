@@ -13,6 +13,7 @@ import {
 import { LMS_STEP_IDS, recalcOverallPercent } from '@/lib/lmsCompletion';
 import LearningProgress from '@/models/lms/LearningProgress';
 import { recordAttemptMistakes, sanitizeWrongQuestions } from '@/lib/lmsExamReview';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,7 +52,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 //   { step: 'slidesEn', completed: true }
 //   { step: 'quiz', completed: true, passed: true, score: 80, attempts: 1 }
 //   { availableSteps: ['videoEn', 'slidesEn', 'sopPdf'] }  — first-time init
-export async function PATCH(req: NextRequest, { params }: Params) {
+async function handlePATCH(req: NextRequest, { params }: Params) {
   const payload = await resolveLmsIdentity();
   if (!payload) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
@@ -237,3 +238,5 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);

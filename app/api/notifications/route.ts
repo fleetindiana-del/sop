@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth } from "@/lib/withAuth";
 import Notification from "@/models/Notification";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +67,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function PATCH(request: NextRequest) {
+async function handlePATCH(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
@@ -106,3 +107,5 @@ export async function PATCH(request: NextRequest) {
     );
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);

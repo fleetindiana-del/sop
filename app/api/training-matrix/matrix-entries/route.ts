@@ -3,6 +3,7 @@ import { connectDB } from '@/lib/mongodb';
 import MatrixEntryData from '@/models/MatrixEntryData';
 import { getLeftEmployeeKeys, isLeftEmployee } from '@/lib/leftEmployees';
 import { getEmployeeMasterIndex, currentDesignation } from '@/lib/employeeMaster';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/training-matrix/matrix-entries — create a single matrix entry
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     await connectDB();
     const body = await req.json();
@@ -99,7 +100,7 @@ export async function POST(req: NextRequest) {
 
 // PUT /api/training-matrix/matrix-entries — upsert or bulk-update entries
 // Body: { entries: [...], updatedBy: string }  OR single entry update with { id, ...fields, updatedBy }
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   try {
     await connectDB();
     const body = await req.json();
@@ -190,7 +191,7 @@ export async function PUT(req: NextRequest) {
 }
 
 // DELETE /api/training-matrix/matrix-entries?id=xxx&deletedBy=admin  (soft delete)
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   try {
     await connectDB();
     const { searchParams } = new URL(req.url);
@@ -212,3 +213,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+export const POST = withActivityLog(handlePOST);
+export const PUT = withActivityLog(handlePUT);
+export const DELETE = withActivityLog(handleDELETE);

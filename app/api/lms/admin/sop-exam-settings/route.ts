@@ -22,6 +22,7 @@ import {
   getDashboardDepartments,
   isDashboardDepartmentName,
 } from '@/lib/dashboardDepartments';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -313,7 +314,7 @@ export async function GET() {
   }
 }
 
-export async function PATCH(req: NextRequest) {
+async function handlePATCH(req: NextRequest) {
   const auth = await requireLmsManager();
   if (!auth.ok) return auth.response;
 
@@ -389,3 +390,5 @@ export async function PATCH(req: NextRequest) {
     );
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);

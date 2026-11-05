@@ -32,7 +32,7 @@ export function registerApiTools(server: McpServer) {
     {
       title: "List readable app APIs",
       description:
-        "The app's read-only (GET) APIs — the same data the web pages show (dashboard, SOP registry, employees, LMS training progress, induction, MCQ bank and approval stats, compliance, training matrix). Filter with search. Bracketed segments like [id] are path parameters. Then fetch one with call_api.",
+        "The app's read-only (GET) APIs — the same data the web pages show (dashboard, SOP registry, employees, LMS training progress, induction, MCQ bank and approval stats, compliance, training matrix, audit / activity logs of who changed what on each page). Filter with search. Bracketed segments like [id] are path parameters. Then fetch one with call_api.",
       inputSchema: z.object({
         search: z.string().optional().describe("Matches path or description, e.g. \"training\", \"mcq\", \"employee\"."),
       }),

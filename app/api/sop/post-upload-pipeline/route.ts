@@ -7,13 +7,14 @@ import {
   triggerComplianceV3Async,
 } from "@/lib/start-compliance-v3-async";
 import { getExistingComplianceScore } from "@/lib/compliance-score-lookup";
+import { withActivityLog } from "@/lib/activity-log";
 
 /**
  * After SOP upload/import: enqueue Codex MCQ generation (runs here if Codex is
  * logged in, otherwise waits for the local worker) and optionally start
  * compliance when Codex is available on this machine.
  */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -99,3 +100,5 @@ export async function POST(request: NextRequest) {
     { status: 202 },
   );
 }
+
+export const POST = withActivityLog(handlePOST);

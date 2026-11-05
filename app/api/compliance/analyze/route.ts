@@ -22,6 +22,7 @@ import mongoose from "mongoose";
 import { countLinkedAnnexureDocuments } from "@/lib/compliance-sop-content";
 import { normalizeSopIdentifierKey, sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 import RecheckRun from "@/models/RecheckRun";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
@@ -377,7 +378,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function DELETE(request: NextRequest) {
+async function handleDELETE(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -402,7 +403,7 @@ function emitLine(controller: ReadableStreamDefaultController, data: Record<stri
   controller.enqueue(new TextEncoder().encode(`${JSON.stringify(data)}\n`));
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
@@ -548,3 +549,6 @@ ${sop.content.slice(0, 60000)}`;
     );
   }
 }
+
+export const DELETE = withActivityLog(handleDELETE);
+export const POST = withActivityLog(handlePOST);

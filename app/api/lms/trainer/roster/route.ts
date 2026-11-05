@@ -9,6 +9,7 @@ import {
 } from '@/lib/lmsTrainerEmployees';
 import { getEmployeeAssignmentsMap } from '@/lib/employeeAssignments';
 import TrainerEmployee from '@/models/lms/TrainerEmployee';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -99,7 +100,7 @@ export async function GET() {
  * POST /api/lms/trainer/roster — add employees to the trainer's roster.
  * Body: { employeeIds: string[] }
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -151,7 +152,7 @@ export async function POST(req: NextRequest) {
 }
 
 /** DELETE /api/lms/trainer/roster?employeeId= — remove one employee. */
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -176,3 +177,6 @@ export async function DELETE(req: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);
+export const DELETE = withActivityLog(handleDELETE);

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { reconcileSopVersions } from "@/lib/reconcile-sop-versions";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
-export async function POST() {
+async function handlePOST() {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -16,3 +17,5 @@ export async function POST() {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

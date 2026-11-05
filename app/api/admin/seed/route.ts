@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { connectDB } from "@/lib/mongodb";
 import User from "@/models/User";
+import { withActivityLog } from "@/lib/activity-log";
 
-export async function POST() {
+async function handlePOST() {
   if (process.env.NODE_ENV === "production" && process.env.ALLOW_SEED !== "true") {
     return NextResponse.json({ error: "Seeding disabled in production" }, { status: 403 });
   }
@@ -39,3 +40,5 @@ export async function POST() {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processSopUpload } from "@/lib/sop-upload";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 300;
 
@@ -11,7 +12,7 @@ export const maxDuration = 300;
 // lib/sop-content-metadata.ts.
 const SKIP_PATTERN = /^(cover\s*page|index)(\.[a-z0-9]+)?$/i;
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -50,3 +51,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

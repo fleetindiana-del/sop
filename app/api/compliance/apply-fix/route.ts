@@ -14,11 +14,12 @@ import { loadWordDocumentBuffer } from "@/lib/loadStoredFileBuffer";
 import { requireAuth } from "@/lib/withAuth";
 import { uploadToBunny } from "@/lib/bunnyStorage";
 import { extractTextFromBuffer } from "@/lib/extractContent";
+import { withActivityLog } from "@/lib/activity-log";
 
 export const maxDuration = 120;
 
 /** One-click fix — patch only the relevant SOP text/DOCX section. */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -146,3 +147,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

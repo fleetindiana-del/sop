@@ -12,6 +12,7 @@ import { resolveTrainerFlag } from "@/lib/roles";
 import { invalidateUserAccessCaches } from "@/lib/userAccessCacheInvalidation";
 import User, { type IUser } from "@/models/User";
 import type { AppRole } from "@/lib/auth";
+import { withActivityLog } from "@/lib/activity-log";
 
 const ROLES: AppRole[] = ["admin", "sop_admin", "trainer", "viewer"];
 
@@ -70,7 +71,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -165,3 +166,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

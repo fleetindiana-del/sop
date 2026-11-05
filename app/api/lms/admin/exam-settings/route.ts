@@ -8,6 +8,7 @@ import {
   lmsServerTtl,
 } from '@/lib/lmsCache';
 import ExamSettings from '@/models/lms/ExamSettings';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +40,7 @@ export async function GET() {
 }
 
 // PATCH /api/lms/admin/exam-settings
-export async function PATCH(req: NextRequest) {
+async function handlePATCH(req: NextRequest) {
   const auth = await requireLmsManager();
   if (!auth.ok) return auth.response;
 
@@ -73,3 +74,5 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+
+export const PATCH = withActivityLog(handlePATCH);

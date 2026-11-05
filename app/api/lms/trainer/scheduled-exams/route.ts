@@ -23,6 +23,7 @@ import {
 import { buildSopList } from '@/app/api/lms/admin/sop-exam-settings/route';
 import { getOrBuildLmsCache, lmsServerKeys, lmsServerTtl } from '@/lib/lmsCache';
 import { getEmployeeMasterIndex } from '@/lib/employeeMaster';
+import { withActivityLog } from '@/lib/activity-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest) {
  * POST /api/lms/trainer/scheduled-exams — schedule one exam for many employees.
  * Body: { employeeIds: string[], sopCode, scheduledDate: 'YYYY-MM-DD', notes? }
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -211,7 +212,7 @@ export async function POST(req: NextRequest) {
  * PATCH /api/lms/trainer/scheduled-exams — reschedule one exam sitting.
  * Body: { id, scheduledDate?: 'YYYY-MM-DD', sitting?: 1|2|3, notes? }
  */
-export async function PATCH(req: NextRequest) {
+async function handlePATCH(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -270,7 +271,7 @@ export async function PATCH(req: NextRequest) {
  * DELETE /api/lms/trainer/scheduled-exams?id=
  * Cancels the schedule (kept for audit) and removes it from the learner's LMS.
  */
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const auth = await requireLmsTrainer();
   if (!auth.ok) return auth.response;
 
@@ -300,3 +301,7 @@ export async function DELETE(req: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);
+export const PATCH = withActivityLog(handlePATCH);
+export const DELETE = withActivityLog(handleDELETE);

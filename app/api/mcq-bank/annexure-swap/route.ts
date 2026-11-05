@@ -19,6 +19,7 @@ import { sopFamilyIdentifierRegex } from "@/lib/sop-utils";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { invalidateMcqBankAggregateCache } from "@/lib/mcqBankAggregateCache";
 import { requireAuth } from "@/lib/withAuth";
+import { withActivityLog } from "@/lib/activity-log";
 
 /** Annexure swap runs a single LLM batch — keep under serverless/proxy limits. */
 export const maxDuration = 300;
@@ -120,7 +121,7 @@ function pickRemovals(
   return { indices: remove, creative: 0, similar, duplicate };
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer"]);
   if (auth.error) return auth.error;
 
@@ -281,3 +282,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withActivityLog(handlePOST);

@@ -5,9 +5,10 @@ import SOP from "@/models/SOP";
 import { sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 import { extractTablesFromDOCX } from "@/lib/docxTableParser";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
+import { withActivityLog } from "@/lib/activity-log";
 
 /** Upload department DOCX files with SOP compliance dates (Effective / Review). */
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const auth = await requireAuth(["admin"]);
   if (auth.error) return auth.error;
 
@@ -130,3 +131,5 @@ function parseDate(dateStr: string | undefined): Date | null {
     return null;
   }
 }
+
+export const POST = withActivityLog(handlePOST);
