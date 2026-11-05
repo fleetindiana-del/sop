@@ -62,7 +62,7 @@ const AuditLogSchema = new Schema<IAuditLog>(
     userAgent: { type: String },
     systemGenerated: { type: Boolean, default: false },
     source: { type: String, enum: ["live", "historical"], default: "live", index: true },
-    dedupeKey: { type: String, index: true },
+    dedupeKey: { type: String },
   },
   { timestamps: true, collection: "audit_logs" },
 );

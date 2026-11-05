@@ -11,6 +11,9 @@ import {
 } from "@/lib/api-keys";
 import { runWithAuditActor } from "@/lib/audit-log";
 import { canAccessDepartment, isDeptScopedRole } from "@/lib/roles";
+import { filterByAssignedDepartments } from "@/lib/access-control";
+import { isDashboardDepartmentName } from "@/lib/dashboardDepartments";
+import type { AppRole } from "@/lib/auth";
 import { isComplianceOperator } from "@/lib/page-access";
 import { sopIdentifierMatchFilter } from "@/lib/sopIdentifierNormalize";
 import { processSopUpload } from "@/lib/sop-upload";
@@ -100,6 +103,12 @@ async function findSopRecords(identifier: string) {
     )
     .sort({ isObsolete: 1, versionNum: -1 })
     .lean();
+}
+
+function tally<T>(rows: T[], pick: (row: T) => string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const row of rows) out[pick(row)] = (out[pick(row)] ?? 0) + 1;
+  return out;
 }
 
 function toFile(buffer: Buffer, fileName: string): File {
@@ -192,7 +201,7 @@ export function registerSopTools(server: McpServer) {
     {
       title: "List SOPs",
       description:
-        "Search the SOP registry by identifier or title. Returns one row per SOP record (each language/version is a record) with compliance status, MCQ count and whether training media exists, plus the total match count. Page with offset. For counts and breakdowns use get_sop_stats instead.",
+        "Search the raw SOP records by identifier or title. Returns one row per database record (each language file and each version is its own record, so this is NOT a count of SOPs) with compliance status, MCQ count and whether training media exists, plus the total match count. Page with offset. For counts and breakdowns use get_sop_stats instead.",
       inputSchema: z.object({
         search: z.string().optional().describe("Matches identifier or title (case-insensitive)."),
         department: z.string().optional(),
@@ -254,63 +263,52 @@ export function registerSopTools(server: McpServer) {
     {
       title: "SOP registry statistics",
       description:
-        "Counts for questions like \"how many SOPs do we have?\": unique SOPs (by identifier) and records (each language/version), broken down by department, language, compliance status, MCQ coverage and training video coverage. Optionally limit to one department.",
+        "Counts for questions like \"how many SOPs do we have?\" — the same numbers as the Dashboard. One SOP = one SOP family (its English/Gujarati files, current version and annexures together; superseded versions and obsolete SOPs are not counted). Broken down by department, language, compliance status, expiry and training media. Optionally limit to one department.",
       inputSchema: z.object({
         department: z.string().optional(),
-        includeObsolete: z.boolean().optional().describe("Default false: only current SOPs."),
       }),
       readOnly: true,
     },
     "sops:read",
-    async ({ department, includeObsolete }, principal) => {
+    async ({ department }, principal) => {
       await connectDB();
-      const filter: Record<string, unknown> = {};
-      if (!includeObsolete) filter.isObsolete = { $ne: true };
-      if (department?.trim()) {
-        filter.department = new RegExp(`^${department.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
-      }
-      const rows = (
-        await SOP.find(filter)
-          .select("identifier department language complianceStatus complianceScore mcqCount mediaLinks")
-          .lean()
-      ).filter((row) => canAccessDepartment(principal.user.role, principal.user.department, row.department));
+      const { loadGroupedRegistry } = await import("@/lib/dashboardRegistrySource");
+      const wanted = department?.trim().toLowerCase();
+      const sops = filterByAssignedDepartments(
+        principal.user.role as AppRole,
+        principal.user.department,
+        await loadGroupedRegistry(),
+      ).filter(
+        (s) =>
+          !s.isObsolete &&
+          isDashboardDepartmentName(s.department) &&
+          (!wanted || s.department.toLowerCase() === wanted),
+      );
 
-      type SopSummary = { department: string; status: string; score: number | null; hasMcqs: boolean; hasVideo: boolean };
-      const byIdentifier = new Map<string, SopSummary>();
-      const languages: Record<string, number> = {};
-      for (const row of rows) {
-        const language = row.language || "Unknown";
-        languages[language] = (languages[language] ?? 0) + 1;
-        const key = String(row.identifier ?? "").trim().toUpperCase();
-        const prev = byIdentifier.get(key);
-        const hasVideo = Boolean(row.mediaLinks?.videos?.en?.length || row.mediaLinks?.videos?.gu?.length);
-        byIdentifier.set(key, {
-          department: prev?.department ?? (row.department || "Unassigned"),
-          status: prev?.status && prev.status !== "pending" ? prev.status : (row.complianceStatus ?? "pending"),
-          score: prev?.score ?? row.complianceScore ?? null,
-          hasMcqs: Boolean(prev?.hasMcqs || (row.mcqCount ?? 0) > 0),
-          hasVideo: Boolean(prev?.hasVideo || hasVideo),
-        });
-      }
+      const languageLabel = { ENG: "English only", GUJ: "Gujarati only", "ENG-GUJ": "English + Gujarati" } as const;
+      const summarize = (rows: typeof sops) => ({
+        sops: rows.length,
+        byLanguage: tally(rows, (s) => languageLabel[s.language] ?? s.language),
+        byComplianceStatus: tally(rows, (s) => s.complianceStatus || "pending"),
+        complianceAnalyzed: rows.filter((s) => s.complianceAnalyzed).length,
+        withVideo: rows.filter((s) => s.media.videos.en + s.media.videos.gu > 0).length,
+        withSlides: rows.filter((s) => s.media.slides.en + s.media.slides.gu > 0).length,
+        expired: rows.filter((s) => s.expiryTier === "expired").length,
+        nearExpiry: rows.filter((s) => s.expiryTier === "high").length,
+        noExpiryDate: rows.filter((s) => s.expiryTier === "none").length,
+      });
+      const analyzed = sops.filter((s) => s.complianceAnalyzed);
 
-      const tally = (pick: (s: SopSummary) => string) => {
-        const out: Record<string, number> = {};
-        for (const s of byIdentifier.values()) out[pick(s)] = (out[pick(s)] ?? 0) + 1;
-        return out;
-      };
-      const sops = [...byIdentifier.values()];
-      const scored = sops.filter((s) => typeof s.score === "number");
+      const byDepartment: Record<string, ReturnType<typeof summarize>> = {};
+      for (const dept of [...new Set(sops.map((s) => s.department))].sort()) {
+        byDepartment[dept] = summarize(sops.filter((s) => s.department === dept));
+      }
       return {
-        uniqueSops: byIdentifier.size,
-        records: rows.length,
-        byDepartment: tally((s) => s.department),
-        recordsByLanguage: languages,
-        byComplianceStatus: tally((s) => s.status),
-        averageComplianceScore: scored.length
-          ? Number((scored.reduce((sum, s) => sum + (s.score as number), 0) / scored.length).toFixed(2))
+        total: summarize(sops),
+        averageComplianceScore: analyzed.length
+          ? Number((analyzed.reduce((sum, s) => sum + (s.complianceScore || 0), 0) / analyzed.length).toFixed(2))
           : null,
-        withMcqs: sops.filter((s) => s.hasMcqs).length,
-        withTrainingVideo: sops.filter((s) => s.hasVideo).length,
+        byDepartment,
         scope: isDeptScopedRole(principal.user.role) ? `departments visible to ${principal.user.name}` : "all departments",
       };
     },
