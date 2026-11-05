@@ -1,4 +1,6 @@
 import ComplianceReport from "@/models/ComplianceReport";
+import SOP from "@/models/SOP";
+import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import type {
   AuditCompleteness,
   ComplianceFinding,
@@ -67,6 +69,80 @@ async function logComplianceScoreAudit(params: {
   }
 }
 
+function sopStatusFromReport(
+  status: string,
+): "compliant" | "partial" | "non-compliant" | "pending" {
+  const s = status.toLowerCase();
+  if (s.includes("non-compliant") || s.includes("non compliant")) return "non-compliant";
+  if (s.includes("partial")) return "partial";
+  if (s.includes("fully") || s === "compliant") return "compliant";
+  return "pending";
+}
+
+/** QA-facing note stored on the SOP. Cites the guidelines behind the score. */
+function sopComplianceNote(params: {
+  score: number;
+  status: string;
+  guidelines: string[];
+  breakdown: ComplianceScoreBreakdown;
+  assessedBy?: string;
+}): string {
+  const cited = params.guidelines.slice(0, 12);
+  const against = cited.length
+    ? `Assessed against ${cited.join("; ")}.`
+    : "Assessed against the applicable guideline clauses.";
+  return [
+    params.assessedBy ? `Compliance assessment performed by ${params.assessedBy}.` : "",
+    `Compliance score ${params.score.toFixed(1)}/10 (${params.status}).`,
+    against,
+    `${params.breakdown.compliantCount} compliant, ${params.breakdown.partialCount} partial, ${params.breakdown.nonCompliantCount} non-compliant of ${params.breakdown.totalApplicableRequirements} applicable guideline requirements.`,
+    "Not-applicable clauses are excluded from the score. Critical requirements weigh 5, major 3, minor 1; a partial requirement receives half credit.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+async function writeComplianceOntoSop(params: {
+  sopId: string;
+  score: number;
+  status: string;
+  findings: { guidelineName?: string }[];
+  breakdown: ComplianceScoreBreakdown;
+  assessedBy?: string;
+  invalidate?: boolean;
+}): Promise<void> {
+  if (!isObjectId(params.sopId)) return;
+  const guidelines = [
+    ...new Set(
+      params.findings
+        .map((f) => f.guidelineName?.trim())
+        .filter((name): name is string => Boolean(name)),
+    ),
+  ];
+  await SOP.updateOne(
+    { _id: new mongoose.Types.ObjectId(params.sopId) },
+    {
+      $set: {
+        complianceStatus: sopStatusFromReport(params.status),
+        complianceScore: params.score,
+        complianceNotes: sopComplianceNote({
+          score: params.score,
+          status: params.status,
+          guidelines,
+          breakdown: params.breakdown,
+          assessedBy: params.assessedBy,
+        }),
+        ...(params.assessedBy ? { lastReviewedBy: params.assessedBy } : {}),
+        ...(guidelines.length
+          ? { guidelineReference: guidelines.join("; ").slice(0, 4000) }
+          : {}),
+        lastReviewedAt: new Date(),
+      },
+    },
+  );
+  if (params.invalidate !== false) invalidateDashboardSopsCache();
+}
+
 export async function saveComplianceReport(data: {
   sopId: string;
   sopIdentifier: string;
@@ -83,6 +159,8 @@ export async function saveComplianceReport(data: {
   auditCompleteness?: AuditCompleteness;
   clauseCoveragePct?: number;
   analysisEngineVersion?: string;
+  /** Shown on the SOP as who performed the assessment, e.g. "Codex". */
+  assessedBy?: string;
   // accepted but not stored — callers may still pass these
   sopContentLength?: number;
   processingTimeMs?: number;
@@ -217,6 +295,19 @@ export async function saveComplianceReport(data: {
   });
 
   try {
+    await writeComplianceOntoSop({
+      sopId: data.sopId,
+      score: reportData.overallScore,
+      status: data.complianceStatus,
+      findings: data.findings,
+      breakdown,
+      assessedBy: data.assessedBy,
+    });
+  } catch (err) {
+    console.error("[compliance] failed to copy score onto SOP:", err);
+  }
+
+  try {
     await completeMatchingComplianceRunRequests({
       _id: saved?._id,
       sopId: saved?.sopId ?? data.sopId,
@@ -234,6 +325,33 @@ export async function saveComplianceReport(data: {
     console.error("[compliance] failed to complete matching run requests:", err);
   }
   return saved;
+}
+
+/** Copy the latest completed assessment onto each SOP that already has a report. */
+export async function backfillComplianceOntoSops(): Promise<number> {
+  const reports = await ComplianceReport.find({ analysisStatus: "completed" })
+    .select("sopId overallScore complianceStatus findings scoreBreakdown")
+    .lean();
+  let updated = 0;
+  for (const report of reports) {
+    const sopId = report.sopId?.toString();
+    if (!sopId) continue;
+    const findings = (report.findings ?? []) as { guidelineName?: string; complianceLevel?: string; findingCategory?: string }[];
+    const breakdown =
+      (report.scoreBreakdown as ComplianceScoreBreakdown | undefined) ??
+      computeWeightedScoreBreakdown(findings as never);
+    await writeComplianceOntoSop({
+      sopId,
+      score: report.overallScore ?? breakdown.score ?? 0,
+      status: report.complianceStatus ?? "Analysis Pending",
+      findings,
+      breakdown,
+      invalidate: false,
+    });
+    updated += 1;
+  }
+  if (updated > 0) invalidateDashboardSopsCache();
+  return updated;
 }
 
 export async function getComplianceReport(sopId: string) {

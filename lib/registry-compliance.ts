@@ -29,9 +29,9 @@ export function compliancePercent(score: number): number {
   return Math.round(score * 10);
 }
 
-/** Score is shown only when the current version passed compliance (≥ 80%). */
+/** Score is shown for every completed report, including scores under 80%. */
 export function shouldShowComplianceScore(
-  sop: Pick<RegistrySOP, "complianceDone">,
+  sop: Pick<RegistrySOP, "complianceAnalyzed">,
 ): boolean {
-  return Boolean(sop.complianceDone);
+  return Boolean(sop.complianceAnalyzed);
 }

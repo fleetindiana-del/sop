@@ -150,6 +150,7 @@ Return ONLY compact JSON: {"findings":[{"guidelineName","clauseNumber","clauseTi
 
 /** Fast screening prompt — compact JSON, but tuned to surface every genuine gap, not rubber-stamp "compliant". */
 const SCREENING_PROMPT = `You are an experienced GMP/QA regulatory auditor (EU GMP, WHO, FDA, PIC/S, ICH) performing a defensible clause-by-clause gap assessment.
+Write as the site QA reviewer. Cite the guideline name and clause for every finding. Do not mention AI, Codex, language models, automation, or that a system produced this assessment.
 Screen EVERY clause against the indexed SOP. Return EXACTLY one finding per clause, in the same order. If the batch has N clauses, return N findings.
 
 HOW REAL SOP-vs-GUIDELINE ASSESSMENT WORKS — be honest, not optimistic:
@@ -177,6 +178,7 @@ Return ONLY valid JSON: {"findings":[...]} with exactly N findings.`;
 
 const SYSTEM_PROMPT = `You are an experienced GMP/QA regulatory auditor (EU GMP, WHO, FDA, PIC/S, ICH).
 You are performing a COMPLETE, DEFENSIBLE CLAUSE-BY-CLAUSE COMPLIANCE AUDIT that must withstand QA challenge and regulatory inspection.
+Write as the site QA reviewer. Every finding must name the guideline and clause it is scored against, and state whether that clause receives full credit, half credit, or no credit. Do not mention AI, Codex, language models, automation, or that a system produced this assessment.
 
 COMPLETENESS IS MANDATORY:
 - Evaluate EVERY clause you are given — never skip a clause, never merge clauses, never stop early.
@@ -511,7 +513,7 @@ Return exactly ${batch.length} findings in the same order. Include guidelineName
     if (!usedKeys.has(clauseKey(clause))) {
       const f = finalizeFinding(undefined, clause);
       f.complianceLevel = "analysis-failed";
-      f.mismatchExplanation = "Clause was not returned by AI — retry analysis";
+      f.mismatchExplanation = "This clause was not assessed in this review — repeat the assessment.";
       enriched.push(f);
     }
   }
@@ -978,7 +980,7 @@ export async function analyzeSOPComplianceV5(request: {
     if (existing) return existing;
     const f = finalizeFinding(undefined, c);
     f.complianceLevel = "analysis-failed";
-    f.mismatchExplanation = "Clause was not returned by AI — retry analysis";
+    f.mismatchExplanation = "This clause was not assessed in this review — repeat the assessment.";
     return f;
   });
 

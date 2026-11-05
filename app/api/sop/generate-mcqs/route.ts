@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import { requireAuth } from "@/lib/withAuth";
 import { enqueueMcqGeneration, parseMcqLanguage, canStartCodexMcqHere } from "@/lib/mcq-generation";
+import { runWithAgentBackend } from "@/lib/agent-backend";
 
 // Kick off generation in the background and return immediately. The previous
 // implementation awaited the full dual-language run (up to 16+ Gemini calls plus
@@ -19,19 +20,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "identifier is required" }, { status: 400 });
     }
     const p = body.provider;
+    // GrokBot runs the Codex pipeline; it answers the prompts via the AI task queue.
+    const viaGrokbot = p === "grokbot";
     const provider =
       p === "ollama" ? "ollama" :
       p === "gemini" ? "gemini" :
-      p === "codex" ? "codex" :
+      p === "codex" || viaGrokbot ? "codex" :
       "claude";
     const modeOverride = body.mode === "continue" ? "continue" : undefined;
     const languageScope = parseMcqLanguage(body.language);
 
     const startWorker =
-      provider !== "codex" ? true : await canStartCodexMcqHere();
+      provider !== "codex" ? true :
+      viaGrokbot ? !process.env.VERCEL :
+      await runWithAgentBackend("codex", canStartCodexMcqHere);
 
     const job = await enqueueMcqGeneration(identifier, provider, modeOverride, languageScope, {
       startWorker,
+      agentBackend: viaGrokbot ? "grokbot" : provider === "codex" ? "codex" : undefined,
     });
     return NextResponse.json(job, { status: 202 });
   } catch (error) {

@@ -26,6 +26,8 @@ export interface IMcqGenJob extends Document {
   languageScope?: McqGenLanguage;
   /** Provider the local/production worker should use (codex jobs wait for a local CLI). */
   provider?: "gemini" | "ollama" | "claude" | "codex";
+  /** For codex jobs: answered by the local `codex` CLI or by GrokBot via the AI task queue. */
+  agentBackend?: "codex" | "grokbot";
   /** True when the job is waiting for a local Codex worker (production cannot run Codex). */
   awaitingLocalWorker?: boolean;
   status: McqGenStatus;
@@ -76,6 +78,7 @@ const MCQGenJobSchema = new Schema<IMcqGenJob>(
     mode: { type: String, enum: ["generate", "regenerate", "continue"], required: true },
     languageScope: { type: String, enum: ["English", "Gujarati"] },
     provider: { type: String, enum: ["gemini", "ollama", "claude", "codex"] },
+    agentBackend: { type: String, enum: ["codex", "grokbot"] },
     awaitingLocalWorker: { type: Boolean, default: false },
     status: {
       type: String,

@@ -49,7 +49,7 @@ import type { AppRole } from "@/lib/auth";
 const MCQ_STATS_CACHE_KEY = "mcq-bank:stats:v1";
 const MCQ_REGISTRY_CACHE_KEY = "mcq-bank:registry:v1";
 
-type McqGenProvider = "claude" | "codex" | "ollama";
+type McqGenProvider = "claude" | "codex" | "grokbot" | "ollama";
 
 interface DeptMCQStats {
   department: string;
@@ -1653,7 +1653,7 @@ export function MCQBankClient() {
   // UI state
   const [showDeptCards, setShowDeptCards] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [selectedProvider, setSelectedProvider] = useState<McqGenProvider>("codex");
+  const [selectedProvider, setSelectedProvider] = useState<McqGenProvider>("grokbot");
   const [claudeStatus, setClaudeStatus] = useState<{
     ok: boolean;
     model?: string;
@@ -2272,7 +2272,8 @@ export function MCQBankClient() {
     const { entry, language } = annexSwapTarget;
     const key = `${entry.id}::${language}`;
     const code = displaySopCode(entry.identifier);
-    const provider = selectedProvider;
+    // Annexure swap is a single short request, too quick for the GrokBot task queue.
+    const provider = selectedProvider === "grokbot" ? "codex" : selectedProvider;
     setAnnexSwapTarget(null);
 
     // Don't start a duplicate run for the same SOP+language.
@@ -2908,6 +2909,19 @@ export function MCQBankClient() {
                             ? "Codex ✓"
                             : "Codex !"
                         : "Codex"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProvider("grokbot")}
+                      title="GrokBot answers the Codex MCQ prompts through the MCP AI task queue. Keep the local app or MCQ worker running and ask GrokBot to work the queue."
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                        selectedProvider === "grokbot"
+                          ? "border border-slate-800 bg-slate-800 text-white hover:bg-slate-900 ring-2 ring-slate-300"
+                          : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Bot className="h-3.5 w-3.5" />
+                      GrokBot
                     </button>
                     <button
                       type="button"

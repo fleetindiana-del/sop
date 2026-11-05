@@ -32,6 +32,8 @@ export type ComplianceRunRequestDto = {
   completedAt: string | null;
   completedByName: string | null;
   cancelledAt: string | null;
+  autoRun: boolean;
+  failureReason: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -98,6 +100,8 @@ export function toRequestDto(
     completedAt: iso(row.completedAt),
     completedByName: row.completedByName ? String(row.completedByName) : null,
     cancelledAt: iso(row.cancelledAt),
+    autoRun: Boolean(row.autoRun),
+    failureReason: row.failureReason ? String(row.failureReason) : null,
     createdAt: iso(row.createdAt) ?? new Date().toISOString(),
     updatedAt: iso(row.updatedAt) ?? new Date().toISOString(),
   };
@@ -249,4 +253,41 @@ export async function completeMatchingComplianceRunRequests(report: {
   }
 
   return open.length;
+}
+
+/** Oldest auto-run request for the local worker; moves it to in_progress. */
+export async function claimNextAutoRunRequest() {
+  return ComplianceRunRequest.findOneAndUpdate(
+    { status: "pending", autoRun: true },
+    { $set: { status: "in_progress", claimedAt: new Date() } },
+    { sort: { createdAt: 1 }, new: true },
+  );
+}
+
+/** A worker that died mid-run leaves its claim in_progress; put those back in the queue. */
+export async function requeueStaleAutoRunRequests() {
+  const result = await ComplianceRunRequest.updateMany(
+    { status: "in_progress", autoRun: true, claimedAt: { $exists: true } },
+    { $set: { status: "pending" }, $unset: { claimedAt: 1 } },
+  );
+  return result.modifiedCount ?? 0;
+}
+
+/** Close an auto-run request that ended without a saved report. No-op once the report completed it. */
+export async function failAutoRunRequest(requestId: mongoose.Types.ObjectId, reason: string) {
+  const req = await ComplianceRunRequest.findOneAndUpdate(
+    { _id: requestId, status: { $in: OPEN_STATUSES } },
+    { $set: { status: "cancelled", cancelledAt: new Date(), failureReason: reason.slice(0, 500) } },
+    { new: true },
+  );
+  if (!req) return;
+  await notifyUsers([req.requesterId], {
+    type: "compliance_run_completed",
+    title: `Compliance run failed: ${req.sopIdentifier}`,
+    body: reason.slice(0, 300),
+    href: `/compliance/request/${req._id.toString()}`,
+    requestId: req._id,
+    sopIdentifier: req.sopIdentifier,
+    department: req.department,
+  });
 }

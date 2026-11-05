@@ -67,6 +67,18 @@ interface ComplianceReport {
   partialCount: number;
   nonCompliantCount: number;
   auditCompleteness?: AuditCompleteness;
+  scoreBreakdown?: {
+    totalApplicableRequirements: number;
+    compliantCount: number;
+    partialCount: number;
+    nonCompliantCount: number;
+    notApplicableCount: number;
+    formula: string;
+    score: number;
+    criticalRequirementCount?: number;
+    majorRequirementCount?: number;
+    minorRequirementCount?: number;
+  };
   findings: ComplianceFinding[];
   traceabilityMatrix?: Array<{
     clauseNumber: string;
@@ -161,6 +173,11 @@ export default function ComplianceReportDetailPage() {
   const guidelineFolders = useMemo(() => {
     if (!report?.findings) return [];
     return [...new Set(report.findings.map(f => f.folderName).filter(Boolean))] as string[];
+  }, [report]);
+
+  const guidelineNames = useMemo(() => {
+    if (!report?.findings) return [];
+    return [...new Set(report.findings.map((f) => f.guidelineName).filter(Boolean))];
   }, [report]);
 
   const visibleFindings = useMemo(() => {
@@ -351,6 +368,37 @@ export default function ComplianceReportDetailPage() {
               </div>
             ))}
           </div>
+
+          {report.scoreBreakdown && (
+            <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Score against the guidelines</p>
+              <p className="mt-1 text-sm font-semibold text-slate-800">
+                {report.scoreBreakdown.score.toFixed(1)} / 10 from {report.scoreBreakdown.totalApplicableRequirements} applicable requirement{report.scoreBreakdown.totalApplicableRequirements === 1 ? '' : 's'}
+                {report.scoreBreakdown.notApplicableCount
+                  ? ` · ${report.scoreBreakdown.notApplicableCount} not applicable, excluded`
+                  : ''}
+              </p>
+              <p className="mt-1 text-xs text-slate-600">
+                {[
+                  report.scoreBreakdown.criticalRequirementCount != null
+                    ? `${report.scoreBreakdown.criticalRequirementCount} critical (weight 5)`
+                    : '',
+                  report.scoreBreakdown.majorRequirementCount != null
+                    ? `${report.scoreBreakdown.majorRequirementCount} major (weight 3)`
+                    : '',
+                  report.scoreBreakdown.minorRequirementCount != null
+                    ? `${report.scoreBreakdown.minorRequirementCount} minor (weight 1)`
+                    : '',
+                ].filter(Boolean).join(' · ') || 'A compliant requirement receives full credit and a partial requirement receives half credit.'}
+              </p>
+              {guidelineNames.length > 0 && (
+                <p className="mt-2 text-xs text-slate-600">
+                  <span className="font-semibold text-slate-700">Guidelines: </span>
+                  {guidelineNames.join('; ')}
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Audit completeness report — proves the entire guideline library was reviewed */}

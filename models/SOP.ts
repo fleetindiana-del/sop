@@ -34,6 +34,8 @@ export interface ISOP extends Document {
   location?: string;
   validityPeriod?: number;
   complianceStatus?: "compliant" | "partial" | "non-compliant" | "pending";
+  /** Weighted guideline score, 0–10, copied from the latest completed assessment. */
+  complianceScore?: number;
   complianceNotes?: string;
   lastReviewedAt?: Date;
   nextReviewDate?: Date;
@@ -151,6 +153,7 @@ const SOPSchema = new Schema<ISOP>(
       enum: ["compliant", "partial", "non-compliant", "pending"],
       default: "pending",
     },
+    complianceScore: { type: Number, min: 0, max: 10 },
     complianceNotes: { type: String },
     lastReviewedAt: { type: Date },
     nextReviewDate: { type: Date },

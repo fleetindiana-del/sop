@@ -302,6 +302,16 @@ export async function runComplianceReview(
     model: input.model,
   });
 
+  // Never persist a run where the AI mostly failed (quota, auth, network): it would be
+  // saved as a "completed" 0% report and silently drop the SOP out of the pending queue.
+  const failedFindings = result.findings.filter((f) => f.complianceLevel === "analysis-failed");
+  if (result.findings.length > 0 && failedFindings.length / result.findings.length >= 0.5) {
+    const reason = failedFindings[0]?.mismatchExplanation?.replace(/^Analysis failed:\s*/i, "") ?? "unknown error";
+    throw new Error(
+      `AI analysis failed for ${failedFindings.length}/${result.findings.length} clauses of ${input.sop.identifier} — report not saved. ${reason.slice(0, 260)}`,
+    );
+  }
+
   const scopedIds = input.scopedGuidelineIds?.length
     ? new Set(input.scopedGuidelineIds)
     : null;
@@ -346,6 +356,7 @@ export async function runComplianceReview(
     clauseCoveragePct: result.clauseCoveragePct,
     auditCompleteness: result.auditCompleteness,
     analysisEngineVersion: result.analysisEngineVersion,
+    assessedBy: input.provider === "codex" ? "Codex" : undefined,
     annexuresChecked: input.annexureStatus === "checked" || input.annexuresChecked === true,
     annexureStatus:
       input.annexureStatus ??

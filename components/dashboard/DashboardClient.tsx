@@ -531,7 +531,7 @@ export function DashboardClient() {
         s.expiryDate ?? "",
         s.uploadedAt,
         s.complianceDone ? "Yes" : "No",
-        s.complianceDone ? `${Math.round(s.complianceScore * 10)}%` : "",
+        s.complianceAnalyzed ? `${Math.round(s.complianceScore * 10)}%` : "",
         s.complianceBypassed ? "Yes" : "No",
       ].join(","),
     );

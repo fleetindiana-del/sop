@@ -731,7 +731,7 @@ export function SOPRegistryTable({
                     </select>
                   </div>
                 </th>
-                <th className={thBase} title="Compliance score — click to open the report">
+                <th className={thBase} title="Completed compliance score, including results under 80%. Click to open the report.">
                   <button type="button" className={sortBtn} onClick={() => onSort("complianceScore")}>
                     Score <SortIcon field="complianceScore" />
                   </button>
@@ -1366,15 +1366,13 @@ function SOPDetailPanel({
             <Users className="h-3 w-3 shrink-0 text-gray-500" />
             <span className="font-semibold text-gray-600">Compliance:</span>
             <span className="font-bold text-gray-800">
-              {shouldShowComplianceScore(sop)
-                ? `${compliancePercent(sop.complianceScore)}% (Done)`
+              {sop.complianceAnalyzed
+                ? `${compliancePercent(sop.complianceScore)}%${sop.complianceDone ? " (Passed)" : ""}`
                 : sop.complianceBypassed
                   ? "Bypassed"
-                  : sop.complianceAnalyzed
-                    ? "Not done"
-                    : "Not run"}
+                  : "Not run"}
             </span>
-            {shouldShowComplianceScore(sop) && sop.complianceReportId && (
+            {sop.complianceReportId && (
               <a
                 href={`/compliance/report/${sop.complianceReportId}`}
                 target="_blank"

@@ -40,7 +40,7 @@ import {
   buildComplianceSummary,
   buildComplianceRationale,
 } from '@/lib/complianceFormatter';
-import { cleanFindingText, buildProposedVerbiage } from '@/lib/ComplianceFindingValidator';
+import { cleanFindingText, buildProposedVerbiage, isBadFindingNarrative, isUnreadableDocumentText } from '@/lib/ComplianceFindingValidator';
 import { extractGuidelineClauseDisplay } from '@/lib/guidelineClauseDisplay';
 import { isGuidelineBoilerplate } from '@/lib/guidelineBoilerplate';
 import type { PdfSearchResolution } from '@/lib/guidelineDocSearch';
@@ -363,8 +363,10 @@ export default function FindingCard({
   const catBadge = categoryBadge(finding.findingCategory);
   const rBadge = riskBadge(finding.riskLevel);
   const evBadge = evidenceStrengthBadge(finding.evidenceStrength);
-  const evidenceFound = finding.evidenceFound?.trim();
-  const evidenceMissing = finding.evidenceMissing?.trim();
+  const evidenceFound = cleanFindingText(finding.evidenceFound);
+  const evidenceMissing = isBadFindingNarrative(finding.evidenceMissing)
+    ? ''
+    : cleanFindingText(finding.evidenceMissing);
   const guidelineRef = finding.guidelineReference?.trim();
   const isGmp = finding.findingType === 'gmp-expectation';
   const isCrossSop = finding.findingType === 'cross-sop-dependency';
@@ -376,8 +378,8 @@ export default function FindingCard({
   const hasReasoning = !!(whyApplies || whyEvidence || whyScore);
 
   const guidelineTag = finding.folderName || finding.guidelineName;
-  const gapText =
-    finding.mismatchExplanation?.trim() || finding.highlightedIssue?.trim() || '';
+  const rawGap = finding.mismatchExplanation?.trim() || finding.highlightedIssue?.trim() || '';
+  const gapText = isBadFindingNarrative(rawGap) ? '' : rawGap;
   const recheckNewGap = recheckOverride?.newGap?.trim() || '';
   const originalSectionRaw = finding.sopSectionAffected?.trim() || '';
   // In re-check mode the § on "Current SOP (Revised)" must reflect where the revised
@@ -391,7 +393,11 @@ export default function FindingCard({
     '';
   const originalSopSnippet =
     cleanFindingText(finding.sopTextSnippet) ||
-    (reportContext ? `${reportContext.sopIdentifier}_${reportContext.sopName}` : '');
+    (isUnreadableDocumentText(finding.sopTextSnippet)
+      ? ''
+      : reportContext
+        ? `${reportContext.sopIdentifier}_${reportContext.sopName}`
+        : '');
   const sopSnippet = recheckOverride?.currentSopText?.trim() || originalSopSnippet;
   const previousSopText =
     recheckOverride?.currentSopText?.trim() && originalSopSnippet ? originalSopSnippet : '';
@@ -411,7 +417,7 @@ export default function FindingCard({
     guidelineSourceLine: finding.guidelineSourceLine,
     guidelineLineNumber: finding.guidelineLineNumber,
     guidelineSearchPhrase: finding.guidelineSearchPhrase,
-    sopTextSnippet: sopSnippet || finding.sopTextSnippet,
+    sopTextSnippet: sopSnippet || cleanFindingText(finding.sopTextSnippet),
     evidenceFound: evidenceFound,
     complianceLevel: finding.complianceLevel,
     impactGap: impactGapForSource,
@@ -430,14 +436,15 @@ export default function FindingCard({
     return '';
   })();
 
+  const storedImpact = finding.impactAnalysis?.trim() || '';
   const impactText =
-    finding.impactAnalysis?.trim() ||
+    (storedImpact && !isBadFindingNarrative(storedImpact) ? storedImpact : '') ||
     (isActionable && displayRequirement
       ? buildImpactAnalysis(finding, displayRequirement)
       : '');
   const impactSummaryText =
     isActionable && (gapText || displayRequirement)
-      ? buildImpactSummary({ ...finding, mismatchExplanation: gapText || finding.mismatchExplanation }, displayRequirement)
+      ? buildImpactSummary({ ...finding, mismatchExplanation: gapText }, displayRequirement)
       : '';
   const proposedVerbiage =
     cleanFindingText(finding.suggestedText) ||
@@ -455,11 +462,11 @@ export default function FindingCard({
 
   const complianceSummaryText =
     isCompliant && displayRequirement
-      ? buildComplianceSummary({ ...finding, sopTextSnippet: sopSnippet || finding.sopTextSnippet }, displayRequirement)
+      ? buildComplianceSummary({ ...finding, sopTextSnippet: sopSnippet || cleanFindingText(finding.sopTextSnippet) }, displayRequirement)
       : '';
   const complianceRationaleText =
     isCompliant && displayRequirement
-      ? buildComplianceRationale({ ...finding, sopTextSnippet: sopSnippet || finding.sopTextSnippet }, displayRequirement)
+      ? buildComplianceRationale({ ...finding, sopTextSnippet: sopSnippet || cleanFindingText(finding.sopTextSnippet) }, displayRequirement)
       : '';
   const guidelineSourceName = finding.pdfName || finding.folderName || finding.guidelineName;
 
@@ -1212,6 +1219,7 @@ export default function FindingCard({
           {(hasReasoning || (finding.mergedClauseRefs && finding.mergedClauseRefs.length > 0)) && (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 text-[10px] text-gray-700 leading-snug">
               {hasReasoning && whyApplies && <span><span className="font-semibold text-slate-500">Applies:</span> {whyApplies}</span>}
+              {hasReasoning && whyScore && <span><span className="font-semibold text-slate-500">Score:</span> {whyScore}</span>}
               {finding.mergedClauseRefs?.map((ref, i) => (
                 <span key={i} className="px-1 py-px bg-purple-50 border border-purple-200 rounded text-purple-700 font-semibold">{ref}</span>
               ))}

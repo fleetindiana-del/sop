@@ -22,7 +22,7 @@ export type ComplianceRunStartParams = {
   guidelineIds: string[];
   guidelineLabel: string;
   forceRefresh: boolean;
-  provider?: "claude" | "codex" | "gemini" | "ollama" | null;
+  provider?: "claude" | "codex" | "grokbot" | "gemini" | "ollama" | null;
   model?: string;
 };
 

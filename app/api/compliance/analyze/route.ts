@@ -23,6 +23,8 @@ import { countLinkedAnnexureDocuments } from "@/lib/compliance-sop-content";
 import { normalizeSopIdentifierKey, sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 import RecheckRun from "@/models/RecheckRun";
 
+export const dynamic = "force-dynamic";
+
 const REPORT_ENRICH_CACHE_TTL_MS = 5 * 60 * 1000;
 const fullReportCache = new Map<string, { at: number; report: unknown }>();
 
@@ -345,15 +347,28 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, report: withRecheck });
     }
 
-    const reports = await ComplianceReport.find({})
+    const reports = await ComplianceReport.find({ analysisStatus: "completed" })
       .sort({ analyzedAt: -1 })
-      .limit(200)
-      .select("-findings -traceabilityMatrix -crossSopDependencies")
+      .select(
+        "sopId sopIdentifier sopName department overallScore complianceStatus " +
+          "totalGuidelinesChecked compliantCount partialCount nonCompliantCount " +
+          "criticalCount majorCount minorCount improvementCount bestPracticeCount clauseCoveragePct " +
+          "analysisEngineVersion analyzedAt annexuresChecked annexureStatus linkedAnnexureCount " +
+          "annexureChars annexuresIncluded annexuresSkipped analysisStatus",
+      )
       .lean();
 
-    const withAnnexures = await attachLiveAnnexureCounts(reports);
-    const withRecheck = await attachLatestRecheckSummaries(withAnnexures);
-    return NextResponse.json({ success: true, reports: withRecheck });
+    let listed: unknown[] = reports;
+    try {
+      const withAnnexures = await attachLiveAnnexureCounts(reports);
+      listed = await attachLatestRecheckSummaries(withAnnexures);
+    } catch (enrichError) {
+      console.warn("[compliance] report list enrichment failed:", enrichError);
+    }
+    return NextResponse.json(
+      { success: true, total: listed.length, reports: listed },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : "Failed to fetch reports" },

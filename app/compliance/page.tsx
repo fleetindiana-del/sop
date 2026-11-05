@@ -42,6 +42,13 @@ interface GuidelineFolder {
   totalClauses: number;
 }
 
+/** Display/request fallback used only until /api/llm/codex-status reports the live model.
+ *  Keep in sync with DEFAULT_MCQ_CODEX_MODEL in lib/codex-cli.ts (mini tiers are
+ *  rejected by ChatGPT-account Codex). */
+const DEFAULT_CODEX_COMPLIANCE_MODEL = 'gpt-5.6-sol';
+/** Fast Codex tier (ChatGPT account) used by the "Run Pending (Fast)" button. */
+const FAST_CODEX_COMPLIANCE_MODEL = 'gpt-5.6-luna';
+
 interface SOP {
   _id: string;
   identifier: string;
@@ -478,7 +485,13 @@ function buildSectionGroupedFindings(items: FindingListItem[]): FindingDisplayGr
   const orderedKeys = [...map.keys()].sort((a, b) => compareSectionNumbers(a, b));
   let serial = 0;
   return orderedKeys.map((key) => {
-    const groupItems = map.get(key)!;
+    // Keep each section's findings clustered by guideline so the sub-group headings
+    // appear once per guideline instead of interleaving.
+    const groupItems = [...map.get(key)!].sort((a, b) =>
+      (a.f.folderName || a.f.guidelineName || 'Other').localeCompare(
+        b.f.folderName || b.f.guidelineName || 'Other',
+      ),
+    );
     let lastSubLabel: string | null = null;
     return {
       key,
@@ -795,6 +808,10 @@ export default function ComplianceEnginePage() {
   const [activeChip, setActiveChip] = useState<'completed' | 'cached' | 'failed' | null>(null);
 
   const [preflightData, setPreflightData] = useState({ checked: false, existingCount: 0, newCount: 0 });
+  /** Backlog of active SOPs with no completed compliance report (server-resolved). */
+  const [pendingBacklog, setPendingBacklog] = useState<{ total: number; analyzed: number; scanned: number } | null>(null);
+  const [startingPendingRun, setStartingPendingRun] = useState(false);
+  const [startingIncompleteRun, setStartingIncompleteRun] = useState(false);
   const [selectedReport, setSelectedReport] = useState<ComplianceReport | null>(null);
   const [loadingFullReport, setLoadingFullReport] = useState(false);
   const [fullReportLoadError, setFullReportLoadError] = useState<string | null>(null);
@@ -850,7 +867,7 @@ export default function ComplianceEnginePage() {
     complianceModel: string;
     label: string;
   } | null>(null);
-  const [selectedProvider, setSelectedProvider] = useState<'claude' | 'codex' | 'gemini' | 'ollama' | null>('codex');
+  const [selectedProvider, setSelectedProvider] = useState<'claude' | 'codex' | 'grokbot' | 'gemini' | 'ollama' | null>('grokbot');
   const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-6');
   const [claudeStatus, setClaudeStatus] = useState<{
     ok: boolean;
@@ -954,7 +971,7 @@ export default function ComplianceEnginePage() {
 
   const fetchReports = async () => {
     try {
-      const res = await fetch('/api/compliance/analyze');
+      const res = await fetch('/api/compliance/analyze', { cache: 'no-store' });
       const data = await res.json();
       if (data.success) {
         setReports(data.reports ?? []);
@@ -983,6 +1000,16 @@ export default function ComplianceEnginePage() {
 
   useEffect(() => { if (currentStep === 'review') runPreflightCheck(); }, [currentStep, selectedSopIds, runPreflightCheck]);
 
+  const resolveRunModel = useCallback(
+    () =>
+      selectedProvider === 'claude'
+        ? selectedModel
+        : selectedProvider === 'codex'
+          ? codexStatus?.complianceModel ?? DEFAULT_CODEX_COMPLIANCE_MODEL
+          : undefined,
+    [selectedProvider, selectedModel, codexStatus],
+  );
+
   const runAnalysis = async () => {
     const candidates = sops.filter((s) => selectedSopIds.has(s._id));
     if (!candidates.length || selectedGuidelineIds.size === 0) return;
@@ -999,13 +1026,138 @@ export default function ComplianceEnginePage() {
       guidelineLabel,
       forceRefresh: forceFullReanalysis,
       provider: selectedProvider,
-      model:
-        selectedProvider === 'claude'
-          ? selectedModel
-          : selectedProvider === 'codex'
-            ? codexStatus?.complianceModel ?? 'gpt-5.4-mini'
-            : undefined,
+      model: resolveRunModel(),
     });
+  };
+
+  const fetchPendingBacklog = useCallback(async (department: string) => {
+    try {
+      const qs = department !== 'all' ? `?countOnly=1&department=${encodeURIComponent(department)}` : '?countOnly=1';
+      const res = await fetch(`/api/compliance/pending-sops${qs}`);
+      const data = await res.json();
+      if (data.success) {
+        setPendingBacklog({ total: data.total ?? 0, analyzed: data.analyzed ?? 0, scanned: data.scanned ?? 0 });
+      }
+    } catch { /* silent — the button falls back to fetching on click */ }
+  }, []);
+
+  /** Queue every active SOP that has no completed report yet, in one sequential run. */
+  const runPendingAnalysis = async (fast = false) => {
+    if (isAnalyzing || startingPendingRun) return;
+    setStartingPendingRun(true);
+    try {
+      const qs = filterDepartment !== 'all' ? `?department=${encodeURIComponent(filterDepartment)}` : '';
+      const res = await fetch(`/api/compliance/pending-sops${qs}`);
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.error ?? 'Could not resolve the pending SOP list.');
+        return;
+      }
+
+      const candidates: SOP[] = data.sops ?? [];
+      setPendingBacklog({ total: candidates.length, analyzed: data.analyzed ?? 0, scanned: data.scanned ?? 0 });
+      if (!candidates.length) {
+        alert(
+          filterDepartment === 'all'
+            ? 'Every active SOP already has a completed compliance report.'
+            : `Every active SOP in ${filterDepartment} already has a completed compliance report.`,
+        );
+        return;
+      }
+
+      const guidelineIds = selectedGuidelineIds.size
+        ? [...selectedGuidelineIds]
+        : guidelines.map((g) => g._id);
+      if (!guidelineIds.length) {
+        alert('No guidelines are loaded yet. Open Step 2 and upload or refresh guidelines first.');
+        return;
+      }
+
+      const estHours = Math.max(1, Math.round((candidates.length * 20) / 60));
+      const ok = confirm(
+        `Run compliance on ${candidates.length} SOP${candidates.length === 1 ? '' : 's'} with no report yet` +
+          `${filterDepartment === 'all' ? '' : ` in ${filterDepartment}`}.\n\n` +
+          `Guidelines: ${guidelineIds.length}\n` +
+          `Rough estimate: ~${estHours} hour${estHours === 1 ? '' : 's'} (SOPs run one at a time).\n\n` +
+          'Keep this tab open — closing it stops the queue. You can pause or stop from the progress panel.',
+      );
+      if (!ok) return;
+
+      setSelectedSopIds(new Set(candidates.map((c) => c._id)));
+      setCurrentStep('analyze');
+      setActiveChip(null);
+      await startRun({
+        candidates,
+        guidelineIds,
+        guidelineLabel: guidelineIds.length === 1 ? guidelines.find((g) => g._id === guidelineIds[0])?.name ?? '1 guideline' : `${guidelineIds.length} guidelines`,
+        forceRefresh: false,
+        provider: fast ? 'codex' : selectedProvider,
+        model: fast ? FAST_CODEX_COMPLIANCE_MODEL : resolveRunModel(),
+      });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to start the pending compliance run.');
+    } finally {
+      setStartingPendingRun(false);
+    }
+  };
+
+  /** Reports that finished as "Analysis Incomplete" (respects the department filter). */
+  const incompleteReports = useMemo(() => {
+    const seen = new Set<string>();
+    return (reports ?? []).filter((r) => {
+      if (r.complianceStatus !== 'Analysis Incomplete' || !r.sopId) return false;
+      if (reportFilterDepartment !== 'all' && r.department !== reportFilterDepartment) return false;
+      if (seen.has(r.sopId)) return false;
+      seen.add(r.sopId);
+      return true;
+    });
+  }, [reports, reportFilterDepartment]);
+
+  /** Re-run every "Analysis Incomplete" SOP on the V3 engine with the fast Codex model. */
+  const runIncompleteFast = async () => {
+    if (isAnalyzing || startingIncompleteRun || !incompleteReports.length) return;
+    const guidelineIds = selectedGuidelineIds.size
+      ? [...selectedGuidelineIds]
+      : guidelines.map((g) => g._id);
+    if (!guidelineIds.length) {
+      alert('No guidelines are loaded yet. Open Step 2 and upload or refresh guidelines first.');
+      return;
+    }
+
+    const candidates = incompleteReports.map((r) => ({
+      _id: r.sopId as string,
+      identifier: r.sopIdentifier,
+      name: r.sopName,
+    }));
+    const ok = confirm(
+      `Re-run ${candidates.length} "Analysis Incomplete" SOP${candidates.length === 1 ? '' : 's'} ` +
+        `on the V3 engine in fast mode (${FAST_CODEX_COMPLIANCE_MODEL}).\n\n` +
+        'SOPs run one at a time. Keep this tab open — closing it stops the queue. ' +
+        'You can pause or stop from the progress panel.',
+    );
+    if (!ok) return;
+
+    setStartingIncompleteRun(true);
+    try {
+      setSelectedSopIds(new Set(candidates.map((c) => c._id)));
+      setCurrentStep('analyze');
+      setActiveChip(null);
+      await startRun({
+        candidates,
+        guidelineIds,
+        guidelineLabel:
+          guidelineIds.length === 1
+            ? guidelines.find((g) => g._id === guidelineIds[0])?.name ?? '1 guideline'
+            : `${guidelineIds.length} guidelines`,
+        forceRefresh: true,
+        provider: 'codex',
+        model: FAST_CODEX_COMPLIANCE_MODEL,
+      });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to start the incomplete re-run.');
+    } finally {
+      setStartingIncompleteRun(false);
+    }
   };
 
   const lastRunGenerationRef = useRef(0);
@@ -1016,6 +1168,7 @@ export default function ComplianceEnginePage() {
     void (async () => {
       const state = useComplianceRunStore.getState();
       await fetchReports();
+      void fetchPendingBacklog(filterDepartment);
       fetch('/api/compliance/guideline-stats')
         .then((r) => r.json())
         .then((d) => {
@@ -1029,7 +1182,7 @@ export default function ComplianceEnginePage() {
         state.analysisStats.total === 1
       ) {
         try {
-          const listRes = await fetch('/api/compliance/analyze');
+          const listRes = await fetch('/api/compliance/analyze', { cache: 'no-store' });
           const listData = await listRes.json();
           const candidate = sops.find((s) => s._id === state.lastAnalyzedSopId);
           const report = (listData.reports ?? []).find(
@@ -1127,6 +1280,7 @@ export default function ComplianceEnginePage() {
     fetchSops();
     fetchGuidelines();
     fetchReports();
+    void fetchPendingBacklog('all');
     fetch('/api/compliance/config')
       .then((r) => r.json())
       .then((d) => {
@@ -1316,12 +1470,21 @@ export default function ComplianceEnginePage() {
 
   // Export the full on-screen report (header + every finding) via print →
   // Save as PDF so the file matches the Compliance Result UI with selectable text.
+  // The exported file is always grouped by SOP section in ascending numeric order
+  // (1, 1.1, 2, ...) regardless of the grouping/sorting the user is viewing, so the
+  // report reads section-wise for audit review.
   const handleExportPdf = async () => {
     if (!reportExportRef.current || !selectedReport || exportingPdf) return;
     setExportingPdf(true);
     const prevCollapsed = collapsedFindingGroups;
+    const prevGroupView = findingsGroupView;
+    const prevSortKey = findingsSortKey;
+    const prevSortDir = findingsSortDir;
     if (prevCollapsed.size > 0) setCollapsedFindingGroups(new Set());
-    // Wait for the group-expansion re-render to flush to the DOM.
+    if (prevGroupView !== 'section') setFindingsGroupView('section');
+    if (prevSortKey !== 'section') setFindingsSortKey('section');
+    if (prevSortDir !== 'asc') setFindingsSortDir('asc');
+    // Wait for the group-expansion / regrouping re-render to flush to the DOM.
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     try {
       const safeName = `${selectedReport.sopIdentifier || 'compliance'}-report`
@@ -1335,7 +1498,13 @@ export default function ComplianceEnginePage() {
       console.error('Compliance PDF export failed', err);
       alert('Could not open the print dialog. Please try again, then choose “Save as PDF”.');
     } finally {
-      if (prevCollapsed.size > 0) setCollapsedFindingGroups(prevCollapsed);
+      if (prevGroupView !== 'section') setFindingsGroupView(prevGroupView);
+      if (prevSortKey !== 'section') setFindingsSortKey(prevSortKey);
+      if (prevSortDir !== 'asc') setFindingsSortDir(prevSortDir);
+      // Restore after the group-view effect (which clears collapsed groups) has run.
+      if (prevCollapsed.size > 0) {
+        requestAnimationFrame(() => setCollapsedFindingGroups(prevCollapsed));
+      }
       setExportingPdf(false);
     }
   };
@@ -1599,7 +1768,7 @@ export default function ComplianceEnginePage() {
           selectedProvider === 'claude'
             ? selectedModel
             : selectedProvider === 'codex'
-              ? codexStatus?.complianceModel ?? 'gpt-5.4-mini'
+              ? codexStatus?.complianceModel ?? DEFAULT_CODEX_COMPLIANCE_MODEL
               : undefined,
       });
     } finally {
@@ -1924,7 +2093,7 @@ export default function ComplianceEnginePage() {
                     selectedProvider === 'claude'
                       ? `Claude model: ${selectedModel}`
                       : selectedProvider === 'codex'
-                      ? `Codex model: ${codexStatus?.complianceModel ?? 'gpt-5.4-mini'}`
+                      ? `Codex model: ${codexStatus?.complianceModel ?? DEFAULT_CODEX_COMPLIANCE_MODEL}`
                       : `Compliance model: ${llmInfo.complianceModel}`
                   }
                 >
@@ -1937,7 +2106,9 @@ export default function ComplianceEnginePage() {
                   {selectedProvider === 'claude'
                     ? `Claude · ${selectedModel.includes('haiku') ? 'Haiku' : 'Sonnet'}`
                     : selectedProvider === 'codex'
-                    ? `Codex · ${codexStatus?.complianceModel ?? 'gpt-5.4-mini'}`
+                    ? `Codex · ${codexStatus?.complianceModel ?? DEFAULT_CODEX_COMPLIANCE_MODEL}`
+                    : selectedProvider === 'grokbot'
+                    ? 'GrokBot'
                     : selectedProvider === 'ollama'
                     ? 'Ollama'
                     : selectedProvider === 'gemini'
@@ -1980,7 +2151,7 @@ export default function ComplianceEnginePage() {
               onClick={() => setSelectedProvider('codex')}
               title={
                 selectedProvider === 'codex' && codexStatus?.ok
-                  ? `Codex via your ChatGPT subscription (${codexStatus.complianceModel ?? 'gpt-5.4-mini'}) — local CLI, no API key`
+                  ? `Codex via your ChatGPT subscription (${codexStatus.complianceModel ?? DEFAULT_CODEX_COMPLIANCE_MODEL}) — local CLI, no API key`
                   : selectedProvider === 'codex' && codexStatus?.error
                     ? `Codex not connected: ${codexStatus.error}`
                     : 'Codex — local CLI via ChatGPT subscription (no API key)'
@@ -2001,6 +2172,19 @@ export default function ComplianceEnginePage() {
                     ? 'Codex ✓'
                     : 'Codex !'
                 : 'Codex'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedProvider('grokbot')}
+              title="GrokBot answers each V3 prompt through the MCP AI task queue (in place of Codex). Run from the local app and keep GrokBot working the queue."
+              className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                selectedProvider === 'grokbot'
+                  ? 'border border-slate-800 bg-slate-800 text-white hover:bg-slate-900 ring-1 ring-slate-300'
+                  : 'border border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <Bot className="h-3 w-3" />
+              {selectedProvider === 'grokbot' ? 'GrokBot ✓' : 'GrokBot'}
             </button>
             <button
               type="button"
@@ -2061,6 +2245,13 @@ export default function ComplianceEnginePage() {
           <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             Codex is not connected. Run <code className="rounded bg-red-100 px-1">codex login</code> in a terminal, then refresh.
             {codexStatus.error ? ` — ${codexStatus.error}` : ''}
+          </div>
+        )}
+        {selectedProvider === 'grokbot' && (
+          <div className="mb-6 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            GrokBot mode: each clause review is queued for GrokBot instead of Codex. Run this from the local app and ask GrokBot to
+            work the AI task queue (<code className="rounded bg-slate-100 px-1">claim_ai_tasks</code>) until it is empty. The run stops
+            if no task is picked up within 10 minutes.
           </div>
         )}
         {/* Step tabs */}
@@ -2287,17 +2478,53 @@ export default function ComplianceEnginePage() {
                 <h2 className="text-2xl font-bold text-gray-800">SOP Repository</h2>
                 <p className="text-gray-500 mt-1">{sopTotal || sops.length} SOPs across {departments.length} departments available for analysis.</p>
               </div>
-              <button onClick={fetchSops} disabled={loadingSops} className="px-5 py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-xl transition-all disabled:opacity-50 font-medium text-sm flex items-center gap-2 border border-purple-200">
-                {loadingSops ? <><span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />Fetching...</> : '🔄 Refresh Data'}
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => runPendingAnalysis()}
+                  disabled={isAnalyzing || startingPendingRun || pendingBacklog?.total === 0}
+                  title={
+                    isAnalyzing
+                      ? 'A compliance run is already in progress'
+                      : pendingBacklog?.total === 0
+                        ? 'Every SOP in this scope already has a completed report'
+                        : 'Queue every SOP with no completed compliance report yet'
+                  }
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-sm flex items-center gap-2 shadow-sm"
+                >
+                  {startingPendingRun ? (
+                    <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Preparing...</>
+                  ) : (
+                    <>▶ Run All Pending{pendingBacklog ? ` (${pendingBacklog.total})` : ''}</>
+                  )}
+                </button>
+                <button
+                  onClick={() => runPendingAnalysis(true)}
+                  disabled={isAnalyzing || startingPendingRun || pendingBacklog?.total === 0}
+                  title={`Queue every pending SOP using the fast Codex model (${FAST_CODEX_COMPLIANCE_MODEL})`}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-sm flex items-center gap-2 shadow-sm"
+                >
+                  ⚡ Run Pending (Fast){pendingBacklog ? ` (${pendingBacklog.total})` : ''}
+                </button>
+                <button onClick={fetchSops} disabled={loadingSops} className="px-5 py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-xl transition-all disabled:opacity-50 font-medium text-sm flex items-center gap-2 border border-purple-200">
+                  {loadingSops ? <><span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />Fetching...</> : '🔄 Refresh Data'}
+                </button>
+              </div>
             </div>
+            {pendingBacklog && pendingBacklog.total > 0 && (
+              <div className="-mt-4 mb-6 text-sm text-gray-500">
+                <span className="font-semibold text-emerald-700">{pendingBacklog.total}</span> of {pendingBacklog.scanned} active SOPs
+                {filterDepartment === 'all' ? '' : ` in ${filterDepartment}`} have never completed a compliance run
+                {' · '}
+                <span className="text-gray-400">{pendingBacklog.analyzed} already done</span>
+              </div>
+            )}
 
             <div className="mb-6 flex items-center gap-3">
               <span className="text-sm font-medium text-gray-600">Filter by Department:</span>
               <div className="relative">
                 <select
                   value={filterDepartment}
-                  onChange={e => setFilterDepartment(e.target.value)}
+                  onChange={e => { setFilterDepartment(e.target.value); void fetchPendingBacklog(e.target.value); }}
                   className="pl-4 pr-10 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500/20 text-sm appearance-none cursor-pointer hover:border-purple-300 transition-all font-medium min-w-[240px]"
                 >
                   <option value="all">All Departments ({sopTotal || sops.length})</option>
@@ -2693,7 +2920,10 @@ export default function ComplianceEnginePage() {
                   <>LLM: <strong>Claude {selectedModel.includes('haiku') ? 'Haiku' : 'Sonnet'}</strong> via Claude Code.</>
                 )}
                 {selectedProvider === 'codex' && (
-                  <>LLM: <strong>Codex</strong> ({codexStatus?.complianceModel ?? 'gpt-5.4-mini'}) via your ChatGPT subscription.</>
+                  <>LLM: <strong>Codex</strong> ({codexStatus?.complianceModel ?? DEFAULT_CODEX_COMPLIANCE_MODEL}) via your ChatGPT subscription.</>
+                )}
+                {selectedProvider === 'grokbot' && (
+                  <>LLM: <strong>GrokBot</strong> via the MCP AI task queue.</>
                 )}
                 {selectedProvider === 'gemini' && (
                   <>LLM: <strong>Gemini</strong> ({llmInfo?.complianceModel ?? 'cloud'}).</>
@@ -2741,6 +2971,8 @@ export default function ComplianceEnginePage() {
                   ? ` · ${selectedModel.includes('haiku') ? 'Haiku' : 'Sonnet'}`
                   : selectedProvider === 'codex'
                   ? ` · Codex`
+                  : selectedProvider === 'grokbot'
+                  ? ' · GrokBot'
                   : selectedProvider === 'gemini'
                   ? ' · Gemini'
                   : selectedProvider === 'ollama'
@@ -2761,7 +2993,7 @@ export default function ComplianceEnginePage() {
                     {isAnalyzing ? 'V3 Precision Analysis Running...' : analysisComplete ? '✅ V3 Analysis Complete' : 'Analysis'}
                   </h2>
                   <p className="text-xs font-semibold text-indigo-600 mt-1 uppercase tracking-wide">
-                    V3 Engine · {selectedProvider === 'codex' ? `Codex (${codexStatus?.complianceModel ?? 'gpt-5.4-mini'})` : selectedProvider === 'claude' ? `Claude (${selectedModel})` : selectedProvider === 'ollama' ? 'Ollama' : selectedProvider === 'gemini' ? `Gemini (${llmInfo?.complianceModel ?? 'cloud'})` : 'Provider'}
+                    V3 Engine · {selectedProvider === 'codex' ? `Codex (${codexStatus?.complianceModel ?? DEFAULT_CODEX_COMPLIANCE_MODEL})` : selectedProvider === 'claude' ? `Claude (${selectedModel})` : selectedProvider === 'grokbot' ? 'GrokBot' : selectedProvider === 'ollama' ? 'Ollama' : selectedProvider === 'gemini' ? `Gemini (${llmInfo?.complianceModel ?? 'cloud'})` : 'Provider'}
                   </p>
                   {isAnalyzing && analysisStats.currentSopName && (
                     <p className="text-sm text-gray-500 mt-1">
@@ -2898,13 +3130,28 @@ export default function ComplianceEnginePage() {
               <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between gap-2 sticky top-0 bg-white z-10">
                 <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
                   Generated Reports
-                  <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] rounded-full font-bold">
+                  <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] rounded-full font-bold" title="Every completed compliance report, including scores under 8">
                     {reportFilterDepartment === 'all' && reportFilterAnnexures === 'all'
                       ? reports?.length || 0
                       : `${filteredReports.length}/${reports?.length || 0}`}
                   </span>
                 </h2>
                 <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={runIncompleteFast}
+                    disabled={isAnalyzing || startingIncompleteRun || incompleteReports.length === 0}
+                    title={
+                      isAnalyzing
+                        ? 'A compliance run is already in progress'
+                        : incompleteReports.length === 0
+                          ? 'No reports are marked Analysis Incomplete'
+                          : `Re-run every Analysis Incomplete SOP on V3 with ${FAST_CODEX_COMPLIANCE_MODEL}`
+                    }
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-bold shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {startingIncompleteRun ? 'Starting...' : `⚡ Re-run Incomplete · V3 Fast (${incompleteReports.length})`}
+                  </button>
                   {(reports ?? []).some((r) => resolveAnnexureStatus(r) !== 'checked') && (
                     <span
                       className="hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border border-amber-200 bg-amber-50 text-amber-800"
@@ -3365,7 +3612,7 @@ export default function ComplianceEnginePage() {
                           setRecheckOpen(true);
                         }}
                         className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold transition-all shrink-0 bg-purple-600 text-white hover:bg-purple-700 shadow-sm shadow-purple-200"
-                        title="Upload a manually revised SOP and re-run the AI compliance check"
+                        title="Upload a revised SOP and repeat the compliance assessment"
                       >
                         <Upload className="h-3.5 w-3.5" />
                         Upload SOP &amp; Re-run

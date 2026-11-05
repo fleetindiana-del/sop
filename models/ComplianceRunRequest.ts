@@ -27,6 +27,11 @@ export interface IComplianceRunRequest extends Document {
   completedAt?: Date;
   completedByName?: string;
   cancelledAt?: Date;
+  /** Run by the local worker without an operator; the AI answers come from `agentBackend`. */
+  autoRun?: boolean;
+  agentBackend?: "codex" | "grokbot";
+  claimedAt?: Date;
+  failureReason?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -65,6 +70,10 @@ const ComplianceRunRequestSchema = new Schema<IComplianceRunRequest>(
     completedAt: { type: Date },
     completedByName: { type: String, trim: true },
     cancelledAt: { type: Date },
+    autoRun: { type: Boolean, default: false },
+    agentBackend: { type: String, enum: ["codex", "grokbot"] },
+    claimedAt: { type: Date },
+    failureReason: { type: String, trim: true },
   },
   { timestamps: true },
 );

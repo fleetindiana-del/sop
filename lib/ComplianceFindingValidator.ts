@@ -24,6 +24,30 @@ const PLACEHOLDER_RE = /\b(n\/a|na|none|not\s+determined|unable\s+to\s+determine
 
 const EXACT_PLACEHOLDERS = new Set(["n/a", "na", "n.a.", "none", "-", "—", "nil", "null"]);
 
+const BINARY_DOCUMENT_RE = /%PDF-|\/Subtype\s*\/Image|\/DCTDecode|\/FlateDecode|stream\s+JFIF/i;
+
+/** True when stored "SOP text" is a PDF or image stream rather than procedure language. */
+export function isUnreadableDocumentText(text?: string | null): boolean {
+  if (!text?.trim()) return false;
+  const sample = text.slice(0, 4000);
+  if (BINARY_DOCUMENT_RE.test(sample)) return true;
+  const probe = sample.slice(0, 600);
+  let weird = 0;
+  for (let i = 0; i < probe.length; i++) {
+    const code = probe.charCodeAt(i);
+    if (code === 0xfffd || code < 9 || (code > 14 && code < 32)) weird++;
+  }
+  return probe.length > 40 && weird / probe.length > 0.05;
+}
+
+export function isBadFindingNarrative(text?: string | null): boolean {
+  if (!text?.trim()) return false;
+  if (isUnreadableDocumentText(text)) return true;
+  return /scanned (?:page )?image|no readable procedure|unreadable scanned|truncated image|pdf image stream/i.test(
+    text,
+  );
+}
+
 export function isPlaceholderText(text?: string | null): boolean {
   if (!text?.trim()) return true;
   const normalized = text.trim().toLowerCase();
@@ -32,7 +56,7 @@ export function isPlaceholderText(text?: string | null): boolean {
 }
 
 export function cleanFindingText(text?: string | null): string {
-  if (isPlaceholderText(text)) return "";
+  if (isPlaceholderText(text) || isUnreadableDocumentText(text)) return "";
   return text!.trim();
 }
 

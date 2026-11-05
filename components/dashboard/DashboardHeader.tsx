@@ -37,8 +37,12 @@ export function DashboardHeader({ stats, onExpiryFilter }: DashboardHeaderProps)
 
           <div>
             <h1 className="text-base font-bold tracking-tight text-gray-900">
-              SOP Control — Master Dashboard
+              SOP Control - Master{" "}
+              <span className="text-[#0096FF]">Dashboard</span>
             </h1>
+            <p className="text-[10px] font-medium text-[#0096FF]">
+              This was changed in the UI
+            </p>
             <p className="text-[10px] text-gray-600">
               Welcome,{" "}
               <span className="font-semibold text-gray-800">{username}</span>

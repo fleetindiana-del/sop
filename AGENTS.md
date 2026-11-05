@@ -74,7 +74,8 @@ Separate from which **coding agent** you use. Configured via `.env.local`:
 | `LLM_COMPLIANCE_PROVIDER` | Compliance analysis | `gemini` |
 | `GEMINI_API_KEY` | Gemini API | required when compliance/MCQ uses gemini |
 | `ANTHROPIC_API_KEY` | Direct Anthropic API for MCQ (faster than CLI) | optional |
-| `MCQ_CODEX_MODEL` | Codex MCQ model (ChatGPT subscription) | `gpt-5.4-mini` |
+| `MCQ_CODEX_MODEL` | Codex MCQ model (ChatGPT subscription) | `gpt-5.6-sol` |
+| `COMPLIANCE_CODEX_MODEL` | Codex compliance model — mini tiers are rejected by ChatGPT-account Codex | `gpt-5.6-sol` |
 | `OLLAMA_BASE_URL` | Local Ollama | `http://localhost:11434` |
 
 Router: `lib/llm.ts`. Claude CLI: `lib/claude-cli.ts`. Codex CLI: `lib/codex-cli.ts`. Anthropic MCQ batches: `lib/anthropic-mcq.ts`. Gemini: `lib/gemini-client.ts`.

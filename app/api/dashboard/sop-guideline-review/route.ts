@@ -467,45 +467,24 @@ export async function GET(request: NextRequest) {
       try {
         const complianceReports = await ComplianceReport.find({ analysisStatus: "completed" })
           .select(
-            "sopIdentifier sopName overallScore scoreBreakdown totalGuidelinesChecked findings analysisCompletedAt",
+            "sopIdentifier sopName overallScore scoreBreakdown totalGuidelinesChecked analysisCompletedAt",
           )
           .sort({ analysisCompletedAt: -1 })
-          .limit(500)
-          .batchSize(1000)
-          .allowDiskUse(true)
           .lean();
 
         for (const r of complianceReports) {
           const key = r.sopIdentifier;
-          if (!key) continue;
-
-          const normalizedFindings = normalizeComplianceFindings(r.findings || []);
-
-          if (!cache[key]) {
-            cache[key] = {
-              sopNo: key,
-              sopName: r.sopName || "",
-              overallScore: r.overallScore ?? 0,
-              clausesAnalyzed:
-                r.scoreBreakdown?.totalApplicableRequirements ?? normalizedFindings.length,
-              guidelineDocumentsUsed: r.totalGuidelinesChecked ?? 0,
-              runAt: r.analysisCompletedAt || new Date(),
-              findings: normalizedFindings,
-              source: "compliance-section",
-            };
-          } else if (
-            Array.isArray(cache[key].findings) &&
-            (cache[key].findings as unknown[]).length === 0 &&
-            normalizedFindings.length > 0
-          ) {
-            cache[key].findings = normalizedFindings;
-            cache[key].overallScore = cache[key].overallScore || (r.overallScore ?? 0);
-            cache[key].clausesAnalyzed =
-              cache[key].clausesAnalyzed ||
-              (r.scoreBreakdown?.totalApplicableRequirements ?? normalizedFindings.length);
-            cache[key].guidelineDocumentsUsed =
-              cache[key].guidelineDocumentsUsed || (r.totalGuidelinesChecked ?? 0);
-          }
+          if (!key || cache[key]) continue;
+          cache[key] = {
+            sopNo: key,
+            sopName: r.sopName || "",
+            overallScore: r.overallScore ?? 0,
+            clausesAnalyzed: r.scoreBreakdown?.totalApplicableRequirements ?? 0,
+            guidelineDocumentsUsed: r.totalGuidelinesChecked ?? 0,
+            runAt: r.analysisCompletedAt || new Date(),
+            findings: [],
+            source: "compliance-section",
+          };
         }
       } catch (compErr) {
         console.warn("sop-guideline-review GET: could not load ComplianceReport:", compErr);

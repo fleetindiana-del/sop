@@ -19,6 +19,7 @@ import {
 } from "@/lib/mcq-clauses";
 import { DEFAULT_FREE_GEMINI_MODEL } from "@/lib/gemini-free-models";
 import type { LlmProvider } from "@/lib/llm";
+import { currentAgentBackend, runWithAgentBackend, type AgentBackend } from "@/lib/agent-backend";
 import { invalidateDashboardSopsCache } from "@/lib/server-cache";
 import { sopIdentifierEquivalentRegex } from "@/lib/sopIdentifierNormalize";
 import { connectDB } from "@/lib/mongodb";
@@ -153,7 +154,9 @@ async function callMcqModel(
 
 function mcqProviderLabel(provider?: LlmProvider): string {
   if (provider === "ollama") return "Ollama (gemma3:12b)";
-  if (provider === "codex") return `Codex CLI (${getMcqCodexModel()})`;
+  if (provider === "codex") {
+    return currentAgentBackend() === "grokbot" ? "GrokBot (AI task queue)" : `Codex CLI (${getMcqCodexModel()})`;
+  }
   if (provider === "claude") {
     const via = anthropicMcqApiAvailable() ? "Anthropic API" : "Claude CLI";
     return `${via} (${getMcqClaudeModel()})`;
@@ -1334,6 +1337,8 @@ async function translateEnglishBankToGujarati(
 export type EnqueueMcqOptions = {
   /** When false, persist a queued job for a local Codex worker instead of running here. */
   startWorker?: boolean;
+  /** Who answers the Codex prompts; "grokbot" routes them through the AI task queue. */
+  agentBackend?: AgentBackend;
 };
 
 export async function canStartCodexMcqHere(): Promise<boolean> {
@@ -1402,9 +1407,14 @@ export async function enqueueMcqGeneration(
     mode,
     languageScope: languageScope ?? null,
     provider: effectiveProvider,
+    agentBackend: options?.agentBackend ?? null,
     awaitingLocalWorker: !startWorker,
     status: "queued",
-    phase: startWorker ? "Queued" : "Waiting for local Codex worker",
+    phase: startWorker
+      ? "Queued"
+      : options?.agentBackend === "grokbot"
+        ? "Waiting for local worker (GrokBot)"
+        : "Waiting for local Codex worker",
     percent: 0,
     languages: [],
     totalInserted: 0,
@@ -1422,7 +1432,14 @@ export async function enqueueMcqGeneration(
   );
 
   if (startWorker) {
-    triggerMcqGenerationAsync(identifier, mode, effectiveProvider, languageScope);
+    const backend = options?.agentBackend;
+    if (backend) {
+      runWithAgentBackend(backend, () =>
+        triggerMcqGenerationAsync(identifier, mode, effectiveProvider, languageScope),
+      );
+    } else {
+      triggerMcqGenerationAsync(identifier, mode, effectiveProvider, languageScope);
+    }
   } else {
     console.log(`[mcq-gen] ${identifier} queued for local Codex worker`);
   }
@@ -1448,8 +1465,12 @@ export async function enqueueMcqGenerationForNewSop(identifier: string): Promise
   if (hasActive) {
     return { skipped: true, reason: "bank_exists" };
   }
-  const startWorker = await canStartCodexMcqHere();
-  const job = await enqueueMcqGeneration(identifier, "codex", "generate", undefined, { startWorker });
+  const viaGrokbot = currentAgentBackend() === "grokbot";
+  const startWorker = viaGrokbot ? !process.env.VERCEL : await canStartCodexMcqHere();
+  const job = await enqueueMcqGeneration(identifier, "codex", "generate", undefined, {
+    startWorker,
+    agentBackend: viaGrokbot ? "grokbot" : undefined,
+  });
   return { awaitingLocalWorker: job.awaitingLocalWorker };
 }
 

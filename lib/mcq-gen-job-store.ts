@@ -145,6 +145,7 @@ export async function claimNextLocalMcqJob(): Promise<{
   identifier: string;
   mode: McqGenMode;
   languageScope?: McqGenLanguage;
+  agentBackend?: "codex" | "grokbot";
 } | null> {
   const job = await MCQGenJob.findOneAndUpdate(
     {
@@ -168,5 +169,6 @@ export async function claimNextLocalMcqJob(): Promise<{
     identifier: job.identifier,
     mode: (job.mode ?? "generate") as McqGenMode,
     languageScope: job.languageScope,
+    agentBackend: job.agentBackend ?? undefined,
   };
 }

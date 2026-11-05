@@ -6,12 +6,17 @@ import {
 } from "@/lib/compliance-run-control";
 import { registerMcqSubprocess, unregisterMcqSubprocess } from "@/lib/mcq-run-control";
 import { parseMcqBatchJson, type ParsedMcq } from "@/lib/mcq-json-parse";
+import { currentAgentBackend } from "@/lib/agent-backend";
+import { runGrokbotPrompt } from "@/lib/grokbot-llm";
 
 const CODEX_CLI_TIMEOUT_MS = Number(process.env.CODEX_CLI_TIMEOUT_MS) || 300_000;
 const CODEX_CLI_MAX_ATTEMPTS = Number(process.env.CODEX_CLI_MAX_ATTEMPTS) || 2;
 
-/** Small Codex model for structured MCQ batches (ChatGPT subscription — no API key). */
-const DEFAULT_MCQ_CODEX_MODEL = "gpt-5.4-mini";
+/** Codex model for structured batches (ChatGPT subscription — no API key).
+ *  Must be a model the ChatGPT plan exposes to Codex: API-only ids (gpt-4.1) and
+ *  the mini tiers (gpt-5.4-mini) are rejected with a 400 "not supported when using
+ *  Codex with a ChatGPT account". */
+const DEFAULT_MCQ_CODEX_MODEL = "gpt-5.6-sol";
 
 export function getMcqCodexModel(): string {
   return process.env.MCQ_CODEX_MODEL ?? DEFAULT_MCQ_CODEX_MODEL;
@@ -46,6 +51,9 @@ type DoctorReport = {
 /** Verify local Codex CLI is installed and logged in (ChatGPT subscription). */
 export async function checkCodexCliHealth(): Promise<CodexCliHealth> {
   const model = getMcqCodexModel();
+  if (currentAgentBackend() === "grokbot") {
+    return { ok: true, model: "grokbot", loggedIn: true, authMode: "GrokBot via MCP task queue" };
+  }
   try {
     const { stdout, code } = await runCodex(["doctor", "--json"], undefined, 30_000);
 
@@ -207,14 +215,40 @@ ${user}
 Respond with ONLY raw JSON — no markdown fences or commentary.`;
 }
 
+const CODEX_USAGE_LIMIT_PREFIX = "Codex usage limit reached";
+const CODEX_USAGE_LIMIT_RECHECK_MS = 10 * 60_000;
+let codexUsageLimit: { message: string; checkedAt: number } | null = null;
+
+/** True when the ChatGPT account behind `codex login` has no Codex quota left. */
+export function isCodexUsageLimitError(error: unknown): boolean {
+  return errorMessage(error).includes(CODEX_USAGE_LIMIT_PREFIX);
+}
+
 async function runCodexExecPrompt(
   prompt: string,
   model: string,
   options?: CodexCliJsonOptions,
+  label = "codex",
 ): Promise<string> {
+  if (currentAgentBackend() === "grokbot") {
+    return runGrokbotPrompt(prompt, {
+      kind: options?.subprocessScope === "compliance" ? "compliance" : "mcq",
+      label,
+      runKey: options?.runKey,
+      signal: options?.signal,
+    });
+  }
+  // Quota is account-wide: once hit, fail instantly instead of spawning hundreds of
+  // doomed `codex exec` processes (each burns minutes on "Reconnecting... 5/5").
+  if (codexUsageLimit && Date.now() - codexUsageLimit.checkedAt < CODEX_USAGE_LIMIT_RECHECK_MS) {
+    throw new Error(codexUsageLimit.message);
+  }
   return new Promise<string>((resolve, reject) => {
     const args = [
       "exec",
+      // User config starts MCP servers (including a local one that is often down).
+      // A failed MCP handshake aborts the whole exec before any JSON is returned.
+      "--ignore-user-config",
       "-m",
       model,
       "-s",
@@ -291,6 +325,13 @@ async function runCodexExecPrompt(
     proc.on("close", (code: number | null) => {
       if (options?.signal) options.signal.removeEventListener("abort", onAbort);
       if (code !== 0) {
+        const limit = stderr.match(/You've hit your usage limit[^\r\n]*/i)?.[0];
+        if (limit) {
+          const message = `${CODEX_USAGE_LIMIT_PREFIX}: ${limit.slice(0, 300)}`;
+          codexUsageLimit = { message, checkedAt: Date.now() };
+          finish(() => reject(new Error(message)));
+          return;
+        }
         const apiErr = stderr.match(/ERROR:\s*(\{[\s\S]*?\})(?=\nERROR:|\n*$)/)?.[1];
         let detail = stderr.trim();
         if (apiErr) {
@@ -331,7 +372,7 @@ export async function generateCodexCliJson<T>(
     if (options?.signal?.aborted) throw new Error("Generation cancelled");
     try {
       const prompt = wrapMcqCodexPrompt(system, userBlock);
-      const raw = await runCodexExecPrompt(prompt, model, options);
+      const raw = await runCodexExecPrompt(prompt, model, options, label);
       const text = extractCodexStdout(raw);
       return parse(text);
     } catch (error) {
@@ -369,7 +410,7 @@ export async function generateCodexCliMcqBatch(
     if (options?.signal?.aborted) throw new Error("Generation cancelled");
     try {
       const prompt = wrapMcqCodexPrompt(system, userBlock);
-      const raw = await runCodexExecPrompt(prompt, model, options);
+      const raw = await runCodexExecPrompt(prompt, model, options, "MCQ batch");
       const text = extractCodexStdout(raw);
       const questions = parseMcqBatchJson(text, "codex-cli-mcq");
       if (questions.length === 0) throw new SyntaxError("No usable MCQs in Codex response");

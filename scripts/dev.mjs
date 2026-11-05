@@ -1,5 +1,5 @@
-import { execSync, spawn } from "node:child_process";
-import { rmSync } from "node:fs";
+import { execFileSync, execSync, spawn } from "node:child_process";
+import { rmSync, utimesSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import http from "node:http";
 import path from "node:path";
@@ -42,6 +42,24 @@ if (clean) {
   console.log("Cleared .next cache");
 }
 
+function killStaleDevWorkers() {
+  if (process.platform !== "win32") return;
+  // A Turbopack PostCSS crash leaves the child Node processes behind. They do
+  // not listen on PORT, so the next `npm run dev` would pile onto them until
+  // Windows cannot allocate memory.
+  const script = [
+    "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" |",
+    "Where-Object { $_.CommandLine -like '*sop-software*.next*dev*build*' } |",
+    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+  ].join(" ");
+  try {
+    execFileSync("powershell", ["-NoProfile", "-Command", script], { stdio: "ignore" });
+  } catch {
+    // nothing to clean up
+  }
+}
+
+killStaleDevWorkers();
 killPort(PORT);
 
 try {
@@ -92,6 +110,45 @@ function cookieHeaderFrom(setCookieHeaders = []) {
   return setCookieHeaders.map((c) => c.split(";")[0]).join("; ");
 }
 
+function authRouteLooksReady(res) {
+  return res.statusCode === 200 && res.body.includes('"csrfToken"');
+}
+
+// On Windows, Turbopack can print Ready after indexing only top-level app
+// pages. Nested pages and route handlers stay unregistered until a source
+// file changes, so /api/auth/* is the HTML 404 page and the client logs
+// CLIENT_FETCH_ERROR. Touching the auth route forces that second index.
+function kickDevRouteScan() {
+  const routeFile = path.join(root, "app", "api", "auth", "[...nextauth]", "route.ts");
+  const now = new Date();
+  utimesSync(routeFile, now, now);
+}
+
+async function ensureAuthRouteRegistered(port) {
+  const probe = () => httpRequest({ host: "localhost", port, path: "/api/auth/csrf", method: "GET" });
+  try {
+    if (authRouteLooksReady(await probe())) return;
+  } catch {
+    // server not accepting requests yet
+  }
+  try {
+    kickDevRouteScan();
+  } catch (err) {
+    console.warn("Could not refresh the dev route index:", err.message);
+    return;
+  }
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    try {
+      if (authRouteLooksReady(await probe())) return;
+    } catch {
+      // still compiling
+    }
+  }
+  console.warn("Auth route was still unavailable after refreshing the dev route index");
+}
+
 // Most protected routes (dashboard, employees, compliance, etc.) sit behind
 // next-auth middleware. Warming them up with an unauthenticated request just
 // hits the /login redirect — the protected page itself never gets compiled,
@@ -137,6 +194,7 @@ async function getWarmupSessionCookie(port) {
 }
 
 async function warmupRoutes(port) {
+  await ensureAuthRouteRegistered(port);
   const cookie = await getWarmupSessionCookie(port);
   for (const route of WARMUP_ROUTES) {
     try {
@@ -150,6 +208,9 @@ async function warmupRoutes(port) {
       ? `Warmed up ${WARMUP_ROUTES.length} routes as admin (prevents cross-tab dev reloads)`
       : `Warmed up ${WARMUP_ROUTES.length} routes (unauthenticated — protected pages may still trigger a one-time cross-tab reload)`,
   );
+  // Start the worker only after the first compile burst. Running it in
+  // parallel exhausts the Windows page file and aborts Turbopack.
+  spawnMcqWorker();
 }
 
 // Use the Next 16 default bundler (Turbopack). Webpack's dev server recompiles
@@ -166,16 +227,22 @@ const child = spawn("npx", ["next", "dev", ...bundlerArgs, "-p", String(PORT)], 
 });
 
 const startMcqWorker = process.env.MCQ_WORKER !== "0";
-const mcqWorker = startMcqWorker
-  ? spawn("npx", ["tsx", "scripts/mcq-local-worker.ts"], {
-      cwd: root,
-      stdio: "inherit",
-      shell: true,
-      env: process.env,
-    })
-  : null;
+let mcqWorker = null;
 
-if (startMcqWorker) {
+function spawnMcqWorker() {
+  if (!startMcqWorker || mcqWorker) return;
+  mcqWorker = spawn("npx", ["tsx", "scripts/mcq-local-worker.ts"], {
+    cwd: root,
+    stdio: "inherit",
+    shell: true,
+    env: process.env,
+  });
+  mcqWorker.on("exit", (code) => {
+    mcqWorker = null;
+    if (code && code !== 0) {
+      console.warn(`Local Codex MCQ worker exited (${code}). Queued production MCQs will wait until you run npm run mcq:worker`);
+    }
+  });
   console.log("Started local Codex MCQ worker (set MCQ_WORKER=0 to disable)");
 }
 
@@ -188,14 +255,22 @@ child.stdout.on("data", (chunk) => {
   }
 });
 
+function killTree(proc) {
+  if (!proc?.pid) return;
+  if (process.platform === "win32") {
+    try {
+      execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: "ignore" });
+    } catch {
+      // already exited
+    }
+    return;
+  }
+  if (!proc.killed) proc.kill();
+}
+
 function shutdown(code) {
-  if (mcqWorker && !mcqWorker.killed) mcqWorker.kill();
+  killTree(mcqWorker);
   process.exit(code ?? 0);
 }
 
 child.on("exit", (code) => shutdown(code));
-mcqWorker?.on("exit", (code) => {
-  if (code && code !== 0) {
-    console.warn(`Local Codex MCQ worker exited (${code}). Queued production MCQs will wait until you run npm run mcq:worker`);
-  }
-});

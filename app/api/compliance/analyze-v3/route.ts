@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import { connectDB } from '@/lib/mongodb';
 import SOP from '@/models/SOP';
+import ComplianceRunRequest from '@/models/ComplianceRunRequest';
 import SOPGuideline from '@/models/SOPGuideline';
 import ComplianceAnalysisJob from '@/models/ComplianceAnalysisJob';
 import {
@@ -19,6 +21,9 @@ import { validateFindings } from '@/lib/ComplianceFindingValidatorV3';
 import { validateDataSync, autoFixDataSync } from '@/lib/syncValidator';
 import { saveComplianceReport } from '@/lib/complianceReportStorage';
 import { requireAuth } from '@/lib/withAuth';
+import { isCodexUsageLimitError } from '@/lib/codex-cli';
+import { isGrokbotUnavailableError } from '@/lib/grokbot-llm';
+import { runWithAgentBackend } from '@/lib/agent-backend';
 import type { ComplianceFinding } from '@/lib/complianceEngine';
 import type { LlmProvider } from '@/lib/llm';
 import {
@@ -87,7 +92,60 @@ async function logJobError(
  */
 export const maxDuration = 300;
 
+/**
+ * provider "grokbot" runs the Codex pipeline unchanged, but each prompt is
+ * answered by GrokBot through the MCP AI-task queue instead of `codex exec`.
+ */
 export async function POST(request: NextRequest) {
+  const body = await request.clone().json().catch(() => null);
+  if (body?.provider === 'codex') return runWithAgentBackend('codex', () => analyzeV3(request));
+  if (body?.provider !== 'grokbot') return analyzeV3(request);
+  // A V3 audit outlives a Vercel request; the local worker runs it instead.
+  if (process.env.VERCEL) return queueGrokbotRun(String(body.sopId ?? ''));
+  return runWithAgentBackend('grokbot', () => analyzeV3(request));
+}
+
+async function queueGrokbotRun(sopId: string) {
+  const auth = await requireAuth(["admin", "trainer", "viewer"]);
+  if (auth.error) return auth.error;
+  if (!mongoose.Types.ObjectId.isValid(sopId)) {
+    return NextResponse.json({ success: false, error: 'Missing SOP ID' }, { status: 400 });
+  }
+  await connectDB();
+  const sop = await SOP.findById(sopId).select('identifier name department').lean();
+  if (!sop) return NextResponse.json({ success: false, error: 'SOP not found' }, { status: 404 });
+
+  const user = auth.session.user;
+  const open = await ComplianceRunRequest.findOne({
+    sopId: sop._id,
+    autoRun: true,
+    status: { $in: ['pending', 'in_progress'] },
+  }).select('_id').lean();
+  const requestId = open?._id ?? (await ComplianceRunRequest.create({
+    sopId: sop._id,
+    sopIdentifier: sop.identifier,
+    sopName: sop.name,
+    department: sop.department || 'General',
+    requesterId: new mongoose.Types.ObjectId(user.id),
+    requesterName: user.name || user.username || 'User',
+    requesterUsername: user.username || '',
+    status: 'pending',
+    autoRun: true,
+    agentBackend: 'grokbot',
+  }))._id;
+
+  return NextResponse.json({
+    success: true,
+    queued: true,
+    requestId: String(requestId),
+    overallScore: null,
+    complianceStatus: 'Queued for GrokBot',
+    userMessage:
+      'Queued for GrokBot. The local SOP worker runs the audit and GrokBot answers it; the report appears when it is saved.',
+  }, { status: 202 });
+}
+
+async function analyzeV3(request: NextRequest) {
   const auth = await requireAuth(["admin", "trainer", "viewer"]);
   if (auth.error) return auth.error;
 
@@ -117,9 +175,11 @@ export async function POST(request: NextRequest) {
     const userId = auth.session.user.id;
 
     const provider: LlmProvider | undefined =
-      bodyProvider === 'codex' || bodyProvider === 'claude' || bodyProvider === 'ollama' || bodyProvider === 'gemini'
-        ? bodyProvider
-        : undefined;
+      bodyProvider === 'grokbot'
+        ? 'codex'
+        : bodyProvider === 'codex' || bodyProvider === 'claude' || bodyProvider === 'ollama' || bodyProvider === 'gemini'
+          ? bodyProvider
+          : undefined;
     const modelOverride = typeof bodyModel === 'string' && bodyModel.trim() ? bodyModel.trim() : undefined;
     
     // ═══════════════════════════════════════════════════════════════════
@@ -477,6 +537,8 @@ export async function POST(request: NextRequest) {
         
       } catch (clauseError) {
         if (isComplianceAnalysisCancelledError(clauseError)) throw clauseError;
+        if (isCodexUsageLimitError(clauseError)) throw clauseError;
+        if (isGrokbotUnavailableError(clauseError)) throw clauseError;
         console.error(`      ❌ Error: ${(clauseError as Error).message}`);
         analysisErrors++;
       }

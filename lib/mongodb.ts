@@ -81,11 +81,12 @@ export function isMongoConnectivityError(error: unknown): boolean {
   const name = (error as { name?: string }).name ?? "";
   if (
     name === "MongoNetworkError" ||
+    name === "MongoNetworkTimeoutError" ||
     name === "MongooseServerSelectionError" ||
     name === "MongoServerSelectionError"
   ) {
     return true;
   }
   const msg = error instanceof Error ? error.message : String(error);
-  return /ETIMEDOUT|ECONNREFUSED|MongoNetworkError|server selection/i.test(msg);
+  return /ETIMEDOUT|ECONNREFUSED|ENOTFOUND|MongoNetwork|server selection|secureConnect|timed out/i.test(msg);
 }

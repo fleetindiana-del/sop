@@ -9,6 +9,7 @@ import {
 } from "@/lib/compliance-run-control";
 import { attachGuidelineSourceFields } from "@/lib/guidelineClauseDisplay";
 import { windowSopContentForAudit } from "@/lib/compliance-sop-content";
+import { isCodexUsageLimitError } from "@/lib/codex-cli";
 
 export type V3AiOptions = {
   aiModel?: string;
@@ -719,6 +720,8 @@ export async function analyzeClauseWithPrecision(
     }) as ComplianceFindingV3;
   } catch (error) {
     if (error instanceof ComplianceAnalysisCancelledError) throw error;
+    // Account-wide quota: every remaining clause would fail too — abort the run.
+    if (isCodexUsageLimitError(error)) throw error;
     console.error(`AI analysis failed for clause ${clause.clauseNumber}:`, error);
     
     // Return unable-to-determine instead of false non-compliant

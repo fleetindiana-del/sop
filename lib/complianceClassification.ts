@@ -218,7 +218,7 @@ export function computeWeightedScoreBreakdown(findings: ComplianceFinding[]): Co
   const formula =
     totalApplicableRequirements === 0
       ? "No guideline clauses were successfully evaluated for scoring. " +
-        "Re-run analysis with a working AI provider. GMP Intelligence findings are advisory and do not affect this score."
+        "Repeat the assessment. GMP and cross-SOP observations are advisory and do not affect this score."
       : `Weighted Score = (Σ achieved weight) ÷ (Σ total weight) × 10` +
         `\nWeights: Critical=5, Major=3, Minor=1, GMP/Cross-SOP=0 (advisory only)` +
         `\nGuideline requirements: ${criticalRequirementCount} critical, ${majorRequirementCount} major, ${minorRequirementCount} minor` +
