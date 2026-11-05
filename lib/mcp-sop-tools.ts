@@ -192,17 +192,18 @@ export function registerSopTools(server: McpServer) {
     {
       title: "List SOPs",
       description:
-        "Search the SOP registry by identifier or title. Returns current (non-obsolete) SOPs with compliance status, MCQ count and whether training media exists.",
+        "Search the SOP registry by identifier or title. Returns one row per SOP record (each language/version is a record) with compliance status, MCQ count and whether training media exists, plus the total match count. Page with offset. For counts and breakdowns use get_sop_stats instead.",
       inputSchema: z.object({
         search: z.string().optional().describe("Matches identifier or title (case-insensitive)."),
         department: z.string().optional(),
         includeObsolete: z.boolean().optional(),
         limit: z.number().int().min(1).max(100).optional().describe("Default 25."),
+        offset: z.number().int().min(0).optional().describe("Skip this many rows (paging). Default 0."),
       }),
       readOnly: true,
     },
     "sops:read",
-    async ({ search, department, includeObsolete, limit }, principal) => {
+    async ({ search, department, includeObsolete, limit, offset }, principal) => {
       await connectDB();
       const filter: Record<string, unknown> = {};
       if (!includeObsolete) filter.isObsolete = { $ne: true };
@@ -214,16 +215,23 @@ export function registerSopTools(server: McpServer) {
         filter.department = new RegExp(`^${department.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
       }
 
-      const rows = await SOP.find(filter)
+      const pageSize = limit ?? 25;
+      const skip = offset ?? 0;
+      const scoped = isDeptScopedRole(principal.user.role);
+      const query = SOP.find(filter)
         .select("identifier name department version language isObsolete complianceStatus complianceScore mcqCount mediaLinks")
-        .sort({ identifier: 1 })
-        .limit(isDeptScopedRole(principal.user.role) ? 1000 : (limit ?? 25))
-        .lean();
+        .sort({ identifier: 1 });
+      const [fetched, unscopedTotal] = await Promise.all([
+        scoped ? query.limit(5000).lean() : query.skip(skip).limit(pageSize).lean(),
+        scoped ? Promise.resolve(0) : SOP.countDocuments(filter),
+      ]);
+      const visible = scoped
+        ? fetched.filter((row) => canAccessDepartment(principal.user.role, principal.user.department, row.department))
+        : fetched;
+      const page = scoped ? visible.slice(skip, skip + pageSize) : visible;
+      const total = scoped ? visible.length : unscopedTotal;
 
-      return rows
-        .filter((row) => canAccessDepartment(principal.user.role, principal.user.department, row.department))
-        .slice(0, limit ?? 25)
-        .map((row) => ({
+      const sops = page.map((row) => ({
           sopId: String(row._id),
           identifier: row.identifier,
           name: row.name,
@@ -236,6 +244,75 @@ export function registerSopTools(server: McpServer) {
           mcqCount: row.mcqCount ?? 0,
           hasVideo: Boolean(row.mediaLinks?.videos?.en?.length || row.mediaLinks?.videos?.gu?.length),
         }));
+      return { total, offset: skip, returned: sops.length, hasMore: skip + sops.length < total, sops };
+    },
+  );
+
+  registerScopedTool(
+    server,
+    "get_sop_stats",
+    {
+      title: "SOP registry statistics",
+      description:
+        "Counts for questions like \"how many SOPs do we have?\": unique SOPs (by identifier) and records (each language/version), broken down by department, language, compliance status, MCQ coverage and training video coverage. Optionally limit to one department.",
+      inputSchema: z.object({
+        department: z.string().optional(),
+        includeObsolete: z.boolean().optional().describe("Default false: only current SOPs."),
+      }),
+      readOnly: true,
+    },
+    "sops:read",
+    async ({ department, includeObsolete }, principal) => {
+      await connectDB();
+      const filter: Record<string, unknown> = {};
+      if (!includeObsolete) filter.isObsolete = { $ne: true };
+      if (department?.trim()) {
+        filter.department = new RegExp(`^${department.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+      }
+      const rows = (
+        await SOP.find(filter)
+          .select("identifier department language complianceStatus complianceScore mcqCount mediaLinks")
+          .lean()
+      ).filter((row) => canAccessDepartment(principal.user.role, principal.user.department, row.department));
+
+      type SopSummary = { department: string; status: string; score: number | null; hasMcqs: boolean; hasVideo: boolean };
+      const byIdentifier = new Map<string, SopSummary>();
+      const languages: Record<string, number> = {};
+      for (const row of rows) {
+        const language = row.language || "Unknown";
+        languages[language] = (languages[language] ?? 0) + 1;
+        const key = String(row.identifier ?? "").trim().toUpperCase();
+        const prev = byIdentifier.get(key);
+        const hasVideo = Boolean(row.mediaLinks?.videos?.en?.length || row.mediaLinks?.videos?.gu?.length);
+        byIdentifier.set(key, {
+          department: prev?.department ?? (row.department || "Unassigned"),
+          status: prev?.status && prev.status !== "pending" ? prev.status : (row.complianceStatus ?? "pending"),
+          score: prev?.score ?? row.complianceScore ?? null,
+          hasMcqs: Boolean(prev?.hasMcqs || (row.mcqCount ?? 0) > 0),
+          hasVideo: Boolean(prev?.hasVideo || hasVideo),
+        });
+      }
+
+      const tally = (pick: (s: SopSummary) => string) => {
+        const out: Record<string, number> = {};
+        for (const s of byIdentifier.values()) out[pick(s)] = (out[pick(s)] ?? 0) + 1;
+        return out;
+      };
+      const sops = [...byIdentifier.values()];
+      const scored = sops.filter((s) => typeof s.score === "number");
+      return {
+        uniqueSops: byIdentifier.size,
+        records: rows.length,
+        byDepartment: tally((s) => s.department),
+        recordsByLanguage: languages,
+        byComplianceStatus: tally((s) => s.status),
+        averageComplianceScore: scored.length
+          ? Number((scored.reduce((sum, s) => sum + (s.score as number), 0) / scored.length).toFixed(2))
+          : null,
+        withMcqs: sops.filter((s) => s.hasMcqs).length,
+        withTrainingVideo: sops.filter((s) => s.hasVideo).length,
+        scope: isDeptScopedRole(principal.user.role) ? `departments visible to ${principal.user.name}` : "all departments",
+      };
     },
   );
 

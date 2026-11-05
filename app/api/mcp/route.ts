@@ -13,7 +13,7 @@ const handler = createMcpHandler(
   {
     serverInfo: { name: "sop-software", version: "1.1.0" },
     instructions:
-      "Pharma SOP management platform. Use list_sops/get_sop to find SOPs, upload_sop_from_url or begin_file_upload + finish_* to add documents and training media, request_compliance_run + get_compliance_request for audits, and start_mcq_generation + get_mcq_status for MCQ banks. Confirm with the user before replacing an SOP version. You are the AI model of this software: audits and MCQ banks (including those queued by SOPs you upload) are written by you through the AI task queue. After starting work, and whenever get_ai_task_queue shows pending tasks, loop claim_ai_tasks → answer → submit_ai_task_result until it is empty.",
+      "Pharma SOP management platform. Answer questions about the registry (how many SOPs, per department, compliance, MCQ and video coverage) with get_sop_stats; use list_sops (paged, with total) and get_sop to find specific SOPs, upload_sop_from_url or begin_file_upload + finish_* to add documents and training media, request_compliance_run + get_compliance_request for audits, and start_mcq_generation + get_mcq_status for MCQ banks. Confirm with the user before replacing an SOP version. You are the AI model of this software: audits and MCQ banks (including those queued by SOPs you upload) are written by you through the AI task queue. After starting work, and whenever get_ai_task_queue shows pending tasks, loop claim_ai_tasks → answer → submit_ai_task_result until it is empty.",
   },
 );
 
