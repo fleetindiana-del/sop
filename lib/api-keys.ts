@@ -15,6 +15,7 @@ export const API_KEY_SCOPES = [
   "compliance:run",
   "mcq:read",
   "ai:work",
+  "api:read",
 ] as const;
 
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
@@ -59,9 +60,19 @@ export function bearerToken(req: Request): string | undefined {
 
 export async function verifyApiKey(token: string | undefined): Promise<ApiKeyPrincipal | null> {
   if (!token?.startsWith(KEY_PREFIX)) return null;
-
   await connectDB();
-  const key = await ApiKey.findOne({ keyHash: hashApiKey(token), revokedAt: null }).lean();
+  return principalForKey({ keyHash: hashApiKey(token) });
+}
+
+/** Re-checks a key by id (revoked/expired keys fail), e.g. for a signed API grant. */
+export async function verifyApiKeyId(keyId: string): Promise<ApiKeyPrincipal | null> {
+  if (!/^[a-f\d]{24}$/i.test(keyId)) return null;
+  await connectDB();
+  return principalForKey({ _id: keyId });
+}
+
+async function principalForKey(match: Record<string, string>): Promise<ApiKeyPrincipal | null> {
+  const key = await ApiKey.findOne({ ...match, revokedAt: null }).lean();
   if (!key) return null;
   if (key.expiresAt && key.expiresAt.getTime() < Date.now()) return null;
 

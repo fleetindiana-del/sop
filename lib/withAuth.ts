@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions, type AppRole } from "@/lib/auth";
+import { sessionFromApiGrant } from "@/lib/api-grant";
 import {
   canAccessDepartment,
   filterByAssignedDepartments,
@@ -32,7 +33,7 @@ function roleSatisfies(allowedRoles: AppRole[], role: AppRole): boolean {
 }
 
 export async function requireAuth(allowedRoles?: AppRole[]) {
-  const session = await getServerSession(authOptions);
+  const session = (await getServerSession(authOptions)) ?? (await sessionFromApiGrant());
   if (!session?.user) {
     return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }

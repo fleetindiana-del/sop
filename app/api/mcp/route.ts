@@ -2,6 +2,7 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { verifyApiKey } from "@/lib/api-keys";
 import { registerSopTools } from "@/lib/mcp-sop-tools";
 import { registerAiTaskTools } from "@/lib/mcp-ai-task-tools";
+import { registerApiTools } from "@/lib/mcp-api-tools";
 
 export const maxDuration = 300;
 
@@ -9,11 +10,12 @@ const handler = createMcpHandler(
   (server) => {
     registerSopTools(server);
     registerAiTaskTools(server);
+    registerApiTools(server);
   },
   {
     serverInfo: { name: "sop-software", version: "1.1.0" },
     instructions:
-      "Pharma SOP management platform. Answer questions about the registry (how many SOPs, per department, compliance, MCQ and video coverage) with get_sop_stats; use list_sops (paged, with total) and get_sop to find specific SOPs, upload_sop_from_url or begin_file_upload + finish_* to add documents and training media, request_compliance_run + get_compliance_request for audits, and start_mcq_generation + get_mcq_status for MCQ banks. Confirm with the user before replacing an SOP version. You are the AI model of this software: audits and MCQ banks (including those queued by SOPs you upload) are written by you through the AI task queue. After starting work, and whenever get_ai_task_queue shows pending tasks, loop claim_ai_tasks → answer → submit_ai_task_result until it is empty.",
+      "Pharma SOP management platform. For any data question the dedicated tools don't cover (employee training remaining, induction, MCQ approval by department, training matrix, LMS results…), use list_api_endpoints to find the right app API and call_api to read it — it returns the same computed data the web pages show. Answer questions about the registry (how many SOPs, per department, compliance, MCQ and video coverage) with get_sop_stats; use list_sops (paged, with total) and get_sop to find specific SOPs, upload_sop_from_url or begin_file_upload + finish_* to add documents and training media, request_compliance_run + get_compliance_request for audits, and start_mcq_generation + get_mcq_status for MCQ banks. Confirm with the user before replacing an SOP version. You are the AI model of this software: audits and MCQ banks (including those queued by SOPs you upload) are written by you through the AI task queue. After starting work, and whenever get_ai_task_queue shows pending tasks, loop claim_ai_tasks → answer → submit_ai_task_result until it is empty.",
   },
 );
 

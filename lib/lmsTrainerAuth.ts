@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import type { Session } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { sessionFromApiGrant } from '@/lib/api-grant';
 import { connectDB } from '@/lib/mongodb';
 import { getDashboardDepartments } from '@/lib/dashboardDepartments';
 import { resolveLmsIdentity } from '@/lib/lmsIdentity';
@@ -120,7 +121,7 @@ export async function requireLmsManager(): Promise<
   | { ok: true; session: Session | null; actorName: string | null }
   | { ok: false; response: NextResponse }
 > {
-  const session = await getServerSession(authOptions);
+  const session = (await getServerSession(authOptions)) ?? (await sessionFromApiGrant());
   if (session?.user?.role && (isAdmin(session.user.role) || session.user.role === 'trainer')) {
     return { ok: true, session, actorName: session.user.name ?? null };
   }

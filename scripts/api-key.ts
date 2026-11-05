@@ -3,6 +3,7 @@
  *
  *   npx tsx scripts/api-key.ts create --user <username> --name GrokBot [--scopes sops:read,sops:write] [--days 90]
  *   npx tsx scripts/api-key.ts list
+ *   npx tsx scripts/api-key.ts add-scopes <keyId> api:read
  *   npx tsx scripts/api-key.ts revoke <keyId>
  *
  * Without --scopes a key gets every scope. Write scopes only take effect when
@@ -85,6 +86,17 @@ async function list() {
   if (!keys.length) console.log("No API keys.");
 }
 
+async function addScopes(keyId: string | undefined, raw: string | undefined) {
+  if (!keyId || !mongoose.Types.ObjectId.isValid(keyId)) throw new Error("add-scopes <keyId> <scope,scope> is required");
+  const scopes = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const invalid = scopes.filter((s) => !isApiKeyScope(s));
+  if (!scopes.length || invalid.length) {
+    throw new Error(`Unknown scope(s): ${invalid.join(", ") || "(none)"}. Valid: ${API_KEY_SCOPES.join(", ")}`);
+  }
+  const res = await ApiKey.updateOne({ _id: keyId }, { $addToSet: { scopes: { $each: scopes } } });
+  console.log(res.matchedCount ? `Added ${scopes.join(", ")} to ${keyId}` : `No key ${keyId}`);
+}
+
 async function revoke(keyId: string | undefined) {
   if (!keyId || !mongoose.Types.ObjectId.isValid(keyId)) throw new Error("revoke <keyId> is required");
   const res = await ApiKey.updateOne({ _id: keyId }, { revokedAt: new Date() });
@@ -98,7 +110,8 @@ async function main() {
   if (command === "create") await create(args);
   else if (command === "list") await list();
   else if (command === "revoke") await revoke(args[0]);
-  else console.log("Usage: npx tsx scripts/api-key.ts <create|list|revoke> ...");
+  else if (command === "add-scopes") await addScopes(args[0], args[1]);
+  else console.log("Usage: npx tsx scripts/api-key.ts <create|list|add-scopes|revoke> ...");
 }
 
 main()
